@@ -1,0 +1,941 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>班級經營動力站 · 太空基地控制台</title>
+<style>
+    @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@700;800;900&family=Rajdhani:wght@400;500;600;700&family=Share+Tech+Mono&display=swap');
+
+    :root {
+        --void: #05070f;
+        --void-2: #0a1128;
+        --void-3: #0e1636;
+        --panel-bg: rgba(10, 22, 48, 0.55);
+        --panel-border: rgba(0, 229, 255, 0.32);
+        --panel-border-strong: rgba(0, 229, 255, 0.75);
+        --cyan: #00e5ff;
+        --magenta: #ff2ec4;
+        --green: #39ff88;
+        --gold: #ffd23f;
+        --danger: #ff3b5c;
+        --text-primary: #eaf6ff;
+        --text-secondary: #7fa8c9;
+        --glow-cyan: 0 0 18px rgba(0, 229, 255, 0.55), 0 0 3px rgba(0, 229, 255, 0.8);
+        --glow-magenta: 0 0 18px rgba(255, 46, 196, 0.55);
+        --glow-green: 0 0 18px rgba(57, 255, 136, 0.55);
+        --glow-gold: 0 0 18px rgba(255, 210, 63, 0.6);
+        --radius: 16px;
+        --chamfer: polygon(12px 0, 100% 0, 100% calc(100% - 12px), calc(100% - 12px) 100%, 0 100%, 0 12px);
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; margin: 0; }
+    body {
+        font-family: 'Rajdhani', 'Noto Sans TC', sans-serif;
+        color: var(--text-primary);
+        background: radial-gradient(ellipse at 30% 0%, #101c40 0%, var(--void-2) 45%, var(--void) 100%);
+        overflow-x: hidden;
+        -webkit-font-smoothing: antialiased;
+    }
+    body.shake { animation: screenShake 0.35s; }
+    @keyframes screenShake { 0%,100%{transform:translate(0,0);} 20%{transform:translate(-5px,3px);} 40%{transform:translate(4px,-4px);} 60%{transform:translate(-4px,2px);} 80%{transform:translate(3px,-2px);} }
+
+    #particle-canvas { position: fixed; inset: 0; z-index: -2; }
+    #scan-sweep { position: fixed; left: 0; right: 0; top: -140px; height: 140px; background: linear-gradient(to bottom, transparent, rgba(0,229,255,0.07), transparent); pointer-events: none; z-index: 1; animation: sweepDown 7s linear infinite; }
+    @keyframes sweepDown { 0% { top: -140px; } 100% { top: 100%; } }
+    #scanlines { position: fixed; inset: 0; pointer-events: none; z-index: 1; opacity: 0.35; mix-blend-mode: overlay;
+        background: repeating-linear-gradient(to bottom, rgba(255,255,255,0.025) 0px, rgba(255,255,255,0.025) 1px, transparent 1px, transparent 3px); }
+
+    .app-screen { display: none; padding: 26px; width: 100%; min-height: 100%; padding-bottom: 110px; position: relative; z-index: 3; }
+    .app-screen.active { display: flex; flex-direction: column; animation: fadeIn 0.5s ease; }
+    @keyframes fadeIn { from { opacity: 0; transform: scale(0.98); } to { opacity: 1; transform: scale(1); } }
+
+    .container { max-width: 1440px; margin: 0 auto; width: 100%; }
+    .header { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; margin-bottom: 26px; gap: 14px; }
+    .title-block { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+    h1 { font-family: 'Orbitron', sans-serif; font-weight: 900; font-size: 1.9em; margin: 0; letter-spacing: 1px;
+        background: linear-gradient(90deg, var(--cyan), #8ef6ff 45%, var(--cyan)); -webkit-background-clip: text; background-clip: text; color: transparent;
+        text-shadow: var(--glow-cyan); }
+    h1 small { display: block; font-family: 'Share Tech Mono', monospace; font-size: 0.32em; letter-spacing: 4px; color: var(--text-secondary); -webkit-text-fill-color: var(--text-secondary); text-shadow: none; margin-top: 2px; }
+    .credit-pill { font-family: 'Share Tech Mono', monospace; font-size: 0.78em; padding: 6px 14px; border: 1px solid var(--panel-border); border-radius: 20px; color: var(--cyan); background: rgba(0,229,255,0.06); white-space: nowrap; }
+    h2 { font-family: 'Orbitron', sans-serif; font-weight: 700; font-size: 1.25em; margin: 0 0 20px; color: var(--cyan); text-shadow: var(--glow-cyan); letter-spacing: 1px; }
+    h3 { font-family: 'Orbitron', sans-serif; font-weight: 700; margin: 0; font-size: 1.05em; }
+    label { display: block; margin-bottom: 6px; font-size: 0.85em; color: var(--text-secondary); font-weight: 600; letter-spacing: 0.5px; }
+
+    /* ---- HUD panel (card) ---- */
+    .card {
+        background: var(--panel-bg); backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px);
+        border-radius: var(--radius); border: 1px solid var(--panel-border);
+        box-shadow: 0 0 0 1px rgba(0,229,255,0.05) inset, 0 20px 50px rgba(0,0,0,0.45);
+        padding: 26px; position: relative;
+    }
+    .card::before, .card::after { content: ''; position: absolute; width: 16px; height: 16px; border: 2px solid var(--cyan); opacity: 0.85; pointer-events: none; }
+    .card::before { top: -1px; left: -1px; border-right: none; border-bottom: none; border-radius: 6px 0 0 0; }
+    .card::after { bottom: -1px; right: -1px; border-left: none; border-top: none; border-radius: 0 0 6px 0; }
+
+    button, input { font-family: inherit; border: none; }
+    button { cursor: pointer; transition: all 0.15s ease; }
+    button:hover { filter: brightness(1.2); }
+    button:active { transform: scale(0.96); }
+    .btn { padding: 11px 22px; font-weight: 700; font-size: 0.95em; letter-spacing: 0.5px; clip-path: var(--chamfer); border-radius: 4px; }
+    .btn-primary { background: linear-gradient(135deg, var(--cyan), #0091b3); color: #001a22; box-shadow: var(--glow-cyan); }
+    .btn-success { background: linear-gradient(135deg, var(--green), #0d9c4c); color: #002b0f; box-shadow: var(--glow-green); }
+    .btn-danger { background: linear-gradient(135deg, var(--danger), #b3123a); color: #2a000a; box-shadow: 0 0 14px rgba(255,59,92,0.5); }
+    .btn-secondary { background: rgba(255,255,255,0.06); color: var(--text-primary); border: 1px solid var(--panel-border); }
+    input { background: rgba(0,0,0,0.35); color: var(--text-primary); padding: 11px 14px; border: 1px solid var(--panel-border); width: 100%; border-radius: 8px; font-size: 1em; }
+    input:focus { outline: none; border-color: var(--cyan); box-shadow: 0 0 0 3px rgba(0,229,255,0.15); }
+
+    .header-actions { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+
+    /* ---- Dashboard ---- */
+    #class-dashboard-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 22px; }
+    .class-card { padding: 24px; cursor: pointer; text-align: center; position: relative; }
+    .class-card h3 { font-size: 1.3em; color: var(--text-primary); }
+    .class-card p { font-family: 'Share Tech Mono', monospace; color: var(--text-secondary); font-size: 0.85em; margin: 8px 0 0; }
+    .class-card-actions { position: absolute; top: 14px; right: 14px; display: flex; gap: 8px; opacity: 0.55; transition: opacity 0.2s ease; }
+    .class-card:hover .class-card-actions { opacity: 1; }
+    .class-action-btn { width: 30px; height: 30px; font-size: 14px; padding: 0; border-radius: 50%; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,0.35); color: var(--text-secondary); border: 1px solid var(--panel-border); }
+    .class-action-btn:hover { color: var(--text-primary); background: rgba(0,229,255,0.15); }
+    #add-class-card { border: 2px dashed var(--panel-border); font-size: 2.6em; display: flex; align-items: center; justify-content: center; color: var(--cyan); background: transparent; font-family: 'Orbitron', sans-serif; }
+
+    /* ---- Class view nav ---- */
+    .class-view-nav { display: flex; gap: 6px; margin-bottom: 22px; background: rgba(0,0,0,0.3); border-radius: 12px; padding: 5px; border: 1px solid var(--panel-border); }
+    .nav-tab { flex: 1; text-align: center; padding: 11px; color: var(--text-secondary); font-weight: 700; letter-spacing: 0.5px; border-radius: 8px; background: transparent; font-family: 'Rajdhani', sans-serif; font-size: 1em; }
+    .nav-tab.active { background: linear-gradient(135deg, var(--cyan), #0091b3); color: #001a22; box-shadow: var(--glow-cyan); }
+    .tab-content { display: none; } .tab-content.active { display: block; animation: fadeIn 0.4s; }
+
+    /* ---- Student cards ---- */
+    #student-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 20px; }
+    .student-card { padding: 20px; display: flex; flex-direction: column; align-items: center; text-align: center; position: relative; overflow: visible; }
+    .student-header { width: 100%; display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 4px; }
+    .student-name { font-weight: 700; font-size: 1.15em; }
+    .delete-student-btn { width: 26px; height: 26px; padding: 0; font-size: 13px; border-radius: 50%; background: transparent; color: var(--text-secondary); border: none; opacity: 0; transition: opacity 0.2s ease; }
+    .student-card:hover .delete-student-btn { opacity: 0.6; }
+    .delete-student-btn:hover { opacity: 1 !important; background: var(--danger); color: white; }
+
+    .xp-ring { width: 56px; height: 56px; border-radius: 50%; background: conic-gradient(var(--gold) calc(var(--pct, 0) * 1%), rgba(255,255,255,0.08) 0); display: flex; align-items: center; justify-content: center; margin: 6px 0; box-shadow: var(--glow-gold); }
+    .xp-ring-inner { width: 44px; height: 44px; border-radius: 50%; background: var(--void-2); display: flex; align-items: center; justify-content: center; font-family: 'Orbitron', sans-serif; font-weight: 800; font-size: 0.72em; color: var(--gold); }
+
+    .student-score-input {
+        font-family: 'Orbitron', sans-serif; font-size: 2.1em; font-weight: 900; margin: 8px 0; color: var(--cyan);
+        background: transparent !important; border: none !important; text-align: center; width: 100%;
+        padding: 2px 0 !important; border-bottom: 2px dashed transparent !important; border-radius: 0 !important;
+        text-shadow: var(--glow-cyan); transition: border-color 0.2s ease;
+    }
+    .student-score-input:hover, .student-score-input:focus { outline: none; border-bottom-color: var(--cyan) !important; }
+
+    .badge-row { display: flex; gap: 4px; justify-content: center; flex-wrap: wrap; min-height: 22px; margin-bottom: 6px; }
+    .badge-icon { font-size: 1.05em; filter: grayscale(1) opacity(0.3); transition: filter 0.3s ease; }
+    .badge-icon.earned { filter: none; text-shadow: 0 0 6px rgba(255,210,63,0.8); }
+
+    .score-controls { display: flex; gap: 10px; margin-top: 4px; }
+    .score-btn { width: 46px; height: 46px; font-size: 1.7em; padding: 0; border-radius: 50%; font-family: 'Orbitron', sans-serif; }
+    .score-feedback { position: absolute; top: 45%; left: 50%; font-family: 'Orbitron', sans-serif; font-size: 3em; font-weight: 900; pointer-events: none; opacity: 0; z-index: 5; animation: score-pop 0.7s ease-out; }
+    @keyframes score-pop { 0% { opacity: 1; transform: translate(-50%, -50%) scale(0.4); } 60% { opacity: 1; } 100% { opacity: 0; transform: translate(-50%, -190%) scale(1.15); } }
+
+    /* ---- Groups ---- */
+    .group-container { display: grid; grid-template-columns: 300px 1fr; gap: 22px; align-items: start; }
+    @media (max-width: 900px) { .group-container { grid-template-columns: 1fr; } }
+    .groups-area { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 18px; }
+    .group-column { background: rgba(0,0,0,0.28); border-radius: var(--radius); padding: 18px; border: 1px solid var(--panel-border); }
+    .group-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; }
+    .group-header h3 { color: var(--magenta); text-shadow: var(--glow-magenta); }
+    .group-members { min-height: 140px; border-radius: 8px; padding: 5px; display: grid; grid-template-columns: repeat(auto-fill, minmax(78px, 1fr)); gap: 8px; }
+    .student-chip { background: rgba(0,229,255,0.1); border: 1px solid var(--panel-border); padding: 9px; border-radius: 8px; cursor: grab; text-align: center; font-weight: 600; font-size: 0.9em; }
+    #unassigned-students .student-chip { background: rgba(255,210,63,0.15); border-color: rgba(255,210,63,0.5); color: var(--gold); }
+
+    /* ---- Grades ---- */
+    .grades-actions { display: flex; flex-wrap: wrap; gap: 14px; margin-bottom: 22px; }
+    #grades-table-container { overflow-x: auto; }
+    #grades-table { width: 100%; border-collapse: collapse; margin-top: 16px; font-family: 'Share Tech Mono', monospace; font-size: 0.92em; }
+    #grades-table th { color: var(--cyan); text-transform: uppercase; letter-spacing: 1px; font-size: 0.85em; padding: 12px; border-bottom: 1px solid var(--panel-border); }
+    #grades-table td { padding: 13px; text-align: center; border-bottom: 1px solid rgba(255,255,255,0.06); }
+    .final-grade { font-weight: 900; font-size: 1.25em; color: var(--green); text-shadow: var(--glow-green); }
+
+    /* ---- Leaderboard ---- */
+    #leaderboard-list { display: flex; flex-direction: column; gap: 10px; }
+    .lb-row { display: grid; grid-template-columns: 46px 1fr auto; gap: 14px; align-items: center; padding: 10px 16px; border-radius: 10px; background: rgba(255,255,255,0.03); border: 1px solid var(--panel-border); position: relative; overflow: hidden; }
+    .lb-row.top1 { border-color: rgba(255,210,63,0.7); box-shadow: var(--glow-gold); }
+    .lb-row.top2 { border-color: rgba(210,220,235,0.6); }
+    .lb-row.top3 { border-color: rgba(255,150,90,0.6); }
+    .lb-rank { font-family: 'Orbitron', sans-serif; font-weight: 800; font-size: 1.2em; text-align: center; color: var(--text-secondary); }
+    .lb-row.top1 .lb-rank { color: var(--gold); } .lb-row.top2 .lb-rank { color: #d2dceb; } .lb-row.top3 .lb-rank { color: #ff9a5a; }
+    .lb-main { display: flex; flex-direction: column; gap: 5px; }
+    .lb-name-line { display: flex; align-items: center; gap: 8px; font-weight: 700; }
+    .lb-bar-track { height: 8px; border-radius: 4px; background: rgba(255,255,255,0.08); overflow: hidden; }
+    .lb-bar-fill { height: 100%; border-radius: 4px; background: linear-gradient(90deg, var(--cyan), var(--green)); box-shadow: var(--glow-cyan); transition: width 0.6s ease; }
+    .lb-score { font-family: 'Orbitron', sans-serif; font-weight: 800; color: var(--cyan); font-size: 1.15em; text-shadow: var(--glow-cyan); }
+    .lb-level-chip { font-family: 'Share Tech Mono', monospace; font-size: 0.72em; color: var(--gold); background: rgba(255,210,63,0.12); padding: 2px 7px; border-radius: 8px; border: 1px solid rgba(255,210,63,0.4); }
+
+    /* ---- Modals ---- */
+    .modal { display: none; position: fixed; inset: 0; z-index: 100; align-items: center; justify-content: center; background: rgba(2,4,12,0.72); backdrop-filter: blur(10px); opacity: 0; transition: opacity 0.3s ease; }
+    .modal.visible { display: flex; opacity: 1; }
+    .modal .card { width: 90%; max-width: 480px; max-height: 85vh; overflow-y: auto; transform: scale(0.95); transition: transform 0.3s cubic-bezier(0.2, 0.8, 0.2, 1.2); }
+    .modal.visible .card { transform: scale(1); }
+    .field { margin-bottom: 14px; }
+    .setup-note { font-size: 0.85em; color: var(--text-secondary); line-height: 1.7; margin: -8px 0 18px; font-family: 'Rajdhani', sans-serif; }
+    .setup-note code { background: rgba(0,229,255,0.1); color: var(--cyan); padding: 2px 6px; border-radius: 6px; font-family: 'Share Tech Mono', monospace; }
+
+    /* ---- DB status ---- */
+    .db-status { display: flex; align-items: center; gap: 8px; padding: 8px 16px; border-radius: 20px; background: rgba(0,0,0,0.3); border: 1px solid var(--panel-border); font-size: 0.82em; font-weight: 700; cursor: pointer; font-family: 'Share Tech Mono', monospace; }
+    .db-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--danger); box-shadow: 0 0 8px var(--danger); flex-shrink: 0; }
+    .db-dot.connected { background: var(--green); box-shadow: 0 0 8px var(--green); }
+    .db-dot.syncing { background: var(--gold); box-shadow: 0 0 8px var(--gold); animation: pulse 1s infinite; }
+    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+
+    /* ---- Combo display ---- */
+    .combo-display { position: fixed; top: 90px; left: 50%; transform: translateX(-50%) scale(0.5); z-index: 60; pointer-events: none;
+        font-family: 'Orbitron', sans-serif; font-weight: 900; font-size: 1.8em; color: var(--cyan); text-shadow: var(--glow-cyan);
+        opacity: 0; transition: opacity 0.15s ease, transform 0.15s ease; text-align: center; white-space: nowrap; }
+    .combo-display.show { opacity: 1; transform: translateX(-50%) scale(1); }
+    .combo-display.mid { color: var(--gold); text-shadow: var(--glow-gold); font-size: 2.2em; }
+    .combo-display.hot { color: var(--magenta); text-shadow: var(--glow-magenta); font-size: 2.6em; }
+
+    /* ---- Screen flash ---- */
+    .screen-flash { position: fixed; inset: 0; z-index: 50; pointer-events: none; opacity: 0; transition: opacity 0.28s ease; }
+    .screen-flash.active { opacity: 1; }
+    .screen-flash.plus { background: radial-gradient(ellipse at center, rgba(57,255,136,0.18), transparent 70%); }
+    .screen-flash.minus { background: radial-gradient(ellipse at center, rgba(255,59,92,0.2), transparent 70%); }
+    .screen-flash.levelup { background: radial-gradient(ellipse at center, rgba(255,210,63,0.28), transparent 70%); }
+
+    /* ---- Level up overlay ---- */
+    .levelup-overlay { position: fixed; inset: 0; z-index: 70; display: flex; align-items: center; justify-content: center;
+        background: rgba(2,4,12,0.55); opacity: 0; pointer-events: none; transition: opacity 0.3s ease; }
+    .levelup-overlay.active { opacity: 1; }
+    .levelup-content { text-align: center; transform: scale(0.6); transition: transform 0.4s cubic-bezier(0.2,1.4,0.4,1); }
+    .levelup-overlay.active .levelup-content { transform: scale(1); }
+    .levelup-badge { font-family: 'Orbitron', sans-serif; font-weight: 900; font-size: 1.4em; letter-spacing: 6px; color: var(--gold); text-shadow: var(--glow-gold); }
+    .levelup-level { font-family: 'Orbitron', sans-serif; font-weight: 900; font-size: 5em; color: var(--cyan); text-shadow: var(--glow-cyan), 0 0 40px rgba(0,229,255,0.6); margin: 6px 0; }
+    .levelup-name { font-size: 1.5em; font-weight: 700; color: var(--text-primary); }
+
+    /* ---- Confetti ---- */
+    .confetti-container { position: fixed; inset: 0; z-index: 71; pointer-events: none; overflow: hidden; }
+    .confetti-piece { position: absolute; top: -30px; font-size: 1.6em; animation: confettiFall linear forwards; }
+    @keyframes confettiFall { to { transform: translateY(110vh) rotate(360deg); opacity: 0.2; } }
+
+    /* ---- Badge toast ---- */
+    .badge-toast { position: fixed; top: 24px; right: -320px; z-index: 65; display: flex; align-items: center; gap: 12px;
+        background: var(--panel-bg); backdrop-filter: blur(20px); border: 1px solid var(--gold); border-radius: 14px; padding: 14px 20px;
+        box-shadow: var(--glow-gold); transition: right 0.4s cubic-bezier(0.2,0.9,0.3,1); }
+    .badge-toast.active { right: 24px; }
+    .badge-toast-icon { font-size: 2em; }
+    .badge-toast-label { font-family: 'Share Tech Mono', monospace; font-size: 0.7em; color: var(--text-secondary); letter-spacing: 1px; }
+    .badge-toast-name { font-weight: 700; color: var(--gold); }
+
+    /* ---- Mascot ---- */
+    .mascot-wrap { position: fixed; bottom: 20px; left: 20px; z-index: 40; display: flex; align-items: flex-end; gap: 10px; }
+    .mascot-avatar { font-size: 2.6em; filter: drop-shadow(0 0 10px rgba(0,229,255,0.6)); animation: mascotFloat 3s ease-in-out infinite; }
+    @keyframes mascotFloat { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-6px); } }
+    .mascot-bubble { background: var(--panel-bg); border: 1px solid var(--panel-border); border-radius: 14px; padding: 10px 16px; font-weight: 600; font-size: 0.95em;
+        max-width: 220px; opacity: 0; transform: translateY(6px) scale(0.9); transition: all 0.25s ease; margin-bottom: 8px; }
+    .mascot-wrap.talking .mascot-bubble { opacity: 1; transform: translateY(0) scale(1); }
+    .mascot-wrap.talking .mascot-avatar { animation: mascotFloat 3s ease-in-out infinite, mascotBounce 0.4s ease; }
+    @keyframes mascotBounce { 0%,100% { transform: scale(1); } 50% { transform: scale(1.25); } }
+</style>
+</head>
+<body>
+    <canvas id="particle-canvas"></canvas>
+    <div id="scanlines"></div>
+    <div id="scan-sweep"></div>
+    <div id="screen-flash" class="screen-flash"></div>
+    <div id="combo-display" class="combo-display"></div>
+    <div id="confetti-container" class="confetti-container"></div>
+    <div id="levelup-overlay" class="levelup-overlay">
+        <div class="levelup-content">
+            <div class="levelup-badge">LEVEL UP</div>
+            <div class="levelup-level" id="levelup-level-text">LV.1</div>
+            <div class="levelup-name" id="levelup-name-text"></div>
+        </div>
+    </div>
+    <div id="badge-toast" class="badge-toast">
+        <span class="badge-toast-icon" id="badge-toast-icon"></span>
+        <div><div class="badge-toast-label">🔓 解鎖新徽章</div><div class="badge-toast-name" id="badge-toast-name"></div></div>
+    </div>
+    <div class="mascot-wrap" id="mascot-wrap">
+        <div class="mascot-bubble" id="mascot-bubble"></div>
+        <div class="mascot-avatar">🤖</div>
+    </div>
+
+    <div id="class-dashboard" class="app-screen active">
+        <div class="container">
+            <div class="header">
+                <div class="title-block">
+                    <h1>班級動力站<small>CLASS COMMAND CENTER</small></h1>
+                    <div class="credit-pill">設計：永濂老師</div>
+                </div>
+                <div class="header-actions">
+                    <div id="db-status-badge" class="db-status" title="點擊設定雲端資料庫">
+                        <span class="db-dot" id="db-dot"></span>
+                        <span id="db-status-text">尚未連接資料庫</span>
+                    </div>
+                    <button id="reload-cloud-btn" class="btn btn-secondary" title="從雲端重新載入資料">🔄 同步</button>
+                    <button id="load-data-btn" class="btn btn-secondary">載入備份</button>
+                    <button id="export-data-btn" class="btn btn-primary">匯出備份</button>
+                </div>
+            </div>
+            <div id="class-dashboard-grid">
+                <button class="card class-card" id="add-class-card">+</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="class-view" class="app-screen">
+        <div class="container">
+            <div class="header">
+                <h1 id="class-view-title"></h1>
+                <button id="back-to-dashboard-btn" class="btn btn-secondary">← 返回總覽</button>
+            </div>
+            <div class="class-view-nav">
+                <button class="nav-tab active" data-tab="students">個人模式</button>
+                <button class="nav-tab" data-tab="groups">小隊模式</button>
+                <button class="nav-tab" data-tab="leaderboard">排行榜</button>
+                <button class="nav-tab" data-tab="grades">成績結算</button>
+            </div>
+            <div id="students-tab" class="tab-content active card">
+                <div id="student-grid"></div>
+            </div>
+            <div id="groups-tab" class="tab-content">
+                <div class="card" style="margin-bottom: 20px;">
+                    <div style="display: flex; flex-wrap: wrap; gap: 15px; align-items: end;">
+                        <div style="flex-grow: 1;"><label>設定小隊數</label><input type="number" id="group-count-input" value="4"></div>
+                        <button id="random-group-btn" class="btn btn-primary">🎲 一鍵隨機分隊</button>
+                    </div>
+                </div>
+                <div class="group-container">
+                    <div class="group-column card" id="unassigned-students-column">
+                        <div class="group-header"><h3 style="color:var(--gold); text-shadow:var(--glow-gold);">待命區</h3></div>
+                        <div class="group-members" id="unassigned-students"></div>
+                    </div>
+                    <div class="groups-area" id="groups-area"></div>
+                </div>
+            </div>
+            <div id="leaderboard-tab" class="tab-content card">
+                <div id="leaderboard-list"></div>
+            </div>
+            <div id="grades-tab" class="tab-content card">
+                <div class="grades-actions">
+                    <button id="calculate-grades-btn" class="btn btn-success">⚡ 一鍵結算平時分數</button>
+                    <button id="export-grades-btn" class="btn btn-primary">📋 匯出Excel報表</button>
+                    <button id="reset-scores-btn" class="btn btn-danger">🔁 新考段分數重置</button>
+                </div>
+                <div id="grades-table-container">
+                    <table id="grades-table">
+                        <thead><tr><th>座號/姓名</th><th>累積淨分</th><th>平時分數</th></tr></thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="add-class-modal" class="modal">
+        <div class="card">
+            <h2>🆕 新增班級</h2>
+            <div class="field"><label>班級名稱</label><input type="text" id="new-class-name" placeholder="例如：三年一班"></div>
+            <div class="field"><label>班級人數</label><input type="number" id="new-class-size" value="28"></div>
+            <div style="display: flex; gap: 10px;">
+                <button id="cancel-add-class" class="btn btn-secondary" style="flex:1;">取消</button>
+                <button id="confirm-add-class" class="btn btn-primary" style="flex:1;">確認</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="edit-class-modal" class="modal">
+        <div class="card">
+            <h2>✏️ 編輯班級</h2>
+            <div class="field"><label>班級名稱</label><input type="text" id="edit-class-name" placeholder="例如：三年一班"></div>
+            <div style="display: flex; gap: 10px;">
+                <button id="cancel-edit-class" class="btn btn-secondary" style="flex:1;">取消</button>
+                <button id="confirm-edit-class" class="btn btn-primary" style="flex:1;">儲存</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="firebase-config-modal" class="modal">
+        <div class="card">
+            <h2>☁️ 雲端資料庫設定</h2>
+            <p class="setup-note">
+                請貼上 Firebase 主控台「專案設定 → 一般 → 你的應用程式」提供的 SDK 設定值。
+                這些設定只會存在這台瀏覽器的 localStorage，不會上傳到任何第三方。<br>
+                第一次使用請先到 <code>Firebase Console</code> 建立專案，啟用 <code>Firestore Database</code>，
+                並在「規則」分頁允許讀寫（正式使用建議加上驗證機制）。
+            </p>
+            <div class="field"><label>API Key</label><input type="text" id="fb-apiKey" placeholder="AIzaSy..."></div>
+            <div class="field"><label>Auth Domain</label><input type="text" id="fb-authDomain" placeholder="your-project.firebaseapp.com"></div>
+            <div class="field"><label>Project ID</label><input type="text" id="fb-projectId" placeholder="your-project-id"></div>
+            <div class="field"><label>Storage Bucket</label><input type="text" id="fb-storageBucket" placeholder="your-project.appspot.com"></div>
+            <div class="field"><label>Messaging Sender ID</label><input type="text" id="fb-messagingSenderId" placeholder="123456789"></div>
+            <div class="field"><label>App ID</label><input type="text" id="fb-appId" placeholder="1:123456789:web:abcxyz"></div>
+            <div class="field"><label>資料代號（同一個 Firebase 專案要放多個班級群組時，用不同代號區分）</label><input type="text" id="fb-docId" placeholder="預設: default"></div>
+            <div style="display: flex; gap: 10px;">
+                <button id="cancel-firebase-config" class="btn btn-secondary" style="flex:1;">取消</button>
+                <button id="disconnect-firebase-config" class="btn btn-danger" style="flex:1;">中斷連線</button>
+                <button id="save-firebase-config" class="btn btn-primary" style="flex:1;">儲存並連線</button>
+            </div>
+        </div>
+    </div>
+
+    <input type="file" id="file-input" style="display: none;" accept=".json">
+
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-app.js";
+        import { getFirestore, doc, getDoc, setDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
+
+        // ---------- DOM 參照 ----------
+        const screens = { dashboard: document.getElementById('class-dashboard'), classView: document.getElementById('class-view') };
+        const classDashboardGrid = document.getElementById('class-dashboard-grid');
+
+        const addClassModal = document.getElementById('add-class-modal');
+        const newClassNameInput = document.getElementById('new-class-name');
+        const newClassSizeInput = document.getElementById('new-class-size');
+        const confirmAddClassBtn = document.getElementById('confirm-add-class');
+        const cancelAddClassBtn = document.getElementById('cancel-add-class');
+
+        const editClassModal = document.getElementById('edit-class-modal');
+        const editClassNameInput = document.getElementById('edit-class-name');
+        const confirmEditClassBtn = document.getElementById('confirm-edit-class');
+        const cancelEditClassBtn = document.getElementById('cancel-edit-class');
+
+        const classViewTitle = document.getElementById('class-view-title');
+        const backToDashboardBtn = document.getElementById('back-to-dashboard-btn');
+        const navTabs = document.querySelectorAll('.nav-tab');
+        const tabContents = document.querySelectorAll('.tab-content');
+        const studentGrid = document.getElementById('student-grid');
+        const groupCountInput = document.getElementById('group-count-input');
+        const randomGroupBtn = document.getElementById('random-group-btn');
+        const unassignedStudentsContainer = document.getElementById('unassigned-students');
+        const groupsArea = document.getElementById('groups-area');
+        const leaderboardList = document.getElementById('leaderboard-list');
+        const gradesTableBody = document.querySelector('#grades-table tbody');
+        const calculateGradesBtn = document.getElementById('calculate-grades-btn');
+        const exportGradesBtn = document.getElementById('export-grades-btn');
+        const resetScoresBtn = document.getElementById('reset-scores-btn');
+        const exportDataBtn = document.getElementById('export-data-btn');
+        const loadDataBtn = document.getElementById('load-data-btn');
+        const fileInput = document.getElementById('file-input');
+
+        const dbStatusBadge = document.getElementById('db-status-badge');
+        const dbDot = document.getElementById('db-dot');
+        const dbStatusText = document.getElementById('db-status-text');
+        const reloadCloudBtn = document.getElementById('reload-cloud-btn');
+        const firebaseConfigModal = document.getElementById('firebase-config-modal');
+        const saveFirebaseConfigBtn = document.getElementById('save-firebase-config');
+        const cancelFirebaseConfigBtn = document.getElementById('cancel-firebase-config');
+        const disconnectFirebaseConfigBtn = document.getElementById('disconnect-firebase-config');
+        const fbFields = ['apiKey', 'authDomain', 'projectId', 'storageBucket', 'messagingSenderId', 'appId'];
+
+        const comboDisplay = document.getElementById('combo-display');
+        const screenFlashEl = document.getElementById('screen-flash');
+        const levelupOverlay = document.getElementById('levelup-overlay');
+        const confettiContainer = document.getElementById('confetti-container');
+        const badgeToast = document.getElementById('badge-toast');
+        const mascotWrap = document.getElementById('mascot-wrap');
+        const mascotBubble = document.getElementById('mascot-bubble');
+
+        let allClasses = [];
+        let currentClassId = null;
+        let draggedStudentId = null;
+
+        // ---------- 雲端資料庫 (Firebase Firestore) ----------
+        const LS_CONFIG_KEY = 'classroomPowerhouse_fbConfig';
+        const LS_DOCID_KEY = 'classroomPowerhouse_fbDocId';
+        const LS_CACHE_KEY = 'classroomPowerhouse_cache_v4';
+
+        let firestoreDb = null;
+        let saveTimer = null;
+
+        const getSavedFbConfig = () => { try { return JSON.parse(localStorage.getItem(LS_CONFIG_KEY)); } catch { return null; } };
+        const getDocId = () => localStorage.getItem(LS_DOCID_KEY) || 'default';
+        const setDbStatus = (state, text) => { dbDot.className = 'db-dot' + (state ? ' ' + state : ''); dbStatusText.textContent = text; };
+
+        const connectFirebase = (config) => {
+            try { const app = initializeApp(config); firestoreDb = getFirestore(app); return true; }
+            catch (err) { console.error('Firebase 連線失敗', err); firestoreDb = null; return false; }
+        };
+        const dataDocRef = () => doc(firestoreDb, 'classroomPowerhouse', getDocId());
+
+        const pushToFirestore = async () => {
+            if (!firestoreDb) { setDbStatus('', '尚未連接資料庫'); return; }
+            setDbStatus('syncing', '同步中…');
+            try { await setDoc(dataDocRef(), { allClasses, updatedAt: serverTimestamp() }); setDbStatus('connected', '已同步至雲端'); }
+            catch (err) { console.error('寫入 Firestore 失敗', err); setDbStatus('', '同步失敗（僅本機儲存）'); }
+        };
+        const pullFromFirestore = async () => {
+            if (!firestoreDb) return false;
+            setDbStatus('syncing', '讀取雲端資料中…');
+            try {
+                const snap = await getDoc(dataDocRef());
+                if (snap.exists() && Array.isArray(snap.data().allClasses)) allClasses = snap.data().allClasses;
+                setDbStatus('connected', '已連接雲端資料庫');
+                return true;
+            } catch (err) { console.error('讀取 Firestore 失敗', err); setDbStatus('', '讀取雲端失敗（使用本機備份）'); return false; }
+        };
+        const queueSave = () => {
+            localStorage.setItem(LS_CACHE_KEY, JSON.stringify(allClasses));
+            if (!firestoreDb) return;
+            setDbStatus('syncing', '同步中…');
+            clearTimeout(saveTimer);
+            saveTimer = setTimeout(pushToFirestore, 600);
+        };
+        const initCloud = async () => {
+            const savedConfig = getSavedFbConfig();
+            if (savedConfig) {
+                if (connectFirebase(savedConfig)) { const pulled = await pullFromFirestore(); if (pulled) return; }
+            } else { setDbStatus('', '尚未連接資料庫'); }
+            const cached = localStorage.getItem(LS_CACHE_KEY);
+            if (cached) { try { allClasses = JSON.parse(cached); } catch { allClasses = []; } }
+        };
+
+        // ---------- 遊戲化：等級 / 徽章 ----------
+        const BADGE_DEFS = [
+            { score: 10, icon: '🥉', name: '新手上路' },
+            { score: 30, icon: '🥈', name: '任務達人' },
+            { score: 60, icon: '🥇', name: '傳奇隊長' },
+            { score: 100, icon: '💎', name: '鑽石戰將' },
+            { score: 150, icon: '👑', name: '星際王者' },
+        ];
+        const getLevelInfo = (score) => {
+            const s = Math.max(0, score);
+            const level = Math.floor(s / 10) + 1;
+            const xpInLevel = s % 10;
+            return { level, progress: (xpInLevel / 10) * 100 };
+        };
+        const getEarnedBadges = (score) => BADGE_DEFS.filter(b => score >= b.score);
+
+        // ---------- 一般畫面工具 ----------
+        const switchScreen = (screenName) => { Object.values(screens).forEach(s => s.classList.remove('active')); screens[screenName].classList.add('active'); };
+        const switchTab = (tabName) => { navTabs.forEach(t => t.classList.toggle('active', t.dataset.tab === tabName)); tabContents.forEach(c => c.classList.toggle('active', c.id === `${tabName}-tab`)); };
+        const showModal = (modalId) => document.getElementById(modalId).classList.add('visible');
+        const hideModal = (modalId) => document.getElementById(modalId).classList.remove('visible');
+        const getCurrentClass = () => allClasses.find(cls => cls.id === currentClassId);
+
+        // ---------- 畫面渲染 ----------
+        const renderDashboard = () => {
+            classDashboardGrid.innerHTML = '';
+            allClasses.forEach(c => {
+                const card = document.createElement('div');
+                card.className = 'card class-card';
+                card.dataset.id = c.id;
+                card.innerHTML = `
+                    <div class="class-card-actions">
+                        <button class="class-action-btn edit-class-btn" title="編輯班級">✏️</button>
+                        <button class="class-action-btn delete-class-btn" title="刪除班級">🗑️</button>
+                    </div>
+                    <h3>${c.name}</h3>
+                    <p>◈ ${c.students.length} 位隊員</p>
+                `;
+                classDashboardGrid.appendChild(card);
+            });
+            const addCard = document.createElement('button');
+            addCard.className = 'card class-card';
+            addCard.id = 'add-class-card';
+            addCard.textContent = '+';
+            classDashboardGrid.appendChild(addCard);
+        };
+
+        const renderClassView = () => {
+            const c = getCurrentClass();
+            if (!c) { switchScreen('dashboard'); return; }
+            classViewTitle.textContent = c.name;
+            renderStudentsTab(c); renderGroupsTab(c); renderLeaderboardTab(c); renderGradesTab(c);
+            switchTab('students'); switchScreen('classView');
+        };
+
+        const renderStudentsTab = (c) => {
+            studentGrid.innerHTML = '';
+            c.students.forEach(s => {
+                const lvl = getLevelInfo(s.score);
+                const earned = getEarnedBadges(s.score);
+                const badgesHtml = BADGE_DEFS.map(b => `<span class="badge-icon ${s.score >= b.score ? 'earned' : ''}" title="${b.name}">${b.icon}</span>`).join('');
+                const card = document.createElement('div');
+                card.className = 'card student-card';
+                card.innerHTML = `
+                    <div class="student-header">
+                        <div class="student-name">${s.name}</div>
+                        <button class="delete-student-btn" data-id="${s.id}" title="刪除隊員">🗑️</button>
+                    </div>
+                    <div class="badge-row">${badgesHtml}</div>
+                    <div class="xp-ring" style="--pct:${lvl.progress}"><div class="xp-ring-inner">LV${lvl.level}</div></div>
+                    <input type="number" class="student-score-input" data-id="${s.id}" value="${s.score}">
+                    <div class="score-controls">
+                        <button class="btn btn-danger score-btn" data-id="${s.id}" data-amount="-1">-</button>
+                        <button class="btn btn-success score-btn" data-id="${s.id}" data-amount="1">+</button>
+                    </div>
+                `;
+                studentGrid.appendChild(card);
+            });
+        };
+
+        const renderGroupsTab = (c) => {
+            unassignedStudentsContainer.innerHTML = ''; groupsArea.innerHTML = '';
+            if (!c.groupCount) c.groupCount = 4;
+            groupCountInput.value = c.groupCount;
+            c.students.forEach(s => { if (s.group === null || s.group > c.groupCount) unassignedStudentsContainer.appendChild(createStudentChip(s)); });
+            for (let i = 1; i <= c.groupCount; i++) {
+                const col = document.createElement('div');
+                col.className = 'group-column card';
+                col.dataset.groupId = i;
+                col.innerHTML = `<div class="group-header"><h3>⬡ 第 ${i} 小隊</h3><div class="score-controls"><button class="btn btn-danger score-btn" data-id="${i}" data-amount="-1">-</button><button class="btn btn-success score-btn" data-id="${i}" data-amount="1">+</button></div></div><div class="group-members"></div>`;
+                const members = col.querySelector('.group-members');
+                c.students.filter(s => s.group === i).forEach(s => members.appendChild(createStudentChip(s)));
+                groupsArea.appendChild(col);
+            }
+        };
+
+        const renderLeaderboardTab = (c) => {
+            leaderboardList.innerHTML = '';
+            const sorted = [...c.students].sort((a, b) => b.score - a.score);
+            const maxScore = Math.max(1, ...sorted.map(s => s.score));
+            const medals = ['🥇', '🥈', '🥉'];
+            sorted.forEach((s, i) => {
+                const lvl = getLevelInfo(s.score);
+                const pct = Math.max(4, Math.min(100, (Math.max(0, s.score) / maxScore) * 100));
+                const row = document.createElement('div');
+                row.className = 'lb-row' + (i === 0 ? ' top1' : i === 1 ? ' top2' : i === 2 ? ' top3' : '');
+                row.innerHTML = `
+                    <div class="lb-rank">${i < 3 ? medals[i] : '#' + (i + 1)}</div>
+                    <div class="lb-main">
+                        <div class="lb-name-line">${s.name} <span class="lb-level-chip">LV.${lvl.level}</span></div>
+                        <div class="lb-bar-track"><div class="lb-bar-fill" style="width:${pct}%"></div></div>
+                    </div>
+                    <div class="lb-score">${s.score}</div>
+                `;
+                leaderboardList.appendChild(row);
+            });
+        };
+
+        const renderGradesTab = (c) => {
+            gradesTableBody.innerHTML = '';
+            c.students.forEach(s => {
+                const r = document.createElement('tr');
+                r.innerHTML = `<td>${s.name}</td><td>${s.score}</td><td class="final-grade" data-id="${s.id}">-</td>`;
+                gradesTableBody.appendChild(r);
+            });
+        };
+
+        const createStudentChip = (s) => { const c = document.createElement('div'); c.className = 'student-chip'; c.textContent = s.name; c.dataset.studentId = s.id; c.draggable = true; return c; };
+
+        // ---------- 誇張回饋特效 ----------
+        const showScoreFeedback = (el, amount) => {
+            const f = document.createElement('div');
+            f.className = 'score-feedback';
+            f.textContent = amount > 0 ? `+${amount}` : `${amount}`;
+            f.style.color = amount > 0 ? 'var(--green)' : 'var(--danger)';
+            f.style.textShadow = amount > 0 ? 'var(--glow-green)' : '0 0 18px rgba(255,59,92,0.6)';
+            el.appendChild(f);
+            setTimeout(() => f.remove(), 700);
+        };
+
+        const flashScreen = (kind) => { screenFlashEl.className = 'screen-flash active ' + kind; setTimeout(() => screenFlashEl.classList.remove('active'), 300); };
+
+        let comboCount = 0, comboTimer = null;
+        const registerCombo = (amount) => {
+            if (amount <= 0) { comboCount = 0; clearTimeout(comboTimer); comboDisplay.classList.remove('show'); return; }
+            comboCount++;
+            comboDisplay.className = 'combo-display show' + (comboCount >= 8 ? ' hot' : comboCount >= 4 ? ' mid' : '');
+            comboDisplay.textContent = comboCount >= 8 ? `⚡ COMBO x${comboCount} 太猛了！⚡` : comboCount >= 4 ? `🔥 COMBO x${comboCount} 🔥` : `COMBO x${comboCount}`;
+            if (comboCount >= 5 && comboCount % 5 === 0) { document.body.classList.remove('shake'); void document.body.offsetWidth; document.body.classList.add('shake'); }
+            clearTimeout(comboTimer);
+            comboTimer = setTimeout(() => { comboCount = 0; comboDisplay.classList.remove('show'); }, 2200);
+        };
+
+        const PRAISE_PHRASES = ['太棒了！🚀', '超強的！⭐', '再接再厲！🔥', '完美達成！✨', '了不起的表現！🎯', '隊長好樣的！🛰️'];
+        const COMFORT_PHRASES = ['沒關係，下次加油！💪', '小心一點哦～', '再試試看！🙂', '調整一下，你可以的！🌙'];
+        let mascotTimer = null;
+        const showMascotSpeech = (positive) => {
+            const phrases = positive ? PRAISE_PHRASES : COMFORT_PHRASES;
+            mascotBubble.textContent = phrases[Math.floor(Math.random() * phrases.length)];
+            mascotWrap.classList.add('talking');
+            clearTimeout(mascotTimer);
+            mascotTimer = setTimeout(() => mascotWrap.classList.remove('talking'), 1800);
+        };
+
+        const CONFETTI_EMOJI = ['🎉', '⭐', '✨', '🚀', '🏆', '💫'];
+        const spawnConfetti = () => {
+            for (let i = 0; i < 36; i++) {
+                const piece = document.createElement('span');
+                piece.className = 'confetti-piece';
+                piece.textContent = CONFETTI_EMOJI[Math.floor(Math.random() * CONFETTI_EMOJI.length)];
+                piece.style.left = Math.random() * 100 + 'vw';
+                piece.style.animationDuration = (1.4 + Math.random() * 1.2) + 's';
+                piece.style.fontSize = (1 + Math.random() * 1.4) + 'em';
+                confettiContainer.appendChild(piece);
+                piece.addEventListener('animationend', () => piece.remove());
+            }
+        };
+
+        let levelupTimer = null;
+        const celebrateLevelUp = (name, level) => {
+            document.getElementById('levelup-level-text').textContent = 'LV.' + level;
+            document.getElementById('levelup-name-text').textContent = name;
+            levelupOverlay.classList.add('active');
+            flashScreen('levelup');
+            spawnConfetti();
+            clearTimeout(levelupTimer);
+            levelupTimer = setTimeout(() => levelupOverlay.classList.remove('active'), 2000);
+        };
+
+        let badgeToastTimer = null;
+        const showBadgeToast = (badge) => {
+            document.getElementById('badge-toast-icon').textContent = badge.icon;
+            document.getElementById('badge-toast-name').textContent = badge.name;
+            badgeToast.classList.add('active');
+            clearTimeout(badgeToastTimer);
+            badgeToastTimer = setTimeout(() => badgeToast.classList.remove('active'), 2600);
+        };
+
+        // ---------- 業務邏輯 ----------
+        const setStudentScore = (id, newScore, deltaForFeedback) => {
+            const c = getCurrentClass(); const s = c.students.find(st => st.id === id);
+            if (!s || Number.isNaN(newScore)) return;
+            const oldScore = s.score;
+            const oldLevel = getLevelInfo(oldScore).level;
+            const oldBadgeCount = getEarnedBadges(oldScore).length;
+            s.score = newScore;
+            queueSave();
+
+            const newLevel = getLevelInfo(newScore).level;
+            const newBadgeCount = getEarnedBadges(newScore).length;
+
+            const input = studentGrid.querySelector(`.student-score-input[data-id="${id}"]`);
+            const card = input ? input.closest('.student-card') : null;
+            if (card && deltaForFeedback) {
+                showScoreFeedback(card, deltaForFeedback);
+                flashScreen(deltaForFeedback > 0 ? 'plus' : 'minus');
+                registerCombo(deltaForFeedback);
+                showMascotSpeech(deltaForFeedback > 0);
+            }
+            if (newLevel > oldLevel) setTimeout(() => celebrateLevelUp(s.name, newLevel), 350);
+            else if (newBadgeCount > oldBadgeCount) setTimeout(() => showBadgeToast(BADGE_DEFS[newBadgeCount - 1]), 350);
+
+            setTimeout(() => { renderStudentsTab(c); renderLeaderboardTab(c); renderGradesTab(c); }, card && deltaForFeedback ? 300 : 0);
+        };
+
+        const updateScore = (id, amount) => {
+            const c = getCurrentClass(); const s = c.students.find(st => st.id === id);
+            if (!s) return;
+            setStudentScore(id, s.score + amount, amount);
+        };
+
+        const updateGroupScore = (id, amount) => {
+            const c = getCurrentClass();
+            c.students.filter(s => s.group === id).forEach(s => s.score += amount);
+            queueSave();
+            const col = document.querySelector(`.group-column[data-group-id="${id}"]`);
+            if (col) showScoreFeedback(col, amount);
+            flashScreen(amount > 0 ? 'plus' : 'minus');
+            registerCombo(amount);
+            showMascotSpeech(amount > 0);
+            setTimeout(() => { renderStudentsTab(c); renderGroupsTab(c); renderLeaderboardTab(c); renderGradesTab(c); }, 300);
+        };
+
+        const calculateGrades = () => {
+            const c = getCurrentClass();
+            const scores = c.students.map(s => s.score);
+            const min = Math.min(...scores), max = Math.max(...scores), range = max - min;
+            c.students.forEach(s => {
+                let grade = (range === 0) ? 90 : 80 + ((s.score - min) / range) * 20;
+                document.querySelector(`.final-grade[data-id="${s.id}"]`).textContent = Math.round(grade);
+            });
+        };
+
+        const resetScores = () => {
+            if (confirm('確定要重置所有隊員的分數嗎？')) {
+                const c = getCurrentClass();
+                c.students.forEach(s => s.score = 0);
+                queueSave();
+                renderClassView();
+            }
+        };
+
+        // ---------- 事件監聽 ----------
+        classDashboardGrid.addEventListener('click', (e) => {
+            const card = e.target.closest('.class-card');
+            if (!card) return;
+            const classId = parseInt(card.dataset.id);
+            if (e.target.closest('.delete-class-btn')) {
+                e.stopPropagation();
+                const targetClass = allClasses.find(c => c.id === classId);
+                if (targetClass && confirm(`確定要刪除「${targetClass.name}」嗎？所有資料將無法復原！`)) {
+                    allClasses = allClasses.filter(c => c.id !== classId);
+                    queueSave(); renderDashboard();
+                }
+            } else if (e.target.closest('.edit-class-btn')) {
+                e.stopPropagation();
+                const targetClass = allClasses.find(c => c.id === classId);
+                if (targetClass) { editClassNameInput.value = targetClass.name; editClassModal.dataset.editingId = classId; showModal('edit-class-modal'); }
+            } else if (card.id === 'add-class-card') {
+                showModal('add-class-modal');
+            } else if (card) {
+                currentClassId = classId; renderClassView();
+            }
+        });
+
+        studentGrid.addEventListener('click', (e) => {
+            if (e.target.matches('.score-btn')) updateScore(parseInt(e.target.dataset.id), parseInt(e.target.dataset.amount));
+            const deleteBtn = e.target.closest('.delete-student-btn');
+            if (deleteBtn) {
+                const studentId = parseInt(deleteBtn.dataset.id);
+                const currentClass = getCurrentClass();
+                if (!currentClass) return;
+                const studentToDelete = currentClass.students.find(s => s.id === studentId);
+                if (studentToDelete && confirm(`確定要刪除隊員「${studentToDelete.name}」嗎？`)) {
+                    currentClass.students = currentClass.students.filter(s => s.id !== studentId);
+                    queueSave(); renderClassView();
+                }
+            }
+        });
+        studentGrid.addEventListener('change', (e) => {
+            if (e.target.matches('.student-score-input')) {
+                const id = parseInt(e.target.dataset.id);
+                const val = parseInt(e.target.value, 10);
+                setStudentScore(id, Number.isNaN(val) ? 0 : val);
+            }
+        });
+        studentGrid.addEventListener('focus', (e) => { if (e.target.matches('.student-score-input')) e.target.select(); }, true);
+        studentGrid.addEventListener('keydown', (e) => { if (e.target.matches('.student-score-input') && e.key === 'Enter') e.target.blur(); });
+
+        confirmAddClassBtn.addEventListener('click', () => {
+            const name = newClassNameInput.value.trim();
+            const count = parseInt(newClassSizeInput.value, 10);
+            if (name && count > 0 && allClasses.length < 20) {
+                const newClass = { id: Date.now(), name, students: [], groupCount: 4 };
+                for (let i = 1; i <= count; i++) newClass.students.push({ id: Date.now() + i, name: `${i}號`, score: 0, group: null });
+                allClasses.push(newClass);
+                queueSave(); renderDashboard(); hideModal('add-class-modal');
+                newClassNameInput.value = ''; newClassSizeInput.value = 28;
+            } else { alert('請輸入有效班級名稱與人數(最多20個班級)。'); }
+        });
+        cancelAddClassBtn.addEventListener('click', () => hideModal('add-class-modal'));
+
+        confirmEditClassBtn.addEventListener('click', () => {
+            const newName = editClassNameInput.value.trim();
+            const editingId = parseInt(editClassModal.dataset.editingId);
+            if (newName && editingId) {
+                const targetClass = allClasses.find(c => c.id === editingId);
+                if (targetClass) { targetClass.name = newName; queueSave(); renderDashboard(); hideModal('edit-class-modal'); }
+            } else { alert('請輸入有效的班級名稱。'); }
+        });
+        cancelEditClassBtn.addEventListener('click', () => hideModal('edit-class-modal'));
+
+        backToDashboardBtn.addEventListener('click', () => switchScreen('dashboard'));
+        navTabs.forEach(tab => tab.addEventListener('click', () => switchTab(tab.dataset.tab)));
+        groupsArea.addEventListener('click', (e) => { if (e.target.matches('.score-btn')) updateGroupScore(parseInt(e.target.dataset.id), parseInt(e.target.dataset.amount)); });
+        groupCountInput.addEventListener('change', () => {
+            const c = getCurrentClass();
+            c.groupCount = parseInt(groupCountInput.value, 10);
+            c.students.forEach(s => s.group = null);
+            queueSave(); renderGroupsTab(c);
+        });
+        randomGroupBtn.addEventListener('click', () => {
+            const c = getCurrentClass();
+            const count = c.groupCount || 4;
+            const shuffled = [...c.students].sort(() => 0.5 - Math.random());
+            shuffled.forEach((s, i) => s.group = (i % count) + 1);
+            queueSave(); renderGroupsTab(c);
+        });
+        calculateGradesBtn.addEventListener('click', calculateGrades);
+        resetScoresBtn.addEventListener('click', resetScores);
+        exportGradesBtn.addEventListener('click', () => {
+            let tsv = "姓名\t淨分\t平時分數\n";
+            document.querySelectorAll('#grades-table tbody tr').forEach(r => { const c = r.querySelectorAll('td'); tsv += `${c[0].textContent}\t${c[1].textContent}\t${c[2].textContent}\n`; });
+            navigator.clipboard.writeText(tsv).then(() => alert('成績已複製！可直接貼到Excel。'));
+        });
+        exportDataBtn.addEventListener('click', () => {
+            const dataStr = JSON.stringify(allClasses);
+            const blob = new Blob([dataStr], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.download = `班級動力站_備份_${new Date().toISOString().slice(0, 10)}.json`;
+            a.href = url; a.click(); URL.revokeObjectURL(url);
+        });
+        loadDataBtn.addEventListener('click', () => fileInput.click());
+        fileInput.addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = (ev) => {
+                try {
+                    const data = JSON.parse(ev.target.result);
+                    if (Array.isArray(data)) {
+                        if (confirm("確定載入備份？將覆蓋現有資料（含雲端資料）！")) { allClasses = data; queueSave(); renderDashboard(); alert("載入成功！"); }
+                    } else { alert("檔案格式錯誤。"); }
+                } catch { alert("讀取失敗。"); }
+            };
+            reader.readAsText(file);
+        });
+        document.addEventListener('dragstart', (e) => { if (e.target.matches('.student-chip')) draggedStudentId = parseInt(e.target.dataset.studentId); });
+        document.addEventListener('dragover', (e) => e.preventDefault());
+        document.addEventListener('drop', (e) => {
+            const col = e.target.closest('.group-column, #unassigned-students-column');
+            if (!col) return;
+            const groupId = col.id === 'unassigned-students-column' ? null : parseInt(col.dataset.groupId);
+            const c = getCurrentClass();
+            const s = c.students.find(st => st.id === draggedStudentId);
+            if (s) { s.group = groupId; queueSave(); renderGroupsTab(c); }
+        });
+
+        // ---------- 雲端資料庫設定 Modal ----------
+        const openFirebaseConfigModal = () => {
+            const saved = getSavedFbConfig() || {};
+            fbFields.forEach(f => { document.getElementById('fb-' + f).value = saved[f] || ''; });
+            document.getElementById('fb-docId').value = getDocId() === 'default' ? '' : getDocId();
+            showModal('firebase-config-modal');
+        };
+        dbStatusBadge.addEventListener('click', openFirebaseConfigModal);
+        cancelFirebaseConfigBtn.addEventListener('click', () => hideModal('firebase-config-modal'));
+
+        saveFirebaseConfigBtn.addEventListener('click', async () => {
+            const config = {};
+            fbFields.forEach(f => { config[f] = document.getElementById('fb-' + f).value.trim(); });
+            if (!config.apiKey || !config.projectId || !config.appId) { alert('請至少填寫 API Key、Project ID、App ID。'); return; }
+            const docId = document.getElementById('fb-docId').value.trim() || 'default';
+            localStorage.setItem(LS_CONFIG_KEY, JSON.stringify(config));
+            localStorage.setItem(LS_DOCID_KEY, docId);
+            const ok = connectFirebase(config);
+            if (!ok) { alert('連線設定有誤，請確認後再試一次。'); return; }
+            hideModal('firebase-config-modal');
+            const pulled = await pullFromFirestore();
+            if (!pulled) await pushToFirestore();
+            renderDashboard();
+            if (currentClassId) renderClassView();
+        });
+        disconnectFirebaseConfigBtn.addEventListener('click', () => {
+            if (!confirm('確定要中斷雲端資料庫連線嗎？之後將只使用本機儲存。')) return;
+            localStorage.removeItem(LS_CONFIG_KEY);
+            localStorage.removeItem(LS_DOCID_KEY);
+            firestoreDb = null;
+            setDbStatus('', '尚未連接資料庫');
+            hideModal('firebase-config-modal');
+        });
+        reloadCloudBtn.addEventListener('click', async () => {
+            if (!firestoreDb) { openFirebaseConfigModal(); return; }
+            if (!confirm('從雲端重新載入資料嗎？未同步的本機修改將被覆蓋。')) return;
+            await pullFromFirestore();
+            renderDashboard();
+            if (currentClassId) renderClassView();
+        });
+
+        // ---------- 星空背景動畫 ----------
+        const canvas = document.getElementById('particle-canvas'); const ctx = canvas.getContext('2d'); let particles = [];
+        const resizeCanvas = () => { canvas.width = window.innerWidth; canvas.height = window.innerHeight; };
+        class Star {
+            constructor() { this.reset(true); }
+            reset(initial) { this.x = Math.random() * canvas.width; this.y = initial ? Math.random() * canvas.height : canvas.height + 5; this.size = Math.random() * 2 + 0.4; this.speedY = Math.random() * 0.4 + 0.08; this.twinkle = Math.random() * Math.PI * 2; }
+            update() { this.y -= this.speedY; this.twinkle += 0.03; if (this.y < -5) this.reset(false); }
+            draw() { const o = 0.4 + Math.sin(this.twinkle) * 0.3; ctx.fillStyle = `rgba(0, 229, 255, ${Math.max(0.1, o)})`; ctx.beginPath(); ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2); ctx.fill(); }
+        }
+        const initParticles = () => { particles = []; const num = window.innerWidth / 14; for (let i = 0; i < num; i++) particles.push(new Star()); };
+        const animateParticles = () => { ctx.clearRect(0, 0, canvas.width, canvas.height); particles.forEach(p => { p.update(); p.draw(); }); requestAnimationFrame(animateParticles); };
+        window.addEventListener('resize', () => { resizeCanvas(); initParticles(); });
+
+        // ---------- 初始化 ----------
+        (async () => {
+            resizeCanvas(); initParticles(); animateParticles();
+            await initCloud();
+            renderDashboard();
+            switchScreen('dashboard');
+        })();
+    </script>
+</body>
+</html>
