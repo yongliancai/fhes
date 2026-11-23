@@ -374,6 +374,9 @@
     .record-reason .card { width: 92%; max-width: 620px; }
     .record-done { position: fixed; left: 50%; top: 50%; z-index: 220; transform: translate(-50%,-50%); padding: 18px 40px; border-radius: 16px; background: rgba(10,22,48,0.96); border: 1px solid var(--text-secondary); font-size: 1.6em; font-weight: 800; color: var(--text-primary); opacity: 0; pointer-events: none; transition: opacity 0.2s ease; }
     .record-done.show { opacity: 1; }
+    .session-block { margin: 14px 0 22px; }
+    .session-head { margin: 0 0 4px; font-size: 1.05em; color: var(--text-primary); }
+    .session-people { margin: 4px 0 0; color: var(--pink); font-weight: 700; }
     #pending-modal .card, #timeline-modal .card { max-width: 1100px; }
     #pending-btn.has { background: rgba(255,210,63,0.16); color: var(--gold); border-color: var(--gold); }
     .row-btn { min-height: 40px !important; padding: 4px 12px !important; font-size: 0.85em !important; }
@@ -498,7 +501,7 @@
                 <h3 class="section-title">當日結算</h3>
                 <div class="table-wrap"><table class="data-table" id="history-summary"></table></div>
                 <h3 class="section-title">當日明細</h3>
-                <div class="table-wrap"><table class="data-table" id="history-detail"></table></div>
+                <div id="history-detail"></div>
             </div>
         </div>
     </div>
@@ -895,9 +898,18 @@
         };
 
         /** v5.1 資料升級：班級補上扣分原因、消除原因、兌換清單、時段時間 */
+        /** 舊紀錄補欄位：時段＝其他、狀態＝已確認、記錄人＝老師、備註＝空白、非兌換 */
+        const EVENT_DEFAULTS = { session: '其他', status: 'confirmed', recordedBy: 'teacher', reviewNote: '', redeem: false };
+        const normalizeEvent = (e) => {
+            let changed = false;
+            for (const [k, v] of Object.entries(EVENT_DEFAULTS)) if (e[k] === undefined || e[k] === null) { e[k] = v; changed = true; }
+            return changed;
+        };
         const upgradeData = async () => {
             const cls = S.classes.filter(ensureClassDefaults);
-            if (cls.length) await dbWrite({ classes: cls });
+            const evs = S.events.filter(normalizeEvent);
+            if (cls.length || evs.length) await dbWrite({ ...(cls.length ? { classes: cls } : {}), ...(evs.length ? { events: evs } : {}) });
+            if (S.meta.dataVersion !== DATA_VERSION) await setMeta('dataVersion', DATA_VERSION);
         };
 
         // ---------- meta ----------
@@ -1780,31 +1792,45 @@
         const getSnapshot = (classId, date) => S.snapshots.find(s => s.id === snapshotId(classId, date));
         const NO_REASON = '（未選原因）';
 
-        /** 計算某班某日的結算：當日依原因分列的增減＋日終累計 */
+        /**
+         * 計算某班某日的結算（只計入已確認紀錄，依生效日）：
+         * 當日依原因分列的增減、各時段愛心小計、日終可用加分／累計獲得／愛心
+         */
         const computeSnapshot = (classId, date) => {
             const students = {}; const groups = {};
-            const stu = (id) => students[id] || (students[id] = { scoreDelta: 0, heartDelta: 0, scoreByReason: {}, heartByReason: {}, scoreTotal: 0, heartTotal: 0 });
+            const sessionTotals = Object.fromEntries(SESSIONS.map(k => [k, { penalty: 0, clear: 0 }]));
+            const stu = (id) => students[id] || (students[id] = { scoreDelta: 0, heartDelta: 0, scoreByReason: {}, heartByReason: {},
+                heartBySession: Object.fromEntries(SESSIONS.map(k => [k, 0])), scoreTotal: 0, earnedTotal: 0, heartTotal: 0 });
             studentsOf(classId).forEach(s => stu(s.id));
-            for (const e of S.events) {
-                if (e.classId !== classId || e.date > date) continue;
+            const evs = S.events.filter(e => e.classId === classId && isCounted(e) && effDate(e) <= date).sort(byEffTs);
+            for (const e of evs) {
+                const today = effDate(e) === date;
                 if (e.targetType === 'group') {
                     const g = groups[e.targetId] || (groups[e.targetId] = { scoreDelta: 0, scoreTotal: 0 });
-                    g.scoreTotal += e.delta; if (e.date === date) g.scoreDelta += e.delta;
+                    g.scoreTotal += e.delta; if (today) g.scoreDelta += e.delta;
                     continue;
                 }
                 const r = stu(e.targetId);
-                if (e.kind === 'heart') r.heartTotal += e.delta; else r.scoreTotal += e.delta;
-                if (e.date === date) {
-                    const key = e.reason || NO_REASON;
-                    if (e.kind === 'heart') { r.heartDelta += e.delta; r.heartByReason[key] = (r.heartByReason[key] || 0) + e.delta; }
-                    else { r.scoreDelta += e.delta; r.scoreByReason[key] = (r.scoreByReason[key] || 0) + e.delta; }
+                if (e.kind === 'heart') {
+                    const before = r.heartTotal; r.heartTotal = Math.max(0, before + e.delta);
+                    const applied = r.heartTotal - before;
+                    if (today) {
+                        const key = e.reason || NO_REASON; const ses = SESSIONS.includes(e.session) ? e.session : '其他';
+                        r.heartDelta += applied; r.heartByReason[key] = (r.heartByReason[key] || 0) + applied;
+                        r.heartBySession[ses] += applied;
+                        const base = (e.undoOf && eventById.get(e.undoOf)) || e;  // 復原／撤銷抵銷原本那一類
+                        if (base.delta > 0) sessionTotals[ses].penalty += applied; else sessionTotals[ses].clear -= applied;
+                    }
+                } else {
+                    r.scoreTotal += e.delta; if (!e.redeem) r.earnedTotal += e.delta;
+                    if (today) { const key = e.reason || NO_REASON; r.scoreDelta += e.delta; r.scoreByReason[key] = (r.scoreByReason[key] || 0) + e.delta; }
                 }
             }
             for (const [id, r] of Object.entries(students)) {
                 const s = studentById(id); r.name = s?.name ?? '（已移除）'; r.seat = s?.seat ?? null;
                 [r.scoreByReason, r.heartByReason].forEach(m => Object.keys(m).forEach(k => { if (m[k] === 0) delete m[k]; }));
             }
-            return { id: snapshotId(classId, date), classId, date, settledAt: Date.now(), students, groups };
+            return { id: snapshotId(classId, date), classId, date, settledAt: Date.now(), v: 5.1, students, groups, sessionTotals };
         };
         const saveSnapshots = async (list) => {
             if (!list.length) return;
@@ -1870,7 +1896,7 @@
             if (e.confirmedDate && e.confirmedDate !== e.date) return `已確認（${mdLabel(e.confirmedDate)}）`;
             return '已確認';
         };
-        const statusFull = (e) => statusText(e) + (e.reviewNote && !e.undoOf ? `：${e.reviewNote.replace(/^撤銷：/, '')}` : '');
+        const statusFull = (e) => statusText(e) + (e.reviewNote && !e.undoOf && e.status !== 'pending' ? `：${e.reviewNote.replace(/^撤銷：/, '')}` : '');
         const isStruck = (e) => !isCounted(e) || e.undone || e.revoked;
         /** 逐筆累計（依生效時間，愛心最少 0），回傳 id → { score, heart } */
         const runningTotals = (evs) => {
@@ -1878,13 +1904,20 @@
             [...evs].filter(isCounted).sort(byEffTs).forEach(e => { applyTo(t, e); out.set(e.id, { ...t }); });
             return out;
         };
-        const eventRowsCSV = (list) => [['日期', '時間', '座號', '對象', '項目', '增減', '原因', '狀態'],
-            ...list.map(e => [e.date, localTime(e.ts), e.targetType === 'student' ? (studentById(e.targetId)?.seat ?? '') : '', targetName(e),
-                e.kind === 'heart' ? '愛心' : '加分', e.delta, e.reason, statusText(e)])];
+        const eventRowsCSV = (list) => [['日期', '時間', '時段', '座號', '對象', '項目', '增減', '原因', '狀態', '記錄人', '計入日期'],
+            ...list.map(e => [e.date, localTime(e.ts), e.session || '其他', e.targetType === 'student' ? (studentById(e.targetId)?.seat ?? '') : '', targetName(e),
+                actionLabel(e).replace(/^\S+\s/, ''), e.delta, e.reason, statusFull(e), recorderName(e), isCounted(e) ? effDate(e) : ''])];
 
         // ---------- 歷史分頁 ----------
         let historyDate = null;
-        const daySummary = (c, date) => getSnapshot(c.id, date) || computeSnapshot(c.id, date);
+        /** 已結算的日子用快照；v5 舊快照沒有時段小計，該欄改用即時計算 */
+        const daySummary = (c, date) => {
+            const snap = getSnapshot(c.id, date); const live = computeSnapshot(c.id, date);
+            if (!snap) return live;
+            if (snap.v >= 5.1) return snap;
+            const students = Object.fromEntries(Object.entries(snap.students).map(([id, r]) => [id, { earnedTotal: live.students[id]?.earnedTotal ?? '', ...r, heartBySession: live.students[id]?.heartBySession }]));
+            return { ...snap, students, sessionTotals: live.sessionTotals };
+        };
         const renderHistoryTab = (c) => {
             const today = localDate();
             if (!historyDate) historyDate = today;
@@ -1897,7 +1930,7 @@
                 st.textContent = snap ? `📌 今天（${mdLabel(today)}）已於 ${localTime(snap.settledAt)} 結算；之後若有異動，可再按「今日結算」更新。` : `📝 今天（${mdLabel(today)}）尚未結算，表格為即時數字。`;
             } else {
                 st.className = 'history-status ' + (snap ? 'locked' : 'open');
-                st.textContent = snap ? `🔒 ${mdLabel(historyDate)} 已結算（${localDateTime(snap.settledAt)}），已鎖定。事後補登請用「手動調整」的補登日期。` : `${mdLabel(historyDate)} 沒有紀錄。`;
+                st.textContent = snap ? `🔒 ${mdLabel(historyDate)} 已結算（${localDateTime(snap.settledAt)}），已鎖定。待確認的紀錄不受鎖定，確認後計入確認當天。` : `${mdLabel(historyDate)} 沒有紀錄。`;
             }
             $('settle-today-btn').style.display = historyDate === today ? '' : 'none';
             $('settle-today-btn').textContent = getSnapshot(c.id, today) ? '📌 更新今日結算' : '📌 今日結算';
@@ -1905,24 +1938,44 @@
             const sum = daySummary(c, historyDate);
             const rows = Object.entries(sum.students).map(([id, r]) => ({ id, ...r })).sort((a, b) => (a.seat ?? 999) - (b.seat ?? 999));
             const cell = (n) => h('span', { class: n > 0 ? 'pos' : n < 0 ? 'neg' : 'muted', text: n === 0 ? '0' : signed(n) });
+            const hcell = (n) => h('span', { class: n ? 'heart-c' : 'muted', text: n ? signed(n) : '·' });
             $('history-summary').replaceChildren(
-                h('thead', {}, h('tr', {}, ['座號', '姓名', '⭐ 當日', '⭐ 原因', '❤️ 當日', '❤️ 原因', '⭐ 日終累計', '❤️ 日終累計'].map(t => h('th', { text: t })))),
+                h('thead', {}, h('tr', {}, ['座號', '姓名', '⭐ 當日', '⭐ 原因', '❤️ 早自修', '❤️ 午休', '❤️ 其他', '❤️ 原因', '⭐ 可用', '⭐ 累計獲得', '❤️ 日終'].map(t => h('th', { text: t })))),
                 h('tbody', {}, rows.map(r => h('tr', {},
                     h('td', { text: r.seat ?? '' }), h('td', { class: 'left', text: r.name }),
                     h('td', {}, cell(r.scoreDelta)), h('td', { class: 'left muted', text: reasonText(r.scoreByReason) }),
-                    h('td', {}, cell(r.heartDelta)), h('td', { class: 'left muted', text: reasonText(r.heartByReason) }),
-                    h('td', { text: r.scoreTotal }), h('td', { class: 'heart-c', text: r.heartTotal }))),
+                    SESSIONS.map(k => h('td', {}, hcell(r.heartBySession?.[k] || 0))),
+                    h('td', { class: 'left muted', text: reasonText(r.heartByReason) }),
+                    h('td', { text: r.scoreTotal }), h('td', { text: r.earnedTotal ?? '' }), h('td', { class: 'heart-c', text: r.heartTotal }))),
                     Object.entries(sum.groups || {}).sort().map(([g, r]) => h('tr', {},
-                        h('td', { text: '—' }), h('td', { class: 'left', text: `第 ${g} 小隊` }), h('td', {}, cell(r.scoreDelta)), h('td', {}), h('td', {}), h('td', {}),
-                        h('td', { text: r.scoreTotal }), h('td', {})))));
+                        h('td', { text: '—' }), h('td', { class: 'left', text: `第 ${g} 小隊` }), h('td', {}, cell(r.scoreDelta)), h('td', {}),
+                        h('td', {}), h('td', {}), h('td', {}), h('td', {}), h('td', { text: r.scoreTotal }), h('td', {}), h('td', {})))));
 
-            const evs = S.events.filter(e => e.classId === c.id && e.date === historyDate).sort((a, b) => b.ts - a.ts);
-            $('history-detail').replaceChildren(
-                h('thead', {}, h('tr', {}, ['時間', '對象', '項目', '增減', '原因', '狀態'].map(t => h('th', { text: t })))),
-                h('tbody', {}, evs.length ? evs.map(e => h('tr', { class: e.undone ? 'undone' : '' },
-                    h('td', { text: localTime(e.ts) }), h('td', { class: 'left', text: targetName(e) }), h('td', { text: kindLabel(e.kind) }),
-                    h('td', {}, cell(e.delta)), h('td', { class: 'left', text: e.reason || '' }), h('td', { class: 'muted', text: statusText(e) })))
-                    : h('tr', {}, h('td', { colspan: '6', class: 'muted', text: '這一天沒有紀錄' }))));
+            // 當日明細：依時段分區（記錄日），另列「之前記錄、今天確認」
+            const dayEvs = S.events.filter(e => e.classId === c.id && e.date === historyDate).sort((a, b) => a.ts - b.ts);
+            const lateConfirmed = S.events.filter(e => e.classId === c.id && e.date !== historyDate && e.confirmedDate === historyDate).sort((a, b) => a.ts - b.ts);
+            const table = (list, showDate) => h('div', { class: 'table-wrap' }, h('table', { class: 'data-table' },
+                h('thead', {}, h('tr', {}, [showDate ? '記錄日' : null, '時間', '對象', '項目', '增減', '原因', '狀態', '記錄人', ''].filter(Boolean).map(t => h('th', { text: t })))),
+                h('tbody', {}, list.map(e => h('tr', { class: isStruck(e) ? 'undone' : '' },
+                    showDate ? h('td', { text: mdLabel(e.date) }) : null,
+                    h('td', { text: localTime(e.ts) }), h('td', { class: 'left', text: e.targetType === 'student' ? seatName(studentById(e.targetId)) : targetName(e) }),
+                    h('td', { text: actionLabel(e) }), h('td', {}, e.kind === 'heart' ? hcell(e.delta) : cell(e.delta)),
+                    h('td', { class: 'left', text: e.reason || '' }), h('td', { class: 'muted', text: statusFull(e) }), h('td', { class: 'muted', text: recorderName(e) }),
+                    h('td', {}, canRevoke(e) ? h('button', { class: 'btn btn-secondary row-btn', text: '撤銷', onclick: () => revokeEvent(e) }) : null))))));
+            const sections = SESSIONS.map(k => {
+                const list = dayEvs.filter(e => (e.session || '其他') === k);
+                const t = sum.sessionTotals?.[k];
+                const marks = list.filter(e => e.kind === 'heart' && e.delta > 0 && !e.undoOf);
+                const people = [...new Set(marks.filter(e => e.targetType === 'student' && !isStruck(e)).map(e => seatName(studentById(e.targetId))))];
+                const recorders = [...new Set(marks.map(recorderName))];
+                return h('div', { class: 'session-block' },
+                    h('h4', { class: 'session-head' }, `${SESSION_ICON[k]} ${k}`,
+                        h('span', { class: 'muted', text: list.length ? `　${list.length} 筆` + (t ? `・計入扣分 ${t.penalty}・消除 ${t.clear}` : '') + (recorders.length ? `・記錄人：${recorders.join('、')}` : '') : '　沒有紀錄' })),
+                    people.length ? h('p', { class: 'session-people', text: `被記（已確認）：${people.join('、')}` }) : null,
+                    list.length ? table(list, false) : null);
+            });
+            if (lateConfirmed.length) sections.push(h('div', { class: 'session-block' }, h('h4', { class: 'session-head', text: '📥 之前記錄、今天確認（計入本日）' }), table(lateConfirmed, true)));
+            $('history-detail').replaceChildren(...sections);
         };
         const setHistoryDate = (d) => { const today = localDate(); historyDate = d > today ? today : d; renderHistoryTab(getCurrentClass()); };
         $('history-date').addEventListener('change', (e) => { if (e.target.value) setHistoryDate(e.target.value); });
@@ -1932,12 +1985,12 @@
         $('settle-today-btn').addEventListener('click', settleToday);
         $('history-csv-day').addEventListener('click', () => {
             const c = getCurrentClass(); const sum = daySummary(c, historyDate);
-            const rows = [[`${c.name} ${historyDate} 結算`], ['座號', '姓名', '加分當日增減', '加分原因', '愛心當日增減', '愛心原因', '加分日終累計', '愛心日終累計'],
+            const rows = [[`${c.name} ${historyDate} 結算`], ['座號', '姓名', '加分當日增減', '加分原因', '愛心早自修', '愛心午休', '愛心其他', '愛心原因', '可用加分', '累計獲得', '愛心日終'],
                 ...Object.values(sum.students).sort((a, b) => (a.seat ?? 999) - (b.seat ?? 999))
-                    .map(r => [r.seat ?? '', r.name, r.scoreDelta, reasonText(r.scoreByReason), r.heartDelta, reasonText(r.heartByReason), r.scoreTotal, r.heartTotal]),
-                ...Object.entries(sum.groups || {}).map(([g, r]) => ['', `第 ${g} 小隊`, r.scoreDelta, '', '', '', r.scoreTotal, '']),
-                [], ['當日明細'],
-                ...eventRowsCSV(S.events.filter(e => e.classId === c.id && e.date === historyDate))];
+                    .map(r => [r.seat ?? '', r.name, r.scoreDelta, reasonText(r.scoreByReason), ...SESSIONS.map(k => r.heartBySession?.[k] || 0), reasonText(r.heartByReason), r.scoreTotal, r.earnedTotal ?? '', r.heartTotal]),
+                ...Object.entries(sum.groups || {}).map(([g, r]) => ['', `第 ${g} 小隊`, r.scoreDelta, '', '', '', '', '', r.scoreTotal, '', '']),
+                [], ['當日明細（依記錄日）'],
+                ...eventRowsCSV(S.events.filter(e => e.classId === c.id && (e.date === historyDate || e.confirmedDate === historyDate)))];
             downloadCSV(`${c.name}_${historyDate}_結算.csv`, rows);
         });
         $('history-csv-all').addEventListener('click', () => {
@@ -2066,7 +2119,7 @@
             classes: S.classes, students: S.students, events: S.events, dailySnapshots: S.snapshots,
             meta: { lastSettledDate: S.meta.lastSettledDate || {} },
         });
-        const exportBackup = async (prefix = '班級動力站_v5備份') => {
+        const exportBackup = async (prefix = '班級動力站_v5.1備份') => {
             downloadFile(`${prefix}_${stampForFile()}.json`, JSON.stringify(buildBackup()));
             await setMeta('lastBackupAt', Date.now());
         };
@@ -2178,7 +2231,7 @@
             let p; try { p = parseBackup(data); } catch (err) { alert(err.message); return; }
             pendingImport = p;
             const alive = p.classes.filter(c => !c.deleted);
-            $('import-sub').textContent = `${p.kind === 'v4' ? '舊版 v4 備份（分數會轉為「期初結轉」）' : `v5 備份${p.exportedAtLocal ? `（${p.exportedAtLocal} 匯出）` : ''}`}：${alive.length} 個班、${p.events.length} 筆紀錄`;
+            $('import-sub').textContent = `${p.kind === 'v4' ? '舊版 v4 備份（分數會轉為「期初結轉」）' : `${p.kind} 備份${p.exportedAtLocal ? `（${p.exportedAtLocal} 匯出）` : ''}`}：${alive.length} 個班、${p.events.length} 筆紀錄`;
             $('import-class').replaceChildren(...alive.map(c => h('option', { value: c.id, text: `${c.name}（${p.students.filter(s => s.classId === c.id && !s.removed).length} 人）${classById(c.id) && !classById(c.id).deleted ? '　← 會取代目前同一班' : '　← 新增'}` })));
             document.querySelector('input[name="import-mode"][value="all"]').checked = true;
             $('import-class-wrap').style.display = 'none';
