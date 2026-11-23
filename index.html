@@ -349,6 +349,16 @@
     .mascot-avatar { font-size: 3.2em; }
     .mascot-bubble { font-size: 1.15em; max-width: 360px; border-color: var(--cyan); background: rgba(10,22,48,0.95); }
     @media (prefers-reduced-motion: reduce) { #scan-sweep { display: none; } }
+    /* ---- v5.1：兌換／消除／隱藏愛心 ---- */
+    .hide-hearts .counter-heart { display: none; }
+    .score-btn.word { width: auto; padding: 0 10px; border-radius: 16px; font-family: inherit; font-size: 0.85em; font-weight: 800; white-space: nowrap; }
+    .btn-redeem { background: rgba(255,210,63,0.14); color: var(--gold); border: 1px solid rgba(255,210,63,0.6); }
+    .btn-clear { background: rgba(57,255,136,0.12); color: var(--green); border: 1px solid rgba(57,255,136,0.55); }
+    .reason-btn small { display: block; font-size: 0.65em; opacity: 0.85; margin-top: 2px; }
+    .session-row { align-items: center; }
+    .session-row span { flex-shrink: 0; font-weight: 700; }
+    .session-row span:first-child { width: 4em; }
+    #hide-hearts-btn.on { background: rgba(255,111,174,0.18); color: var(--pink); border-color: var(--pink); }
     .version-tag { position: fixed; left: 10px; bottom: 6px; z-index: 45; font-family: 'Share Tech Mono', monospace; font-size: 12px; color: var(--text-secondary); opacity: 0.8; pointer-events: none; }
 </style>
 </head>
@@ -383,7 +393,7 @@
         <span class="sep"></span>
         <button id="mute-btn" title="音效開關">🔊</button>
     </div>
-    <div class="version-tag" id="version-tag">v5.0</div>
+    <div class="version-tag" id="version-tag">v5.1</div>
 
     <div id="class-dashboard" class="app-screen active">
         <div class="container">
@@ -419,21 +429,15 @@
                 <button class="nav-tab" data-tab="groups">小隊模式</button>
                 <button class="nav-tab" data-tab="leaderboard">排行榜</button>
                 <button class="nav-tab" data-tab="history">歷史</button>
-                <button class="nav-tab" data-tab="grades">成績結算</button>
             </div>
             <div id="students-tab" class="tab-content active card">
                 <div class="class-toolbar" id="class-toolbar">
-                    <button id="class-heart-btn" class="btn btn-heart">❤️ 全班加愛心</button>
                     <button id="undo-btn" class="btn btn-secondary">↶ 復原上一筆</button>
+                    <button id="hide-hearts-btn" class="btn btn-secondary">🙈 隱藏愛心</button>
                     <span class="spacer"></span>
                     <button id="add-student-btn" class="btn btn-secondary">＋ 新增學生</button>
                     <button id="paste-roster-btn" class="btn btn-secondary">📋 貼上名單</button>
-                    <button id="reason-settings-btn" class="btn btn-secondary">⚙️ 原因標籤</button>
-                </div>
-                <div class="select-banner" id="select-banner">
-                    <span class="grow" id="select-banner-text"></span>
-                    <button id="select-cancel-btn" class="btn btn-secondary">取消</button>
-                    <button id="select-confirm-btn" class="btn btn-heart"></button>
+                    <button id="reason-settings-btn" class="btn btn-secondary">⚙️ 班級設定</button>
                 </div>
                 <div id="student-grid"></div>
             </div>
@@ -475,19 +479,6 @@
                 <div class="table-wrap"><table class="data-table" id="history-summary"></table></div>
                 <h3 class="section-title">當日明細</h3>
                 <div class="table-wrap"><table class="data-table" id="history-detail"></table></div>
-            </div>
-            <div id="grades-tab" class="tab-content card">
-                <div class="grades-actions">
-                    <button id="calculate-grades-btn" class="btn btn-success">⚡ 一鍵結算平時分數</button>
-                    <button id="export-grades-btn" class="btn btn-primary">📋 複製成績（貼到 Excel）</button>
-                    <button id="reset-scores-btn" class="btn btn-danger">🔁 新考段加分歸零</button>
-                </div>
-                <div class="table-wrap">
-                    <table class="data-table" id="grades-table">
-                        <thead><tr><th>座號</th><th>姓名</th><th>⭐ 累積加分</th><th>平時分數</th></tr></thead>
-                        <tbody></tbody>
-                    </table>
-                </div>
             </div>
         </div>
     </div>
@@ -543,11 +534,12 @@
             <h2 id="reason-title"></h2>
             <p class="modal-sub" id="reason-sub"></p>
             <div class="reason-grid" id="reason-grid"></div>
-            <div id="reason-amount-wrap" style="display:none;" class="field">
-                <label for="reason-amount">兌換需要幾顆愛心？</label>
+            <div id="reason-other-wrap" style="display:none;" class="field">
+                <label for="reason-other-name">其他兌換：品名與所需分數</label>
                 <div style="display:flex; gap:10px;">
-                    <input type="number" id="reason-amount" min="1" value="1" style="font-size:1.4em;">
-                    <button id="reason-amount-ok" class="btn btn-heart" style="white-space:nowrap;">確認兌換</button>
+                    <input type="text" id="reason-other-name" placeholder="品名" maxlength="20">
+                    <input type="number" id="reason-other-cost" min="1" value="1" style="width:5.5em;" aria-label="所需分數">
+                    <button id="reason-other-ok" class="btn btn-primary" style="white-space:nowrap;">確認兌換</button>
                 </div>
             </div>
             <div class="modal-actions"><button id="reason-cancel" class="btn btn-secondary">取消</button></div>
@@ -624,14 +616,20 @@
 
     <div id="labels-modal" class="modal">
         <div class="card">
-            <h2>⚙️ 原因標籤</h2>
-            <p class="modal-sub">這個班級使用的原因按鈕，可新增、刪除、改名。「兌換福利」為固定項目。</p>
-            <h3 style="color:var(--pink); margin-bottom:10px;">❤️ 愛心原因</h3>
-            <div id="labels-heart"></div>
-            <button class="btn btn-secondary" id="labels-heart-add" style="margin-bottom:18px;">＋ 新增愛心原因</button>
-            <h3 style="color:var(--cyan); margin-bottom:10px;">⭐ 加分原因（手動調整時可選）</h3>
-            <div id="labels-score"></div>
-            <button class="btn btn-secondary" id="labels-score-add" style="margin-bottom:18px;">＋ 新增加分原因</button>
+            <h2>⚙️ 班級設定</h2>
+            <p class="modal-sub">這個班級使用的原因按鈕與兌換清單，可新增、刪除、改名。</p>
+            <h3 style="color:var(--pink); margin-bottom:10px;">❤️ 扣分原因（加愛心時必選）</h3>
+            <div id="labels-penalty"></div>
+            <button class="btn btn-secondary" id="labels-penalty-add" style="margin-bottom:18px;">＋ 新增扣分原因</button>
+            <h3 style="color:var(--green); margin-bottom:10px;">✨ 消除原因</h3>
+            <div id="labels-clear"></div>
+            <button class="btn btn-secondary" id="labels-clear-add" style="margin-bottom:18px;">＋ 新增消除原因</button>
+            <h3 style="color:var(--gold); margin-bottom:10px;">🎁 兌換清單（品名、所需分數）</h3>
+            <div id="labels-redeem"></div>
+            <button class="btn btn-secondary" id="labels-redeem-add" style="margin-bottom:18px;">＋ 新增兌換物品</button>
+            <h3 style="color:var(--cyan); margin-bottom:10px;">🕐 時段時間（其餘時間算「其他」）</h3>
+            <div class="label-row session-row"><span>早自修</span><input type="time" id="sess-m-from"><span>～</span><input type="time" id="sess-m-to"></div>
+            <div class="label-row session-row" style="margin-bottom:18px;"><span>午休</span><input type="time" id="sess-n-from"><span>～</span><input type="time" id="sess-n-to"></div>
             <div class="modal-actions">
                 <button id="labels-cancel" class="btn btn-secondary">取消</button>
                 <button id="labels-ok" class="btn btn-primary">儲存</button>
@@ -647,8 +645,8 @@
         //  資料層：IndexedDB（classes / students / events / dailySnapshots / meta）
         //  所有累計分數一律由 events 加總而來。
         // =====================================================================
-        const APP_VERSION = 'v5.0';
-        const DATA_VERSION = 5;
+        const APP_VERSION = 'v5.1';
+        const DATA_VERSION = 5.1;
         const TZ = 'Asia/Taipei';
 
         // ---------- 小工具 ----------
@@ -735,25 +733,37 @@
         // ---------- 記憶體狀態 ----------
         const S = { classes: [], students: [], events: [], snapshots: [], meta: {} };
         const eventById = new Map();
-        const totals = new Map();       // studentId -> { score, heart }
+        const totals = new Map();       // studentId -> { score:可用加分, earned:累計獲得, heart }
         const groupTotals = new Map();  // `${classId}|${group}` -> score
 
+        // v5.1：只有「已確認」的紀錄才計入；待確認、駁回都不算
+        const isCounted = (e) => (e.status || 'confirmed') === 'confirmed';
+        const effTs = (e) => e.confirmedAt || e.ts;            // 生效時間（隔天確認 → 確認當下）
+        const effDate = (e) => e.confirmedDate || e.date;      // 生效日（計入哪一天的結算）
+        /** 套用一筆紀錄：愛心依時間逐筆累加、每一步最少 0；累計獲得排除兌換 */
+        const applyTo = (t, e) => {
+            if (e.kind === 'heart') t.heart = Math.max(0, t.heart + e.delta);
+            else { t.score += e.delta; if (!e.redeem) t.earned += e.delta; }
+        };
         const applyToTotals = (e) => {
+            if (!isCounted(e)) return;
             if (e.targetType === 'student') {
-                const t = totals.get(e.targetId) || { score: 0, heart: 0 };
-                t[e.kind] = (t[e.kind] || 0) + e.delta;
+                const t = totals.get(e.targetId) || { score: 0, heart: 0, earned: 0 };
+                applyTo(t, e);
                 totals.set(e.targetId, t);
             } else if (e.targetType === 'group') {
                 const k = `${e.classId}|${e.targetId}`;
                 groupTotals.set(k, (groupTotals.get(k) || 0) + e.delta);
             }
         };
+        const byEffTs = (a, b) => effTs(a) - effTs(b);
         const recomputeTotals = () => {
             totals.clear(); groupTotals.clear(); eventById.clear();
             S.events.sort((a, b) => a.ts - b.ts);
-            S.events.forEach(e => { eventById.set(e.id, e); applyToTotals(e); });
+            S.events.forEach(e => eventById.set(e.id, e));
+            [...S.events].sort(byEffTs).forEach(applyToTotals);
         };
-        const getTotal = (sid) => totals.get(sid) || { score: 0, heart: 0 };
+        const getTotal = (sid) => totals.get(sid) || { score: 0, heart: 0, earned: 0 };
         const getGroupTotal = (classId, g) => groupTotals.get(`${classId}|${g}`) || 0;
 
         const aliveClasses = () => S.classes.filter(c => !c.deleted).sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
@@ -764,12 +774,33 @@
             .sort((a, b) => (a.seat || 999) - (b.seat || 999) || a.name.localeCompare(b.name, 'zh-Hant'));
         const eventsOf = (classId) => S.events.filter(e => e.classId === classId);
 
-        const DEFAULT_HEART_REASONS = ['上課', '午休', '作業', '老師'];
+        const DEFAULT_PENALTY_REASONS = ['講話', '走動', '傳紙條', '吵鬧', '作業', '其他'];
+        const DEFAULT_CLEAR_REASONS = ['表現改善', '主動幫忙', '老師另訂'];
+        const DEFAULT_REDEEM_ITEMS = [{ name: '小文具', cost: 10 }, { name: '自選座位一天', cost: 20 }, { name: '當一天小老師', cost: 15 }, { name: '優先選打掃工作', cost: 10 }];
         const DEFAULT_SCORE_REASONS = [];
-        const newClassObj = (name, groupCount = 4) => ({
-            id: uid(), name, groupCount, heartReasons: [...DEFAULT_HEART_REASONS], scoreReasons: [...DEFAULT_SCORE_REASONS],
-            createdAt: Date.now(), updatedAt: Date.now(), deleted: false,
-        });
+        const SESSIONS = ['早自修', '午休', '其他'];
+        const DEFAULT_SESSION_TIMES = { '早自修': ['07:30', '08:40'], '午休': ['12:20', '13:30'] };
+        const newClassObj = (name, groupCount = 4) => {
+            const c = { id: uid(), name, groupCount, scoreReasons: [...DEFAULT_SCORE_REASONS], createdAt: Date.now(), updatedAt: Date.now(), deleted: false };
+            ensureClassDefaults(c); return c;
+        };
+        /** 補上 v5.1 的班級設定（扣分原因、消除原因、兌換清單、時段時間）；回傳是否有補 */
+        function ensureClassDefaults(c) {
+            let changed = false;
+            const fill = (k, v) => { if (!c[k]) { c[k] = v; changed = true; } };
+            fill('penaltyReasons', [...DEFAULT_PENALTY_REASONS]);
+            fill('clearReasons', [...DEFAULT_CLEAR_REASONS]);
+            fill('redeemItems', DEFAULT_REDEEM_ITEMS.map(x => ({ ...x })));
+            fill('sessionTimes', JSON.parse(JSON.stringify(DEFAULT_SESSION_TIMES)));
+            fill('scoreReasons', []);
+            return changed;
+        }
+        /** 目前時段：依班級設定的早自修、午休時間；秩序記錄模式中以記錄時段為準 */
+        const currentSession = (c, t = Date.now()) => {
+            const hm = localTime(t); const st = c?.sessionTimes || DEFAULT_SESSION_TIMES;
+            for (const k of ['早自修', '午休']) { const [a, b] = st[k] || []; if (a && b && hm >= a && hm < b) return k; }
+            return '其他';
+        };
         const newStudentObj = (classId, seat, name) => ({ id: uid(), classId, seat, name, group: null, removed: false });
 
         /** 名單或班級設定變動：更新 updatedAt 並存檔 */
@@ -779,9 +810,11 @@
             Cloud.markClass(c.id);
         };
 
-        const makeEvent = ({ classId, targetType = 'student', targetId, kind, delta, reason = '', batchId = null, undoOf = null }) => ({
+        const makeEvent = ({ classId, targetType = 'student', targetId, kind, delta, reason = '', batchId = null, undoOf = null,
+            session = null, status = 'confirmed', recordedBy = 'teacher', redeem = false }) => ({
             id: uid(), classId, ts: Date.now(), date: localDate(), targetType, targetId: String(targetId), kind,
             delta, reason: reason || '', undone: false, undoOf, batchId,
+            session: session || currentSession(classById(classId)), status, recordedBy, reviewNote: '', redeem: !!redeem,
         });
         /** 寫入一批 events（同一交易），回傳寫入的 events */
         const addEvents = async (list, extraPuts = []) => {
@@ -790,6 +823,12 @@
             await dbWrite({ events: [...list, ...extraPuts] });
             [...list, ...extraPuts].forEach(e => Cloud.markDay(e.classId, e.date));
             return list;
+        };
+
+        /** v5.1 資料升級：班級補上扣分原因、消除原因、兌換清單、時段時間 */
+        const upgradeData = async () => {
+            const cls = S.classes.filter(ensureClassDefaults);
+            if (cls.length) await dbWrite({ classes: cls });
         };
 
         // ---------- meta ----------
@@ -947,6 +986,7 @@
                         new Set(S.events.filter(e => e.classId === c.id).map(e => e.date)).forEach(d => this.dirtyDays.add(`${c.id}|${d}`));
                     });
                     await dbWrite(Object.fromEntries(Object.entries(puts).filter(([, v]) => v.length)));
+                    await upgradeData();
                     recomputeTotals();
                     this.status('connected', '已連接雲端');
                     if (this.dirtyClasses.size || this.dirtyDays.size) await this.push();
@@ -1007,7 +1047,7 @@
         };
         const renderCurrentTab = () => {
             const c = getCurrentClass(); if (!c) return;
-            ({ students: renderStudentsTab, groups: renderGroupsTab, leaderboard: renderLeaderboardTab, history: renderHistoryTab, grades: renderGradesTab }[currentTab] || (() => {}))(c);
+            ({ students: renderStudentsTab, groups: renderGroupsTab, leaderboard: renderLeaderboardTab, history: renderHistoryTab }[currentTab] || (() => {}))(c);
         };
 
         const buildStudentCard = (s) => {
@@ -1022,23 +1062,26 @@
                     h('div', { class: 'badge-row' }, BADGE_DEFS.map(b => h('span', { class: 'badge-icon', title: `${b.name}（${b.score} 分）`, dataset: { min: b.score }, text: b.icon })))),
                 h('div', { class: 'xp-bar', title: '升級進度' }, h('div', { class: 'xp-fill' })),
                 h('div', { class: 'counter-row counter-score' },
-                    h('button', { class: 'btn btn-soft score-btn', dataset: { act: 'score', amount: -1 }, title: '加分 −1', 'aria-label': '加分減一', text: '−' }),
-                    h('div', { class: 'counter-num score-num', title: '⭐ 加分' }, h('span', { class: 'ico', text: '⭐' }), h('span', { class: 'val' })),
+                    h('button', { class: 'btn btn-redeem score-btn word', dataset: { act: 'redeem' }, title: '用加分兌換物品', text: '兌換' }),
+                    h('div', { class: 'counter-num score-num' }, h('span', { class: 'ico', text: '⭐' }), h('span', { class: 'val' })),
                     h('button', { class: 'btn btn-success score-btn', dataset: { act: 'score', amount: 1 }, title: '加分 +1', 'aria-label': '加分加一', text: '+' })),
                 h('div', { class: 'counter-row counter-heart' },
-                    h('button', { class: 'btn btn-soft score-btn', dataset: { act: 'heart', amount: -1 }, title: '愛心 −1（選原因）', 'aria-label': '愛心減一', text: '−' }),
-                    h('div', { class: 'counter-num heart-num', title: '❤️ 愛心' }, h('span', { class: 'ico', text: '❤️' }), h('span', { class: 'val' })),
-                    h('button', { class: 'btn btn-heart score-btn', dataset: { act: 'heart', amount: 1 }, title: '愛心 +1（選原因）', 'aria-label': '愛心加一', text: '+' })));
+                    h('button', { class: 'btn btn-clear score-btn word', dataset: { act: 'clear' }, title: '學生改進了：消除一顆愛心', text: '消除' }),
+                    h('div', { class: 'counter-num heart-num', title: '❤️ 愛心（扣分提醒）' }, h('span', { class: 'ico', text: '❤️' }), h('span', { class: 'val' })),
+                    h('button', { class: 'btn btn-heart score-btn', dataset: { act: 'penalty' }, title: '記一顆愛心（選原因）', 'aria-label': '記一顆愛心', text: '+' })));
             updateStudentCard(card, s);
             return card;
         };
         const updateStudentCard = (card, s) => {
-            const t = getTotal(s.id); const lvl = getLevelInfo(t.score);
+            const t = getTotal(s.id); const lvl = getLevelInfo(t.earned);
             const setNum = (sel, v) => { const el = card.querySelector(sel); el.querySelector('.val').textContent = v; el.dataset.len = Math.min(4, Math.max(2, String(v).length)); };
             setNum('.score-num', t.score); setNum('.heart-num', t.heart);
+            card.querySelector('.score-num').title = `⭐ 可用 ${t.score} 分（累計獲得 ${t.earned} 分）`;
             card.querySelector('.xp-fill').style.width = `${lvl.progress}%`;
             card.querySelector('.lv-chip').textContent = `LV${lvl.level}`;
-            card.querySelectorAll('.badge-icon').forEach(b => b.classList.toggle('earned', t.score >= Number(b.dataset.min)));
+            card.querySelectorAll('.badge-icon').forEach(b => b.classList.toggle('earned', t.earned >= Number(b.dataset.min)));
+            card.querySelector('[data-act="clear"]').disabled = t.heart <= 0;
+            card.querySelector('[data-act="redeem"]').disabled = t.score <= 0;
         };
         const refreshStudentCard = (sid) => {
             const card = $('student-grid').querySelector(`.student-card[data-id="${CSS.escape(sid)}"]`);
@@ -1047,7 +1090,6 @@
             return card;
         };
         const renderStudentsTab = (c) => {
-            exitSelectMode();
             $('student-grid').replaceChildren(...studentsOf(c.id).map(buildStudentCard));
             refreshUndoBtn();
         };
@@ -1076,7 +1118,8 @@
         const renderLeaderboardTab = (c) => {
             document.querySelectorAll('.lb-mode-btn').forEach(b => b.className = `btn lb-mode-btn ${b.dataset.mode === lbMode ? 'btn-primary' : 'btn-secondary'}`);
             if (lbMode === 'groups') return renderGroupBoard(c);
-            const list = studentsOf(c.id).map(s => ({ s, score: getTotal(s.id).score })).sort((a, b) => b.score - a.score);
+            // 個人榜依「累計獲得」排名（兌換不影響名次）
+            const list = studentsOf(c.id).map(s => ({ s, score: getTotal(s.id).earned })).sort((a, b) => b.score - a.score);
             const maxScore = Math.max(1, ...list.map(x => x.score));
             const medals = ['🥇', '🥈', '🥉'];
             $('leaderboard-list').replaceChildren(...list.map(({ s, score }, i) => {
@@ -1086,7 +1129,7 @@
                     h('div', { class: 'lb-main' },
                         h('div', { class: 'lb-name-line' }, s.name, h('span', { class: 'lb-level-chip', text: `LV.${getLevelInfo(score).level}` })),
                         h('div', { class: 'lb-bar-track' }, h('div', { class: 'lb-bar-fill', style: `width:${pct}%` }))),
-                    h('div', { class: 'lb-score', text: score }));
+                    h('div', { class: 'lb-score', title: '累計獲得', text: score }));
             }));
         };
 
@@ -1103,21 +1146,6 @@
                     h('div', { class: 'lb-name-line' }, `⬡ 第 ${x.g} 小隊`, h('span', { class: 'lb-members', text: x.members.join('、') || '（尚無隊員）' })),
                     h('div', { class: 'lb-bar-track' }, h('div', { class: 'lb-bar-fill', style: `width:${Math.max(4, Math.min(100, (Math.max(0, x.score) / maxScore) * 100))}%; background: linear-gradient(90deg, var(--magenta), var(--gold));` }))),
                 h('div', { class: 'lb-score', style: 'color:var(--magenta)', text: x.score }))));
-        };
-
-        /** 平時成績：依加分換算 80–100（愛心不列入） */
-        const computeGrades = (c) => {
-            const list = studentsOf(c.id).map(s => ({ s, score: getTotal(s.id).score }));
-            const scores = list.map(x => x.score);
-            const min = Math.min(...scores), max = Math.max(...scores), range = max - min;
-            return new Map(list.map(({ s, score }) => [s.id, Math.round(range === 0 ? 90 : 80 + ((score - min) / range) * 20)]));
-        };
-        let gradesShown = false;
-        const renderGradesTab = (c) => {
-            const grades = gradesShown ? computeGrades(c) : null;
-            document.querySelector('#grades-table tbody').replaceChildren(...studentsOf(c.id).map(s =>
-                h('tr', {}, h('td', { text: s.seat ?? '' }), h('td', { text: s.name }), h('td', { text: getTotal(s.id).score }),
-                    h('td', { class: 'final-grade', text: grades ? grades.get(s.id) : '-' }))));
         };
 
         // ---------- 回饋特效（v5 階段 5 會再強化） ----------
@@ -1139,11 +1167,10 @@
             comboTimer = setTimeout(() => { comboCount = 0; d.classList.remove('show'); }, 2200);
         };
         const PRAISE_PHRASES = ['太棒了！🚀', '超強的！⭐', '再接再厲！🔥', '完美達成！✨', '了不起的表現！🎯', '隊長好樣的！🛰️'];
-        const COMFORT_PHRASES = ['沒關係，下次加油！💪', '我們一起調整看看 🙂', '慢慢來，你可以的！🌙', '下一次一定更好！🌱'];
         let mascotTimer = null;
-        const showMascotSpeech = (positive, text) => {
-            const phrases = positive ? PRAISE_PHRASES : COMFORT_PHRASES;
-            $('mascot-bubble').textContent = text || phrases[Math.floor(Math.random() * phrases.length)];
+        /** v5.1 投影原則：吉祥物只在加分、消除愛心時說話 */
+        const showMascotSpeech = (text) => {
+            $('mascot-bubble').textContent = text || PRAISE_PHRASES[Math.floor(Math.random() * PRAISE_PHRASES.length)];
             $('mascot-wrap').classList.add('talking');
             clearTimeout(mascotTimer);
             mascotTimer = setTimeout(() => $('mascot-wrap').classList.remove('talking'), 2000);
@@ -1203,8 +1230,8 @@
                 switch (name) {
                     case 'plus': { const f = 660 * Math.pow(2, Math.min(n, 12) / 12); this.tone(f, t, 0.1, 'square', 0.06); this.tone(f * 1.5, t + 0.07, 0.22, 'square', 0.06); break; }
                     case 'minus': this.tone(392, t, 0.18, 'triangle', 0.05, 330); break;
-                    case 'heart': [1047, 1319, 1568, 2093].forEach((f, i) => this.tone(f, t + i * 0.07, 0.35, 'sine', 0.09)); break;
-                    case 'rain': [784, 988, 1175, 1568, 1976, 2349, 1976, 2349].forEach((f, i) => this.tone(f, t + i * 0.1, 0.5, 'sine', 0.08)); break;
+                    case 'clear': [784, 988, 1319, 1568, 2093, 2637].forEach((f, i) => this.tone(f, t + i * 0.07, 0.45, 'triangle', 0.08)); break;
+                    case 'redeem': [988, 1319].forEach((f, i) => this.tone(f, t + i * 0.09, 0.25, 'sine', 0.07)); break;
                     case 'levelup': [523, 659, 784, 1047].forEach((f, i) => this.tone(f, t + i * 0.12, 0.28, 'square', 0.07)); this.tone(1047, t + 0.5, 0.8, 'triangle', 0.12); this.tone(1319, t + 0.5, 0.8, 'triangle', 0.08); break;
                     case 'badge': [880, 1175, 1760].forEach((f, i) => this.tone(f, t + i * 0.1, 0.3, 'triangle', 0.09)); break;
                 }
@@ -1246,178 +1273,144 @@
             },
             glow(card, cls) { card.classList.remove(cls); void card.offsetWidth; card.classList.add(cls); setTimeout(() => card.classList.remove(cls), 1100); },
             scorePlus(card, btn) { this.glow(card, 'star-glow'); this.burst(btn || card, ['⭐', '✨', '🌟', '💫'], 14, 120); },
-            /** 愛心從按鈕（或原因按鈕）飛向學生卡片的愛心數字 */
-            heartPlus(card, from, amount = 1) {
-                const target = card.querySelector('.heart-num');
-                const [tx, ty] = this.center(target);
-                const [sx, sy] = from ? this.center(from) : [tx, ty + 80];
+            /** 消除愛心：愛心放大發光後化成星光（正向特效） */
+            heartClear(card) {
+                const target = card.querySelector('.heart-num') || card;
+                const [x, y] = this.center(target);
                 const p = h('span', { class: 'fx-particle', text: '❤️' });
-                p.style.left = sx + 'px'; p.style.top = sy + 'px'; p.style.fontSize = '3.2em';
+                p.style.left = x + 'px'; p.style.top = y + 'px'; p.style.fontSize = '2.8em';
                 $('fx-layer').appendChild(p);
-                const mx = (sx + tx) / 2 - sx, my = Math.min(sy, ty) - 140 - sy;
                 const a = p.animate([
-                    { transform: 'translate(-50%,-50%) scale(0.5)', opacity: 0.9 },
-                    { transform: `translate(calc(-50% + ${mx}px), calc(-50% + ${my}px)) scale(1.7)`, opacity: 1, offset: 0.5 },
-                    { transform: `translate(calc(-50% + ${tx - sx}px), calc(-50% + ${ty - sy}px)) scale(0.7)`, opacity: 1 },
-                ], { duration: 800, easing: 'cubic-bezier(.45,.05,.4,1)' });
+                    { transform: 'translate(-50%,-50%) scale(1)', opacity: 1, filter: 'brightness(1)' },
+                    { transform: 'translate(-50%,-90%) scale(1.6)', opacity: 1, filter: 'brightness(1.8) drop-shadow(0 0 12px #fff3b0)', offset: 0.45 },
+                    { transform: 'translate(-50%,-110%) scale(0.2)', opacity: 0, filter: 'brightness(3)' },
+                ], { duration: 750, easing: 'ease-in' });
                 a.onfinish = () => {
                     p.remove();
-                    this.glow(card, 'heart-glow');
-                    this.burst(target, ['💖', '💕', '✨', '💗'], 10, 80);
-                    showScoreFeedback(card, amount, 'heart');
-                    bumpNum(card, '.heart-num');
+                    this.glow(card, 'star-glow');
+                    this.burst(target, ['✨', '🌟', '⭐', '💫'], 16, 130);
                 };
-            },
-            /** 減愛心：只有小小的愛心淡出（不閃屏、不震動） */
-            heartMinus(card) {
-                const target = card.querySelector('.heart-num') || card;
-                const f = h('div', { class: 'heart-fade', text: '♡' });
-                card.appendChild(f);
-                const cr = card.getBoundingClientRect(), tr = target.getBoundingClientRect();
-                f.style.left = (tr.left - cr.left + tr.width / 2) + 'px'; f.style.top = (tr.top - cr.top + tr.height / 2) + 'px';
-                setTimeout(() => f.remove(), 900);
-            },
-            /** 全畫面愛心雨 */
-            heartRain(count = 30) {
-                const chars = ['❤️', '💖', '💕', '💗', '💝', '💓'];
-                const n = Math.min(90, 40 + count);
-                for (let i = 0; i < n; i++) {
-                    const p = h('span', { class: 'fx-particle', text: chars[i % chars.length] });
-                    p.style.left = Math.random() * 100 + 'vw'; p.style.top = '-60px'; p.style.fontSize = (1.4 + Math.random() * 2.2) + 'em';
-                    $('fx-layer').appendChild(p);
-                    const drift = (Math.random() - 0.5) * 160;
-                    const a = p.animate([
-                        { transform: 'translate(0,0) rotate(0deg)', opacity: 1 },
-                        { transform: `translate(${drift}px, 112vh) rotate(${Math.random() * 540 - 270}deg)`, opacity: 0.7 },
-                    ], { duration: 2200 + Math.random() * 1800, delay: Math.random() * 1400, easing: 'cubic-bezier(.3,.1,.6,1)', fill: 'backwards' });
-                    a.onfinish = () => p.remove();
-                }
             },
         };
 
         // ---------- 業務邏輯 ----------
+        const bumpNum = (card, sel) => { const n = card?.querySelector(sel); if (!n) return; n.classList.add('bump'); setTimeout(() => n.classList.remove('bump'), 200); };
+
+        /** 加分（含手動調整）。等級、徽章依「累計獲得」，兌換不會降級 */
         const changeStudent = async (sid, kind, delta, reason = '', opts = {}) => {
             const c = getCurrentClass(); const s = studentById(sid); if (!c || !s) return;
-            const before = getTotal(sid)[kind];
-            await addEvents([makeEvent({ classId: c.id, targetId: sid, kind, delta, reason, batchId: opts.batchId })]);
-            const after = getTotal(sid)[kind];
+            const before = getTotal(sid).earned;
+            await addEvents([makeEvent({ classId: c.id, targetId: sid, kind, delta, reason, redeem: !!opts.redeem })]);
+            const after = getTotal(sid).earned;
             const card = refreshStudentCard(sid);
-            if (kind === 'score') {
+            if (kind === 'score' && !opts.redeem && delta > 0) {
                 if (card && !opts.silent) {
-                    bumpNum(card, '.score-num');
-                    showScoreFeedback(card, delta);
-                    if (delta > 0) {
-                        flashScreen('plus'); Fx.scorePlus(card, opts.btn);
-                        registerCombo(delta); Sound.play('plus', comboCount); showMascotSpeech(true);
-                    } else { registerCombo(0); Sound.play('minus'); }
+                    bumpNum(card, '.score-num'); showScoreFeedback(card, delta);
+                    flashScreen('plus'); Fx.scorePlus(card, opts.btn);
+                    registerCombo(delta); Sound.play('plus', comboCount); showMascotSpeech();
                 }
                 const oldLv = getLevelInfo(before).level, newLv = getLevelInfo(after).level;
                 const oldB = getEarnedBadges(before).length, newB = getEarnedBadges(after).length;
                 if (newLv > oldLv) setTimeout(() => { celebrateLevelUp(s.name, newLv); Sound.play('levelup'); }, 350);
                 else if (newB > oldB) setTimeout(() => { showBadgeToast(BADGE_DEFS[newB - 1]); Sound.play('badge'); }, 350);
             }
-        };
-
-        const bumpNum = (card, sel) => { const n = card?.querySelector(sel); if (!n) return; n.classList.add('bump'); setTimeout(() => n.classList.remove('bump'), 200); };
-
-        /** 愛心增減：效果（階段 5 強化） */
-        const heartFeedback = (sid, delta, from) => {
-            const card = refreshStudentCard(sid);
-            if (!card) return;
-            if (delta > 0) { Sound.play('heart'); Fx.heartPlus(card, from, delta); showMascotSpeech(true, ['愛心滿滿！💖', '好溫暖的表現！❤️', '謝謝你的用心！💕'][Math.floor(Math.random() * 3)]); }
-            else { Fx.heartMinus(card); showMascotSpeech(false); }
-        };
-
-        const changeHeart = async (sid, delta, reason, btn) => {
-            const c = getCurrentClass(); if (!c) return;
-            await addEvents([makeEvent({ classId: c.id, targetId: sid, kind: 'heart', delta, reason })]);
-            heartFeedback(sid, delta, btn);
             refreshUndoBtn();
         };
 
-        // ---------- 原因選擇器 ----------
+        // ---------- 原因選擇器（必填，沒有「不選原因」） ----------
         let reasonResolve = null;
         const closeReason = (val) => { hideModal('reason-modal'); const r = reasonResolve; reasonResolve = null; if (r) r(val); };
-        /** 回傳 { reason, amount }；取消回傳 null */
-        const pickReason = ({ title, sub, reasons, redeemMax = null, okClass = 'btn-heart', noneLabel = '不選原因，直接記錄' }) => new Promise(resolve => {
+        /**
+         * reasons：字串，或 { label, small, value, disabled, title }
+         * other：{ max } → 顯示「其他（自填品名與分數）」，回傳 { name, cost }
+         * 取消回傳 null
+         */
+        const pickReason = ({ title, sub = '', reasons, okClass = 'btn-heart', other = null, emptyText = '尚未設定，請到「⚙️ 班級設定」新增。' }) => new Promise(resolve => {
+            if (reasonResolve) reasonResolve(null);
             reasonResolve = resolve;
-            $('reason-title').textContent = title; $('reason-sub').textContent = sub || '';
-            $('reason-amount-wrap').style.display = 'none';
-            const btns = reasons.map(r => h('button', { class: `btn reason-btn ${okClass}`, text: r, onclick: (e) => closeReason({ reason: r, amount: 1, rect: e.currentTarget.getBoundingClientRect() }) }));
-            if (redeemMax != null) {
-                btns.push(h('button', { class: 'btn reason-btn btn-primary', text: '🎁 兌換福利', disabled: redeemMax <= 0 ? true : null, title: redeemMax <= 0 ? '愛心不足，無法兌換' : '',
-                    onclick: () => { $('reason-amount').max = redeemMax; $('reason-amount').value = 1; $('reason-amount-wrap').style.display = 'block'; $('reason-amount').focus(); $('reason-amount').select(); } }));
-            }
-            btns.push(h('button', { class: 'btn reason-btn btn-secondary wide', text: noneLabel, onclick: (e) => closeReason({ reason: '', amount: 1, rect: e.currentTarget.getBoundingClientRect() }) }));
+            $('reason-title').textContent = title; $('reason-sub').textContent = sub;
+            $('reason-other-wrap').style.display = 'none';
+            const btns = reasons.map(r => {
+                const o = typeof r === 'string' ? { label: r, value: r } : r;
+                return h('button', { class: `btn reason-btn ${okClass}`, disabled: o.disabled ? true : null, title: o.title || null, onclick: () => closeReason(o.value) },
+                    o.label, o.small ? h('small', { text: o.small }) : null);
+            });
+            if (other) btns.push(h('button', { class: 'btn reason-btn btn-secondary wide', text: '✏️ 其他（自填品名與分數）', disabled: other.max <= 0 ? true : null,
+                onclick: () => { $('reason-other-name').value = ''; $('reason-other-cost').value = 1; $('reason-other-wrap').style.display = 'block'; $('reason-other-name').focus(); } }));
+            if (!btns.length) btns.push(h('p', { class: 'modal-sub wide', style: 'grid-column:1/-1; margin:0;', text: emptyText }));
             $('reason-grid').replaceChildren(...btns);
-            $('reason-amount-ok').onclick = () => {
-                const n = parseInt($('reason-amount').value, 10);
-                if (!(n >= 1)) { alert('請輸入 1 以上的數量。'); return; }
-                if (n > redeemMax) { alert(`愛心不足：目前只有 ${redeemMax} 顆，兌換後不可低於 0。`); return; }
-                closeReason({ reason: '兌換福利', amount: n });
+            $('reason-other-ok').onclick = () => {
+                const name = $('reason-other-name').value.trim(); const cost = parseInt($('reason-other-cost').value, 10);
+                if (!name) { alert('請填寫品名。'); return; }
+                if (!(cost >= 1)) { alert('所需分數請輸入 1 以上。'); return; }
+                if (cost > other.max) { alert(`可用加分不足：目前只有 ${other.max} 分。`); return; }
+                closeReason({ name, cost });
             };
             showModal('reason-modal');
         });
         $('reason-cancel').addEventListener('click', () => closeReason(null));
 
-        const onHeartButton = async (sid, delta, btn) => {
+        /** ❤️+：老師直接記一筆扣分，立即生效。沒有特效、音效、吉祥物，只有數字改變 */
+        const addPenalty = async (sid) => {
+            const c = getCurrentClass(); const s = studentById(sid); if (!c || !s) return;
+            const reason = await pickReason({ title: '❤️ 選擇原因', sub: '必填', reasons: c.penaltyReasons || [], okClass: 'btn-soft' });
+            if (!reason) return;
+            await addEvents([makeEvent({ classId: c.id, targetId: sid, kind: 'heart', delta: 1, reason })]);
+            refreshStudentCard(sid); refreshUndoBtn();
+        };
+
+        /** 消除：只有老師能做，代表學生改進了 → 正向特效 */
+        const clearHeart = async (sid) => {
             const c = getCurrentClass(); const s = studentById(sid); if (!c || !s) return;
             const cur = getTotal(sid).heart;
-            const res = await pickReason({
-                title: delta > 0 ? `❤️ +1 給 ${s.name}` : `❤️ −1：${s.name}`,
-                sub: delta > 0 ? '為什麼加愛心？' : `目前 ${cur} 顆愛心。選原因，或選「兌換福利」。`,
-                reasons: c.heartReasons || [],
-                redeemMax: delta < 0 ? Math.max(0, cur) : null,
-                okClass: delta > 0 ? 'btn-heart' : 'btn-soft',
-            });
-            if (!res) return;
-            await changeHeart(sid, delta > 0 ? res.amount : -res.amount, res.reason, res.rect || btn);
+            if (cur <= 0) { notify(`${s.name} 目前沒有愛心可以消除`); return; }
+            const reason = await pickReason({ title: `✨ 消除 ${s.name} 的一顆愛心`, sub: `目前 ${cur} 顆。選擇消除原因：`, reasons: c.clearReasons || [], okClass: 'btn-success' });
+            if (!reason) return;
+            if (getTotal(sid).heart <= 0) return;
+            await addEvents([makeEvent({ classId: c.id, targetId: sid, kind: 'heart', delta: -1, reason })]);
+            const card = refreshStudentCard(sid);
+            if (card) { Fx.heartClear(card); setTimeout(() => bumpNum(card, '.heart-num'), 600); }
+            Sound.play('clear');
+            showMascotSpeech(`${s.name}，你進步了！🌟`);
+            refreshUndoBtn();
         };
 
-        // ---------- 全班加愛心（排除少數） ----------
-        let selectState = null; // { reason, excluded:Set }
-        const updateSelectBanner = () => {
-            const c = getCurrentClass(); if (!selectState || !c) return;
-            const total = studentsOf(c.id).length, ex = selectState.excluded.size;
-            $('select-banner-text').textContent = `❤️ 全班加愛心${selectState.reason ? `（${selectState.reason}）` : ''}：點掉沒做到的學生 · 已排除 ${ex} 人`;
-            $('select-confirm-btn').textContent = `確認：${total - ex} 人各 +1 ❤️`;
-            $('select-confirm-btn').disabled = total - ex <= 0;
+        /** 兌換：從兌換清單扣加分（redeem:true），餘額不足不能換；不影響累計獲得 */
+        const openRedeem = async (sid) => {
+            const c = getCurrentClass(); const s = studentById(sid); if (!c || !s) return;
+            const avail = getTotal(sid).score;
+            const items = (c.redeemItems || []).map(it => ({
+                label: it.name, small: `${it.cost} 分`, value: { name: it.name, cost: it.cost },
+                disabled: it.cost > avail, title: it.cost > avail ? `可用加分不足（還差 ${it.cost - avail} 分）` : '',
+            }));
+            const res = await pickReason({ title: `🎁 ${s.name} 兌換`, sub: `可用 ⭐ ${avail} 分`, reasons: items, okClass: 'btn-redeem', other: { max: avail } });
+            if (!res) return;
+            if (res.cost > getTotal(sid).score) { alert('可用加分不足，無法兌換。'); return; }
+            await changeStudent(sid, 'score', -res.cost, `兌換：${res.name}`, { redeem: true });
+            const card = refreshStudentCard(sid);
+            if (card) { bumpNum(card, '.score-num'); Fx.burst(card.querySelector('.score-num'), ['🎁', '✨'], 8, 70); }
+            Sound.play('redeem');
+            notify(`🎁 ${s.name} 兌換「${res.name}」，扣 ${res.cost} 分`);
         };
-        const enterSelectMode = (reason) => {
-            selectState = { reason, excluded: new Set() };
-            $('students-tab').classList.add('select-mode');
-            document.querySelectorAll('#student-grid .student-card').forEach(c => c.classList.remove('excluded'));
-            updateSelectBanner();
+
+        // ---------- 隱藏愛心（投影用） ----------
+        const LS_HIDE_HEARTS_KEY = 'classroomPowerhouse_hideHearts';
+        const applyHideHearts = (on) => {
+            document.body.classList.toggle('hide-hearts', on);
+            $('hide-hearts-btn').classList.toggle('on', on);
+            $('hide-hearts-btn').textContent = on ? '👁 顯示愛心' : '🙈 隱藏愛心';
+            lsSet(LS_HIDE_HEARTS_KEY, on ? '1' : '0');
         };
-        const exitSelectMode = () => {
-            selectState = null; $('students-tab').classList.remove('select-mode');
-            document.querySelectorAll('#student-grid .student-card.excluded').forEach(c => c.classList.remove('excluded'));
-        };
-        $('class-heart-btn').addEventListener('click', async () => {
-            const c = getCurrentClass(); if (!c) return;
-            const res = await pickReason({ title: '❤️ 全班加愛心', sub: '先選原因，下一步點掉沒做到的學生。', reasons: c.heartReasons || [], noneLabel: '不選原因' });
-            if (res) enterSelectMode(res.reason);
-        });
-        $('select-cancel-btn').addEventListener('click', exitSelectMode);
-        $('select-confirm-btn').addEventListener('click', async () => {
-            const c = getCurrentClass(); if (!c || !selectState) return;
-            const batchId = uid(); const reason = selectState.reason;
-            const targets = studentsOf(c.id).filter(s => !selectState.excluded.has(s.id));
-            exitSelectMode();
-            await addEvents(targets.map(s => makeEvent({ classId: c.id, targetId: s.id, kind: 'heart', delta: 1, reason, batchId })));
-            targets.forEach((s, i) => { const card = refreshStudentCard(s.id); if (card) setTimeout(() => { bumpNum(card, '.heart-num'); Fx.glow(card, 'heart-glow'); }, 200 + i * 40); });
-            Fx.heartRain(targets.length); Sound.play('rain');
-            showMascotSpeech(true, `${targets.length} 位同學得到愛心！❤️`);
-            refreshUndoBtn();
-        });
+        $('hide-hearts-btn').addEventListener('click', () => applyHideHearts(!document.body.classList.contains('hide-hearts')));
 
         // ---------- 復原上一筆 ----------
-        /** 今天、未復原、非復原紀錄中最新的一筆（同批次一起復原） */
+        /** 今天、老師自己記的、未復原、非復原紀錄中最新的一筆（同批次一起復原） */
         const lastUndoable = (c) => {
             const today = localDate();
             for (let i = S.events.length - 1; i >= 0; i--) {
                 const e = S.events[i];
                 if (e.classId !== c.id || e.date !== today) continue;
+                if ((e.recordedBy || 'teacher') !== 'teacher') continue;
                 if (e.undone || e.undoOf || e.batchId === 'migrate-v4') continue;
                 return e.batchId ? S.events.filter(x => x.batchId === e.batchId && !x.undone && !x.undoOf) : [e];
             }
@@ -1425,25 +1418,29 @@
         };
         const targetName = (e) => e.targetType === 'group' ? `第 ${e.targetId} 小隊` : (studentById(e.targetId)?.name ?? '（已移除）');
         const kindLabel = (k) => k === 'heart' ? '❤️ 愛心' : '⭐ 加分';
+        /** 依語意顯示：❤️ 扣分／✨ 消除／🎁 兌換／⭐ 加分 */
+        const actionLabel = (e) => e.kind === 'heart' ? (e.delta > 0 ? '❤️ 扣分' : '✨ 消除') : (e.redeem ? '🎁 兌換' : '⭐ 加分');
         const signed = (n) => (n > 0 ? `+${n}` : `${n}`);
         const describeEvents = (list) => {
             const e = list[0];
             const who = list.length > 1 ? `${list.length} 位` : targetName(e);
-            return `${who} ${kindLabel(e.kind)} ${signed(e.delta)}${e.reason ? `（${e.reason}）` : ''}`;
+            return `${who} ${actionLabel(e)} ${signed(e.delta)}${e.reason ? `（${e.reason}）` : ''}`;
         };
         const refreshUndoBtn = () => {
             const c = getCurrentClass(); const btn = $('undo-btn'); if (!c) return;
             const list = lastUndoable(c);
             btn.disabled = !list; btn.title = list ? `復原：${describeEvents(list)}` : '今天沒有可以復原的紀錄';
         };
+        const reverseOf = (e, reason) => makeEvent({ classId: e.classId, targetType: e.targetType, targetId: e.targetId, kind: e.kind, delta: -e.delta,
+            reason, undoOf: e.id, batchId: e.batchId ? `undo-${e.batchId}` : null, session: e.session, redeem: e.redeem });
         const undoLast = async () => {
             const c = getCurrentClass(); if (!c) return;
             const list = lastUndoable(c); if (!list) return;
             if (!confirm(`復原這一筆？\n${describeEvents(list)}\n\n原紀錄會保留並標記「已復原」。`)) return;
-            const reverses = list.map(e => makeEvent({ classId: e.classId, targetType: e.targetType, targetId: e.targetId, kind: e.kind, delta: -e.delta,
-                reason: `復原：${e.reason || (e.kind === 'heart' ? '愛心' : '加分')}`, undoOf: e.id, batchId: e.batchId ? `undo-${e.batchId}` : null }));
-            list.forEach(e => { e.undone = true; });
+            const reverses = list.map(e => reverseOf(e, `復原：${e.reason || (e.kind === 'heart' ? '愛心' : '加分')}`));
+            list.forEach(e => { e.undone = true; e.updatedAt = Date.now(); });
             await addEvents(reverses, list);
+            recomputeTotals();
             list.forEach(e => { if (e.targetType === 'student') refreshStudentCard(e.targetId); });
             if (currentTab !== 'students') renderCurrentTab();
             refreshUndoBtn();
@@ -1456,10 +1453,10 @@
             const c = getCurrentClass(); const s = studentById(sid); if (!c || !s) return;
             const t = getTotal(sid);
             $('adjust-modal').dataset.sid = sid;
-            $('adjust-sub').textContent = `${s.name}　目前 ⭐ ${t.score}　❤️ ${t.heart}`;
+            $('adjust-sub').textContent = `${s.name}　可用 ⭐ ${t.score}（累計獲得 ${t.earned}）　❤️ ${t.heart}`;
             $('adjust-amount').value = 1; $('adjust-reason').value = ''; $('adjust-backfill').value = ''; $('adjust-kind').value = 'score';
             $('adjust-backfill').max = addDays(localDate(), -1);
-            $('adjust-reason-list').replaceChildren(...[...new Set([...(c.scoreReasons || []), ...(c.heartReasons || []), '更正誤按'])].map(r => h('option', { value: r })));
+            $('adjust-reason-list').replaceChildren(...[...new Set([...(c.scoreReasons || []), ...(c.penaltyReasons || []), ...(c.clearReasons || []), '更正誤按'])].map(r => h('option', { value: r })));
             showModal('adjust-modal');
         };
         $('adjust-cancel').addEventListener('click', () => hideModal('adjust-modal'));
@@ -1470,33 +1467,55 @@
             const back = $('adjust-backfill').value;
             if (!amount) { alert('請輸入不為 0 的數量。'); return; }
             if (!reason) { alert('請填寫原因。'); return; }
+            if (kind === 'heart' && amount < 0 && -amount > getTotal(sid).heart) { alert(`愛心不會低於 0：目前只有 ${getTotal(sid).heart} 顆。`); return; }
             if (back) {
                 if (back >= localDate()) { alert('補登日期必須是今天以前。'); return; }
                 reason = `補登 ${mdLabel(back)}：${reason}`;
             }
             hideModal('adjust-modal');
             if (kind === 'score') await changeStudent(sid, 'score', amount, reason);
-            else await changeHeart(sid, amount, reason, null);
+            else { await addEvents([makeEvent({ classId: getCurrentClass().id, targetId: sid, kind: 'heart', delta: amount, reason })]); refreshStudentCard(sid); }
             refreshUndoBtn();
         });
 
-        // ---------- 原因標籤設定 ----------
+        // ---------- 班級設定：扣分原因、消除原因、兌換清單、時段時間 ----------
         const labelRow = (val) => h('div', { class: 'label-row' }, h('input', { type: 'text', value: val, maxlength: '12' }),
+            h('button', { class: 'btn btn-secondary', text: '✕', title: '刪除', onclick: (e) => e.currentTarget.parentElement.remove() }));
+        const redeemRow = (it = { name: '', cost: 10 }) => h('div', { class: 'label-row' },
+            h('input', { type: 'text', value: it.name, maxlength: '20', placeholder: '品名', class: 'ri-name' }),
+            h('input', { type: 'number', value: it.cost, min: '1', style: 'max-width:5.5em; flex:none;', class: 'ri-cost', 'aria-label': '所需分數' }),
             h('button', { class: 'btn btn-secondary', text: '✕', title: '刪除', onclick: (e) => e.currentTarget.parentElement.remove() }));
         $('reason-settings-btn').addEventListener('click', () => {
             const c = getCurrentClass(); if (!c) return;
-            $('labels-heart').replaceChildren(...(c.heartReasons || []).map(labelRow));
-            $('labels-score').replaceChildren(...(c.scoreReasons || []).map(labelRow));
+            $('labels-penalty').replaceChildren(...(c.penaltyReasons || []).map(labelRow));
+            $('labels-clear').replaceChildren(...(c.clearReasons || []).map(labelRow));
+            $('labels-redeem').replaceChildren(...(c.redeemItems || []).map(redeemRow));
+            const st = c.sessionTimes || DEFAULT_SESSION_TIMES;
+            [$('sess-m-from').value, $('sess-m-to').value] = st['早自修'] || ['', ''];
+            [$('sess-n-from').value, $('sess-n-to').value] = st['午休'] || ['', ''];
             showModal('labels-modal');
         });
-        $('labels-heart-add').addEventListener('click', () => { const r = labelRow(''); $('labels-heart').appendChild(r); r.querySelector('input').focus(); });
-        $('labels-score-add').addEventListener('click', () => { const r = labelRow(''); $('labels-score').appendChild(r); r.querySelector('input').focus(); });
+        const addRowTo = (box, row) => { $(box).appendChild(row); row.querySelector('input').focus(); };
+        $('labels-penalty-add').addEventListener('click', () => addRowTo('labels-penalty', labelRow('')));
+        $('labels-clear-add').addEventListener('click', () => addRowTo('labels-clear', labelRow('')));
+        $('labels-redeem-add').addEventListener('click', () => addRowTo('labels-redeem', redeemRow()));
         $('labels-cancel').addEventListener('click', () => hideModal('labels-modal'));
         $('labels-ok').addEventListener('click', async () => {
             const c = getCurrentClass(); if (!c) return;
-            const read = (id) => [...new Set([...$(id).querySelectorAll('input')].map(i => i.value.trim()).filter(v => v && v !== '兌換福利'))];
-            c.heartReasons = read('labels-heart'); c.scoreReasons = read('labels-score');
-            await saveClass(c); hideModal('labels-modal'); notify('原因標籤已儲存');
+            const read = (id) => [...new Set([...$(id).querySelectorAll('input')].map(i => i.value.trim()).filter(Boolean))];
+            const penalty = read('labels-penalty');
+            if (!penalty.length) { alert('至少要有一個扣分原因。'); return; }
+            const items = [];
+            for (const row of $('labels-redeem').querySelectorAll('.label-row')) {
+                const name = row.querySelector('.ri-name').value.trim(); const cost = parseInt(row.querySelector('.ri-cost').value, 10);
+                if (!name) continue;
+                if (!(cost >= 1)) { alert(`「${name}」的所需分數請輸入 1 以上。`); return; }
+                if (!items.some(x => x.name === name)) items.push({ name, cost });
+            }
+            const times = { '早自修': [$('sess-m-from').value, $('sess-m-to').value], '午休': [$('sess-n-from').value, $('sess-n-to').value] };
+            for (const [k, [a, b]] of Object.entries(times)) if (a && b && a >= b) { alert(`${k}的結束時間要晚於開始時間。`); return; }
+            c.penaltyReasons = penalty; c.clearReasons = read('labels-clear'); c.redeemItems = items; c.sessionTimes = times;
+            await saveClass(c); hideModal('labels-modal'); notify('班級設定已儲存');
         });
 
         const changeGroup = async (g, delta, reason = '') => {
@@ -1505,22 +1524,9 @@
             const col = document.querySelector(`.group-column[data-group-id="${g}"]`);
             if (col) { col.querySelector('.group-score').textContent = getGroupTotal(c.id, g); showScoreFeedback(col, delta); }
             if (delta > 0) {
-                flashScreen('plus'); registerCombo(delta); Sound.play('plus', comboCount); showMascotSpeech(true);
+                flashScreen('plus'); registerCombo(delta); Sound.play('plus', comboCount); showMascotSpeech();
                 if (col) Fx.burst(col.querySelector('.group-score'), ['⭐', '✨', '🌟', '🚀'], 16, 140);
             } else { registerCombo(0); Sound.play('minus'); }
-        };
-
-        /** 新考段：每位學生寫一筆抵銷紀錄，使加分歸零（愛心不動、紀錄保留） */
-        const resetScoresForNewTerm = async () => {
-            const c = getCurrentClass(); if (!c) return;
-            if (!confirm('確定要開始新考段嗎？\n每位學生的「加分」會歸零（寫入一筆抵銷紀錄），愛心不受影響，歷史紀錄都會保留。')) return;
-            const batchId = uid();
-            const evs = studentsOf(c.id).filter(s => getTotal(s.id).score !== 0)
-                .map(s => makeEvent({ classId: c.id, targetId: s.id, kind: 'score', delta: -getTotal(s.id).score, reason: '新考段歸零', batchId }));
-            await addEvents(evs);
-            gradesShown = false;
-            renderCurrentTab();
-            notify('已開始新考段，加分歸零');
         };
 
         // =====================================================================
@@ -1811,25 +1817,21 @@
                 }
             } else if (e.target.closest('.edit-class-btn')) {
                 $('edit-class-name').value = c.name; $('edit-class-modal').dataset.editingId = c.id; showModal('edit-class-modal');
-            } else { currentClassId = c.id; currentTab = 'students'; gradesShown = false; renderClassView(); }
+            } else { currentClassId = c.id; currentTab = 'students'; renderClassView(); }
         });
 
         $('student-grid').addEventListener('click', async (e) => {
             const card = e.target.closest('.student-card'); if (!card) return;
-            if (selectState) {
-                const sid = card.dataset.id;
-                if (selectState.excluded.has(sid)) selectState.excluded.delete(sid); else selectState.excluded.add(sid);
-                card.classList.toggle('excluded', selectState.excluded.has(sid));
-                updateSelectBanner(); return;
-            }
             const sid = card.dataset.id;
             const btn = e.target.closest('[data-act]');
             if (e.target.closest('.name-text')) { startRename(card, sid); return; }
             if (!btn) { if (!e.target.closest('button, input, .name-text')) openTimeline(sid); return; }
             const act = btn.dataset.act;
             if (act === 'delete') { removeStudent(sid); return; }
-            if (act === 'score') { await changeStudent(sid, 'score', Number(btn.dataset.amount), '', { btn }); refreshUndoBtn(); }
-            else if (act === 'heart') onHeartButton(sid, Number(btn.dataset.amount), btn);
+            if (act === 'score') await changeStudent(sid, 'score', 1, '', { btn });
+            else if (act === 'redeem') openRedeem(sid);
+            else if (act === 'penalty') addPenalty(sid);
+            else if (act === 'clear') clearHeart(sid);
             else if (act === 'adjust') openAdjust(sid);
         });
 
@@ -1884,15 +1886,6 @@
             const c = getCurrentClass(); const s = studentById(draggedStudentId);
             if (c && s) { s.group = g; await saveClass(c, [s]); renderGroupsTab(c); }
             draggedStudentId = null;
-        });
-
-        $('calculate-grades-btn').addEventListener('click', () => { gradesShown = true; renderGradesTab(getCurrentClass()); });
-        $('reset-scores-btn').addEventListener('click', resetScoresForNewTerm);
-        $('export-grades-btn').addEventListener('click', () => {
-            const c = getCurrentClass(); const grades = computeGrades(c);
-            let tsv = '座號\t姓名\t累積加分\t平時分數\n';
-            studentsOf(c.id).forEach(s => { tsv += `${s.seat ?? ''}\t${s.name}\t${getTotal(s.id).score}\t${grades.get(s.id)}\n`; });
-            navigator.clipboard.writeText(tsv).then(() => notify('成績已複製！可直接貼到 Excel。'), () => alert('複製失敗，請改用 CSV 匯出。'));
         });
 
         $('export-data-btn').addEventListener('click', () => exportBackup());
@@ -1956,6 +1949,7 @@
                 S.events = S.events.filter(e => e.classId !== cid).concat(imp.events);
                 S.snapshots = S.snapshots.filter(s => s.classId !== cid).concat(imp.dailySnapshots);
             }
+            await upgradeData();
             recomputeTotals();
             Cloud.markAllDirty(); Cloud.queue();
             await autoSettle();
@@ -2019,12 +2013,13 @@
         };
         (async () => {
             $('version-tag').textContent = APP_VERSION;
-            applyFontSize(lsGet(LS_FS_KEY) || 'm'); refreshMuteBtn();
+            applyFontSize(lsGet(LS_FS_KEY) || 'm'); refreshMuteBtn(); applyHideHearts(lsGet(LS_HIDE_HEARTS_KEY) === '1');
             resizeCanvas(); initParticles(); animateParticles();
             try { idb = await openDB(); }
             catch (err) { console.error(err); alert('無法開啟瀏覽器資料庫（IndexedDB）。請勿使用無痕視窗，或改用 Chrome / Edge。'); return; }
             await loadAll();
             await migrateFromV4IfNeeded();
+            await upgradeData();
             recomputeTotals();
             await autoSettle();
             renderDashboard(); switchScreen('dashboard');
