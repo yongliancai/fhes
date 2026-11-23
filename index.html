@@ -359,6 +359,24 @@
     .session-row span { flex-shrink: 0; font-weight: 700; }
     .session-row span:first-child { width: 4em; }
     #hide-hearts-btn.on { background: rgba(255,111,174,0.18); color: var(--pink); border-color: var(--pink); }
+    /* ---- v5.1：秩序記錄模式 ---- */
+    [hidden] { display: none !important; }
+    .record-overlay { position: fixed; inset: 0; z-index: 200; background: radial-gradient(ellipse at 30% 0%, #101c40 0%, var(--void-2) 45%, var(--void) 100%); display: flex; flex-direction: column; padding: 16px 22px 30px; overflow-y: auto; }
+    .record-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+    .record-head .spacer { flex: 1; }
+    .record-title { font-family: 'Orbitron', 'Microsoft JhengHei', sans-serif; font-weight: 900; font-size: 1.6em; color: var(--cyan); text-shadow: var(--glow-cyan); }
+    .record-hint { color: var(--text-secondary); margin: 8px 0 14px; font-weight: 600; }
+    .record-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(5.4rem, 1fr)); gap: 12px; }
+    .seat-btn { min-height: 4.4rem; font-family: 'Orbitron', sans-serif; font-size: 2em; font-weight: 900; color: var(--text-primary); background: rgba(0,229,255,0.08); border: 2px solid var(--panel-border); border-radius: 14px; }
+    .seat-btn:focus { outline: none; }
+    .seat-btn:disabled { opacity: 0.18; }
+    .record-reason { position: fixed; inset: 0; z-index: 210; display: flex; align-items: center; justify-content: center; background: rgba(2,4,12,0.75); }
+    .record-reason .card { width: 92%; max-width: 620px; }
+    .record-done { position: fixed; left: 50%; top: 50%; z-index: 220; transform: translate(-50%,-50%); padding: 18px 40px; border-radius: 16px; background: rgba(10,22,48,0.96); border: 1px solid var(--text-secondary); font-size: 1.6em; font-weight: 800; color: var(--text-primary); opacity: 0; pointer-events: none; transition: opacity 0.2s ease; }
+    .record-done.show { opacity: 1; }
+    #pending-modal .card, #timeline-modal .card { max-width: 1100px; }
+    #pending-btn.has { background: rgba(255,210,63,0.16); color: var(--gold); border-color: var(--gold); }
+    .row-btn { min-height: 40px !important; padding: 4px 12px !important; font-size: 0.85em !important; }
     .version-tag { position: fixed; left: 10px; bottom: 6px; z-index: 45; font-family: 'Share Tech Mono', monospace; font-size: 12px; color: var(--text-secondary); opacity: 0.8; pointer-events: none; }
 </style>
 </head>
@@ -434,6 +452,8 @@
                 <div class="class-toolbar" id="class-toolbar">
                     <button id="undo-btn" class="btn btn-secondary">↶ 復原上一筆</button>
                     <button id="hide-hearts-btn" class="btn btn-secondary">🙈 隱藏愛心</button>
+                    <button id="record-start-btn" class="btn btn-primary">📝 開始秩序記錄</button>
+                    <button id="pending-btn" class="btn btn-secondary">✅ 待確認 (0)</button>
                     <span class="spacer"></span>
                     <button id="add-student-btn" class="btn btn-secondary">＋ 新增學生</button>
                     <button id="paste-roster-btn" class="btn btn-secondary">📋 貼上名單</button>
@@ -635,6 +655,55 @@
                 <button id="labels-ok" class="btn btn-primary">儲存</button>
             </div>
         </div>
+    </div>
+
+    <div id="record-start-modal" class="modal">
+        <div class="card">
+            <h2>📝 開始秩序記錄</h2>
+            <p class="modal-sub">記錄畫面只顯示座號；同學記的每一筆都要老師確認後才算數。</p>
+            <div class="field">
+                <label>時段</label>
+                <label><input type="radio" name="record-session" value="早自修" style="width:auto;"> 🌅 早自修</label>
+                <label><input type="radio" name="record-session" value="午休" style="width:auto;"> 🌙 午休</label>
+            </div>
+            <div class="field"><label for="record-recorder">今天的記錄同學</label><select id="record-recorder"></select></div>
+            <div class="modal-actions">
+                <button id="record-start-cancel" class="btn btn-secondary">取消</button>
+                <button id="record-start-ok" class="btn btn-primary">開始記錄</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="pending-modal" class="modal">
+        <div class="card">
+            <h2>✅ 待確認</h2>
+            <p class="modal-sub" id="pending-sub"></p>
+            <div class="table-wrap"><table class="data-table" id="pending-table"></table></div>
+            <div class="modal-actions">
+                <button id="pending-close" class="btn btn-secondary">關閉</button>
+                <button id="pending-confirm-all" class="btn btn-success">全部確認</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 秩序記錄模式：會投影給全班看，只顯示座號，不顯示姓名、愛心、加分或筆數 -->
+    <div id="record-overlay" class="record-overlay" hidden>
+        <div class="record-head">
+            <div class="record-title" id="record-title"></div>
+            <span class="spacer"></span>
+            <button id="record-undo" class="btn btn-secondary">↶ 復原剛才那一筆</button>
+            <button id="record-end" class="btn btn-danger">結束記錄</button>
+        </div>
+        <p class="record-hint">點座號 → 選原因。記錄後要老師確認才算數。</p>
+        <div id="record-grid" class="record-grid"></div>
+        <div id="record-reason" class="record-reason" hidden>
+            <div class="card">
+                <h2 id="record-reason-title"></h2>
+                <div class="reason-grid" id="record-reason-grid"></div>
+                <div class="modal-actions"><button id="record-reason-cancel" class="btn btn-secondary">取消</button></div>
+            </div>
+        </div>
+        <div id="record-done" class="record-done"></div>
     </div>
 
     <input type="file" id="file-input" style="display: none;" accept=".json,application/json">
@@ -973,8 +1042,8 @@
                                 remoteIds.add(re.id);
                                 const le = eventById.get(re.id);
                                 if (!le) { S.events.push(re); eventById.set(re.id, re); puts.events.push(re); }
-                                else if (re.undone && !le.undone) { le.undone = true; puts.events.push(le); }
-                                else if (le.undone && !re.undone) this.dirtyDays.add(`${cid}|${d.date}`);
+                                else if ((re.updatedAt || 0) > (le.updatedAt || 0) || (re.undone && !le.undone && !le.updatedAt)) { Object.assign(le, re); puts.events.push(le); }
+                                else if ((le.updatedAt || 0) > (re.updatedAt || 0) || (le.undone && !re.undone)) this.dirtyDays.add(`${cid}|${d.date}`);
                             });
                             if (S.events.some(e => e.classId === cid && e.date === d.date && !remoteIds.has(e.id))) this.dirtyDays.add(`${cid}|${d.date}`);
                             if (d.snapshot && !S.snapshots.find(s => s.id === d.snapshot.id)) { S.snapshots.push(d.snapshot); puts.dailySnapshots.push(d.snapshot); }
@@ -1091,7 +1160,7 @@
         };
         const renderStudentsTab = (c) => {
             $('student-grid').replaceChildren(...studentsOf(c.id).map(buildStudentCard));
-            refreshUndoBtn();
+            refreshUndoBtn(); refreshPendingBtn();
         };
 
         const createStudentChip = (s) => h('div', { class: 'student-chip', draggable: 'true', dataset: { studentId: s.id }, text: s.name });
@@ -1411,7 +1480,7 @@
                 const e = S.events[i];
                 if (e.classId !== c.id || e.date !== today) continue;
                 if ((e.recordedBy || 'teacher') !== 'teacher') continue;
-                if (e.undone || e.undoOf || e.batchId === 'migrate-v4') continue;
+                if (e.undone || e.revoked || e.undoOf || e.batchId === 'migrate-v4' || !isCounted(e)) continue;
                 return e.batchId ? S.events.filter(x => x.batchId === e.batchId && !x.undone && !x.undoOf) : [e];
             }
             return null;
@@ -1419,7 +1488,7 @@
         const targetName = (e) => e.targetType === 'group' ? `第 ${e.targetId} 小隊` : (studentById(e.targetId)?.name ?? '（已移除）');
         const kindLabel = (k) => k === 'heart' ? '❤️ 愛心' : '⭐ 加分';
         /** 依語意顯示：❤️ 扣分／✨ 消除／🎁 兌換／⭐ 加分 */
-        const actionLabel = (e) => e.kind === 'heart' ? (e.delta > 0 ? '❤️ 扣分' : '✨ 消除') : (e.redeem ? '🎁 兌換' : '⭐ 加分');
+        const actionLabel = (e) => e.undoOf ? ((e.reason || '').startsWith('撤銷') ? '↩ 撤銷' : '↶ 復原') : e.kind === 'heart' ? (e.delta > 0 ? '❤️ 扣分' : '✨ 消除') : (e.redeem ? '🎁 兌換' : '⭐ 加分');
         const signed = (n) => (n > 0 ? `+${n}` : `${n}`);
         const describeEvents = (list) => {
             const e = list[0];
@@ -1477,6 +1546,181 @@
             else { await addEvents([makeEvent({ classId: getCurrentClass().id, targetId: sid, kind: 'heart', delta: amount, reason })]); refreshStudentCard(sid); }
             refreshUndoBtn();
         });
+
+        // =====================================================================
+        //  秩序記錄模式（同學用）：只顯示座號；每筆記成「待確認」，老師確認後才算數
+        // =====================================================================
+        const SESSION_ICON = { '早自修': '🌅', '午休': '🌙', '其他': '🕐' };
+        const seatName = (s) => s ? `${s.seat ?? ''}號 ${s.name}` : '（已移除）';
+        /** 記錄人：只在老師畫面顯示 */
+        const recorderName = (e) => { const r = e.recordedBy || 'teacher'; return r === 'teacher' ? '老師' : seatName(studentById(r)); };
+        let rec = null;           // { classId, session, recorderId, startedAt, lastId, count }
+        let recPickSid = null;
+        const recordInertTargets = () => [...document.body.children].filter(el => el.id !== 'record-overlay' && el.tagName !== 'SCRIPT');
+
+        $('record-start-btn').addEventListener('click', () => {
+            const c = getCurrentClass(); if (!c) return;
+            const cur = currentSession(c);
+            document.querySelectorAll('input[name="record-session"]').forEach(r => { r.checked = r.value === (cur === '午休' ? '午休' : '早自修'); });
+            $('record-recorder').replaceChildren(h('option', { value: '', text: '— 選擇記錄同學 —' }), ...studentsOf(c.id).map(s => h('option', { value: s.id, text: seatName(s) })));
+            showModal('record-start-modal');
+        });
+        $('record-start-cancel').addEventListener('click', () => hideModal('record-start-modal'));
+        $('record-start-ok').addEventListener('click', async () => {
+            const c = getCurrentClass(); if (!c) return;
+            const session = document.querySelector('input[name="record-session"]:checked')?.value;
+            const recorderId = $('record-recorder').value;
+            if (!session) { alert('請選擇時段。'); return; }
+            if (!recorderId) { alert('請選擇今天的記錄同學。'); return; }
+            hideModal('record-start-modal');
+            rec = { classId: c.id, session, recorderId, startedAt: Date.now(), lastId: null, count: 0 };
+            await setMeta('recordMode', rec);
+            showRecordOverlay();
+        });
+
+        const showRecordOverlay = () => {
+            const c = classById(rec.classId); if (!c) return;
+            document.querySelectorAll('.modal.visible').forEach(m => m.classList.remove('visible'));
+            $('record-title').textContent = `${SESSION_ICON[rec.session] || ''} ${rec.session} 秩序記錄`;
+            $('record-grid').replaceChildren(...studentsOf(c.id).map(s => h('button', {
+                class: 'seat-btn', dataset: { sid: s.id }, text: s.seat ?? '?',
+                disabled: s.id === rec.recorderId ? true : null, 'aria-label': `座號 ${s.seat}`,
+            })));
+            $('record-reason').hidden = true;
+            $('record-overlay').hidden = false;
+            recordInertTargets().forEach(el => { el.inert = true; });
+            refreshRecordUndo();
+        };
+        const hideRecordOverlay = () => {
+            $('record-overlay').hidden = true;
+            recordInertTargets().forEach(el => { el.inert = false; });
+        };
+        const recLastEvent = () => { const e = rec?.lastId ? eventById.get(rec.lastId) : null; return e && e.status === 'pending' && !e.undone ? e : null; };
+        const refreshRecordUndo = () => { $('record-undo').disabled = !recLastEvent(); };
+        let recDoneTimer = null;
+        const flashRecordDone = (text) => {
+            const d = $('record-done'); d.textContent = text; d.classList.add('show');
+            clearTimeout(recDoneTimer); recDoneTimer = setTimeout(() => d.classList.remove('show'), 900);
+        };
+
+        $('record-grid').addEventListener('click', (e) => {
+            const b = e.target.closest('.seat-btn'); if (!b || b.disabled || !rec) return;
+            b.blur();
+            const s = studentById(b.dataset.sid); const c = classById(rec.classId); if (!s || !c) return;
+            if (s.id === rec.recorderId) return;
+            recPickSid = s.id;
+            // 不顯示被記同學的名字，只顯示座號讓記錄同學確認
+            $('record-reason-title').textContent = `座號 ${s.seat}：選擇原因`;
+            $('record-reason-grid').replaceChildren(...(c.penaltyReasons || []).map(r => h('button', { class: 'btn reason-btn btn-soft', dataset: { reason: r }, text: r })));
+            $('record-reason').hidden = false;
+        });
+        $('record-reason-cancel').addEventListener('click', () => { recPickSid = null; $('record-reason').hidden = true; });
+        $('record-reason-grid').addEventListener('click', async (e) => {
+            const b = e.target.closest('[data-reason]'); if (!b || !rec || !recPickSid) return;
+            const sid = recPickSid; recPickSid = null;
+            $('record-reason').hidden = true;
+            if (sid === rec.recorderId) return;
+            const ev = makeEvent({ classId: rec.classId, targetId: sid, kind: 'heart', delta: 1, reason: b.dataset.reason,
+                session: rec.session, status: 'pending', recordedBy: rec.recorderId });
+            await addEvents([ev]);
+            rec.lastId = ev.id; rec.count++;
+            await setMeta('recordMode', rec);
+            refreshRecordUndo();
+            flashRecordDone('已記錄 ✓');
+        });
+        $('record-undo').addEventListener('click', async () => {
+            const e = recLastEvent(); if (!e) return;
+            if (!confirm('復原剛才那一筆？')) return;
+            e.undone = true; e.reviewNote = '記錄同學自行復原'; e.updatedAt = Date.now();
+            await dbWrite({ events: [e] }); Cloud.markDay(e.classId, e.date);
+            rec.lastId = null; rec.count = Math.max(0, rec.count - 1);
+            await setMeta('recordMode', rec);
+            refreshRecordUndo();
+            flashRecordDone('已復原');
+        });
+        $('record-end').addEventListener('click', async () => {
+            if (!rec) return;
+            if (!confirm('確定要結束秩序記錄嗎？')) return;
+            const n = rec.count; const cid = rec.classId;
+            rec = null; await setMeta('recordMode', null);
+            hideRecordOverlay();
+            if (classById(cid)) { currentClassId = cid; currentTab = 'students'; renderClassView(); }
+            notify(n ? `本次記錄 ${n} 筆，請到「✅ 待確認」確認` : '已結束秩序記錄', 4000);
+        });
+
+        // =====================================================================
+        //  老師確認：待確認清單、全部確認、駁回、撤銷
+        // =====================================================================
+        const pendingOf = (c) => S.events.filter(e => e.classId === c.id && e.status === 'pending' && !e.undone).sort((a, b) => a.ts - b.ts);
+        const refreshPendingBtn = () => {
+            const c = getCurrentClass(); if (!c) return;
+            const n = pendingOf(c).length;
+            $('pending-btn').textContent = `✅ 待確認 (${n})`;
+            $('pending-btn').classList.toggle('has', n > 0);
+        };
+        const touchEvents = async (list) => {
+            const now = Date.now();
+            list.forEach(e => { e.updatedAt = now; });
+            await dbWrite({ events: list });
+            list.forEach(e => { Cloud.markDay(e.classId, e.date); if (e.confirmedDate) Cloud.markDay(e.classId, e.confirmedDate); });
+            recomputeTotals();
+        };
+        const afterReview = () => {
+            refreshPendingBtn();
+            if (currentTab === 'students') renderStudentsTab(getCurrentClass()); else renderCurrentTab();
+            if ($('pending-modal').classList.contains('visible')) renderPendingModal();
+        };
+        const renderPendingModal = () => {
+            const c = getCurrentClass(); if (!c) return;
+            const list = pendingOf(c); const today = localDate();
+            $('pending-sub').textContent = list.length ? `共 ${list.length} 筆。確認後才計入愛心；有疑問的請按「駁回」並填理由。` : '目前沒有待確認的紀錄。';
+            $('pending-confirm-all').disabled = !list.length;
+            $('pending-table').replaceChildren(
+                h('thead', {}, h('tr', {}, ['時間', '時段', '學生', '原因', '記錄人', ''].map(t => h('th', { text: t })))),
+                h('tbody', {}, list.length ? list.map(e => h('tr', {},
+                    h('td', { text: e.date === today ? localTime(e.ts) : `${mdLabel(e.date)} ${localTime(e.ts)}` }),
+                    h('td', { text: `${SESSION_ICON[e.session] || ''} ${e.session || '其他'}` }),
+                    h('td', { class: 'left', text: seatName(studentById(e.targetId)) }),
+                    h('td', { text: e.reason }),
+                    h('td', { class: 'muted', text: recorderName(e) }),
+                    h('td', {}, h('button', { class: 'btn btn-secondary row-btn', text: '駁回', onclick: () => rejectEvent(e) }))))
+                    : h('tr', {}, h('td', { colspan: '6', class: 'muted', text: '沒有待確認的紀錄' }))));
+        };
+        $('pending-btn').addEventListener('click', () => { renderPendingModal(); showModal('pending-modal'); });
+        $('pending-close').addEventListener('click', () => hideModal('pending-modal'));
+        /** 全部確認：計入確認當天（隔天確認也不會改到已鎖定的日子） */
+        $('pending-confirm-all').addEventListener('click', async () => {
+            const c = getCurrentClass(); if (!c) return;
+            const list = pendingOf(c); if (!list.length) return;
+            const now = Date.now(), today = localDate(now);
+            list.forEach(e => { e.status = 'confirmed'; e.confirmedAt = now; e.confirmedDate = today; e.reviewedAt = now; });
+            await touchEvents(list);
+            afterReview();
+            notify(`已確認 ${list.length} 筆`);
+        });
+        const askNote = (msg) => { const v = prompt(msg, ''); if (v == null) return null; const t = v.trim(); if (!t) { alert('請填寫理由。'); return null; } return t; };
+        const rejectEvent = async (e) => {
+            const note = askNote(`駁回這一筆？\n${seatName(studentById(e.targetId))}：${e.reason}（${e.session}）\n\n請填寫駁回理由：`);
+            if (!note) return;
+            e.status = 'rejected'; e.reviewNote = note; e.reviewedAt = Date.now();
+            await touchEvents([e]);
+            afterReview();
+            notify('已駁回，不計入愛心');
+        };
+        /** 可撤銷：已確認、未復原/撤銷的扣分（愛心 +） */
+        const canRevoke = (e) => e.kind === 'heart' && e.delta > 0 && isCounted(e) && !e.undone && !e.revoked && !e.undoOf;
+        /** 撤銷已確認的扣分：寫一筆反向紀錄（記在今天），原紀錄標「已撤銷＋理由」 */
+        const revokeEvent = async (e) => {
+            const note = askNote(`撤銷這一筆已確認的扣分？\n${seatName(studentById(e.targetId))}：${e.reason}（${mdLabel(e.date)} ${e.session}）\n\n請填寫理由（例如：申訴成立）：`);
+            if (!note) return;
+            e.revoked = true; e.reviewNote = `撤銷：${note}`; e.reviewedAt = Date.now();
+            const rev = reverseOf(e, `撤銷：${note}`);
+            await touchEvents([e]);
+            await addEvents([rev]);
+            recomputeTotals();
+            afterReview();
+            notify('已撤銷，原紀錄保留');
+        };
 
         // ---------- 班級設定：扣分原因、消除原因、兌換清單、時段時間 ----------
         const labelRow = (val) => h('div', { class: 'label-row' }, h('input', { type: 'text', value: val, maxlength: '12' }),
@@ -1616,7 +1860,24 @@
         const csvCell = (v) => { const s = String(v ?? ''); return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
         const downloadCSV = (filename, rows) => downloadFile(filename, '﻿' + rows.map(r => r.map(csvCell).join(',')).join('\r\n'), 'text/csv;charset=utf-8');
         const reasonText = (m) => Object.entries(m || {}).map(([k, v]) => `${k} ${signed(v)}`).join('、');
-        const statusText = (e) => e.undone ? '已復原' : e.undoOf ? '復原紀錄' : '';
+        /** 狀態文字：待確認／已確認／駁回／已撤銷／已復原 */
+        const statusText = (e) => {
+            if (e.status === 'pending') return e.undone ? '記錄同學已復原' : '待確認';
+            if (e.status === 'rejected') return '駁回';
+            if (e.revoked) return '已撤銷';
+            if (e.undone) return '已復原';
+            if (e.undoOf) return (e.reason || '').startsWith('撤銷') ? '撤銷紀錄' : '復原紀錄';
+            if (e.confirmedDate && e.confirmedDate !== e.date) return `已確認（${mdLabel(e.confirmedDate)}）`;
+            return '已確認';
+        };
+        const statusFull = (e) => statusText(e) + (e.reviewNote && !e.undoOf ? `：${e.reviewNote.replace(/^撤銷：/, '')}` : '');
+        const isStruck = (e) => !isCounted(e) || e.undone || e.revoked;
+        /** 逐筆累計（依生效時間，愛心最少 0），回傳 id → { score, heart } */
+        const runningTotals = (evs) => {
+            const t = { score: 0, heart: 0, earned: 0 }; const out = new Map();
+            [...evs].filter(isCounted).sort(byEffTs).forEach(e => { applyTo(t, e); out.set(e.id, { ...t }); });
+            return out;
+        };
         const eventRowsCSV = (list) => [['日期', '時間', '座號', '對象', '項目', '增減', '原因', '狀態'],
             ...list.map(e => [e.date, localTime(e.ts), e.targetType === 'student' ? (studentById(e.targetId)?.seat ?? '') : '', targetName(e),
                 e.kind === 'heart' ? '愛心' : '加分', e.delta, e.reason, statusText(e)])];
@@ -1684,22 +1945,27 @@
             downloadCSV(`${c.name}_全部紀錄_${stampForFile()}.csv`, eventRowsCSV(eventsOf(c.id)));
         });
 
-        // ---------- 個人時間軸 ----------
+        // ---------- 個人時間軸：含時段與狀態 ----------
         const openTimeline = (sid) => {
             const s = studentById(sid); if (!s) return;
             const evs = S.events.filter(e => e.targetType === 'student' && e.targetId === sid);
-            let sc = 0, ht = 0;
-            const rows = evs.map(e => { if (e.kind === 'heart') ht += e.delta; else sc += e.delta; return { e, total: e.kind === 'heart' ? ht : sc }; }).reverse();
+            const run = runningTotals(evs); const t = getTotal(sid);
+            const rows = [...evs].sort((a, b) => b.ts - a.ts);
             $('timeline-title').textContent = `🛰️ ${s.name} 的紀錄`;
-            $('timeline-head').replaceChildren(h('span', { text: `⭐ 加分 ${sc}` }), h('span', { class: 'heart-c', text: `❤️ 愛心 ${ht}` }), h('span', { class: 'muted', text: `共 ${evs.length} 筆` }));
+            $('timeline-head').replaceChildren(h('span', { text: `⭐ 可用 ${t.score}` }), h('span', { text: `累計獲得 ${t.earned}` }), h('span', { class: 'heart-c', text: `❤️ 愛心 ${t.heart}` }), h('span', { class: 'muted', text: `共 ${evs.length} 筆` }));
             $('timeline-table').replaceChildren(
-                h('thead', {}, h('tr', {}, ['日期', '時間', '項目', '增減', '原因', '當時累計'].map(t => h('th', { text: t })))),
-                h('tbody', {}, rows.length ? rows.map(({ e, total }) => h('tr', { class: e.undone ? 'undone' : '' },
-                    h('td', { text: e.date }), h('td', { text: localTime(e.ts) }), h('td', { text: kindLabel(e.kind) }),
-                    h('td', {}, h('span', { class: e.delta > 0 ? 'pos' : 'neg', text: signed(e.delta) })),
-                    h('td', { class: 'left' }, e.reason || '', statusText(e) ? h('span', { class: 'tag', text: statusText(e) }) : null),
-                    h('td', { class: e.kind === 'heart' ? 'heart-c' : '', text: total })))
-                    : h('tr', {}, h('td', { colspan: '6', class: 'muted', text: '還沒有紀錄' }))));
+                h('thead', {}, h('tr', {}, ['日期', '時間', '時段', '項目', '增減', '原因', '狀態', '記錄人', '當時累計', ''].map(t => h('th', { text: t })))),
+                h('tbody', {}, rows.length ? rows.map(e => {
+                    const r = run.get(e.id);
+                    return h('tr', { class: isStruck(e) ? 'undone' : '' },
+                        h('td', { text: e.date }), h('td', { text: localTime(e.ts) }), h('td', { text: e.session || '其他' }), h('td', { text: actionLabel(e) }),
+                        h('td', {}, h('span', { class: e.kind === 'heart' ? 'heart-c' : e.delta > 0 ? 'pos' : 'neg', text: signed(e.delta) })),
+                        h('td', { class: 'left', text: e.reason || '' }),
+                        h('td', { class: 'muted', text: statusFull(e) }),
+                        h('td', { class: 'muted', text: recorderName(e) }),
+                        h('td', { class: e.kind === 'heart' ? 'heart-c' : '', text: r ? (e.kind === 'heart' ? r.heart : r.score) : '—' }),
+                        h('td', {}, canRevoke(e) ? h('button', { class: 'btn btn-secondary row-btn', text: '撤銷', onclick: async () => { await revokeEvent(e); openTimeline(sid); } }) : null));
+                }) : h('tr', {}, h('td', { colspan: '10', class: 'muted', text: '還沒有紀錄' }))));
             $('timeline-csv').onclick = () => downloadCSV(`${s.name}_個人紀錄_${stampForFile()}.csv`, eventRowsCSV(evs));
             showModal('timeline-modal');
         };
@@ -1990,7 +2256,7 @@
             notify('已與雲端同步（紀錄已合併）');
         });
         document.querySelectorAll('.modal').forEach(m => m.addEventListener('click', (e) => { if (e.target === m) m.classList.remove('visible'); }));
-        document.addEventListener('keydown', (e) => { if (e.key === 'Escape') document.querySelectorAll('.modal.visible').forEach(m => m.classList.remove('visible')); });
+        document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && rec) { recPickSid = null; $('record-reason').hidden = true; return; } if (e.key === 'Escape') document.querySelectorAll('.modal.visible').forEach(m => m.classList.remove('visible')); });
 
         // ---------- 星空背景動畫 ----------
         const canvas = $('particle-canvas'); const ctx = canvas.getContext('2d'); let particles = [];
@@ -2023,6 +2289,9 @@
             recomputeTotals();
             await autoSettle();
             renderDashboard(); switchScreen('dashboard');
+            // 重新整理時若仍在秩序記錄模式，直接回到記錄畫面（不會露出老師畫面）
+            const rm = S.meta.recordMode;
+            if (rm && classById(rm.classId) && !classById(rm.classId).deleted) { rec = rm; currentClassId = rm.classId; currentTab = 'students'; renderClassView(); showRecordOverlay(); }
             // 雲端（選用）：在背景連線並合併，不覆蓋本機
             const cfg = Cloud.config();
             if (cfg) {
