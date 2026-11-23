@@ -288,6 +288,67 @@
     .backup-reminder { position: fixed; top: 16px; left: 50%; transform: translate(-50%, -150%); z-index: 110; display: flex; gap: 12px; align-items: center; flex-wrap: wrap;
         background: rgba(10,22,48,0.96); border: 1px solid var(--gold); border-radius: 14px; padding: 12px 18px; box-shadow: var(--glow-gold); font-weight: 700; transition: transform 0.3s ease; max-width: 94vw; }
     .backup-reminder.show { transform: translate(-50%, 0); }
+    /* =====================================================================
+       v5 投影版面：字體放大約 1.4 倍（標準 22px，v4 為 16px），按鈕至少 56px
+       ===================================================================== */
+    html { font-size: 22px; }
+    html[data-fs="l"] { font-size: 26px; }
+    html[data-fs="xl"] { font-size: 30px; }
+    body { font-size: 1rem; }
+    .app-screen { padding: 64px 20px 90px; }
+    .btn, .nav-tab { min-height: 56px; }
+    .btn { padding: 10px 20px; }
+    .nav-tab { font-size: 1.05em; }
+    .class-view-nav { flex-wrap: wrap; }
+    .class-action-btn { width: 44px; height: 44px; font-size: 18px; }
+
+    .top-controls { position: fixed; top: 10px; right: 14px; z-index: 90; display: flex; gap: 6px; align-items: center; padding: 4px; border-radius: 14px;
+        background: rgba(5,10,25,0.75); border: 1px solid var(--panel-border); backdrop-filter: blur(10px); }
+    .top-controls button { min-width: 46px; height: 46px; border-radius: 10px; background: transparent; color: var(--text-secondary); font-weight: 800; font-family: inherit; padding: 0 8px; font-size: 18px; }
+    .top-controls button.on { background: rgba(0,229,255,0.18); color: var(--cyan); box-shadow: inset 0 0 0 1px var(--cyan); }
+    .top-controls .fs-s { font-size: 15px; } .top-controls .fs-m { font-size: 19px; } .top-controls .fs-l { font-size: 23px; }
+    .top-controls .sep { width: 1px; height: 30px; background: var(--panel-border); }
+
+    #students-tab.card { padding: 16px; }
+    #student-grid { grid-template-columns: repeat(auto-fill, minmax(10.4rem, 1fr)); gap: 14px; }
+    .student-card { padding: 12px 10px 14px; gap: 6px; }
+    .student-header { align-items: center; margin: 0; gap: 4px; }
+    .student-name { font-size: 1.2em; text-align: left; line-height: 1.2; word-break: break-all; }
+    .student-seat { font-size: 0.75em; }
+    .meta-row { display: flex; align-items: center; justify-content: center; gap: 6px; width: 100%; }
+    .badge-row { min-height: 0; margin: 0; gap: 1px; }
+    .badge-icon { font-size: 0.85em; }
+    .lv-chip { font-family: 'Orbitron', sans-serif; font-size: 0.62em; font-weight: 800; color: var(--gold); padding: 2px 6px; border-radius: 8px; border: 1px solid rgba(255,210,63,0.5); background: rgba(255,210,63,0.1); white-space: nowrap; }
+    .xp-bar { width: 100%; height: 6px; border-radius: 3px; background: rgba(255,255,255,0.08); overflow: hidden; }
+    .xp-fill { height: 100%; background: linear-gradient(90deg, var(--gold), #fff3b0); box-shadow: var(--glow-gold); transition: width 0.5s ease; }
+    .counter-row { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 6px; width: 100%; }
+    .counter-row .counter-num { font-size: 1.9em; text-align: center; white-space: nowrap; }
+    .counter-num .ico { font-size: 0.55em; vertical-align: middle; margin-right: 2px; }
+    .counter-num[data-len="3"] .val { font-size: 0.8em; }
+    .counter-num[data-len="4"] .val { font-size: 0.64em; }
+    .counter-num[data-len="4"] .ico { display: none; }
+    .counter-row > .counter-num { min-width: 0; overflow: hidden; }
+    .score-btn { width: 2.6rem; height: 2.6rem; min-width: 56px; min-height: 56px; font-size: 1.5em; line-height: 1; }
+    .adjust-btn, .delete-student-btn { width: 40px; height: 40px; font-size: 16px; }
+    .student-card.heart-glow { animation: heartGlow 1s ease-out; }
+    @keyframes heartGlow { 0% { box-shadow: 0 0 0 0 rgba(255,111,174,0.9), 0 0 50px rgba(255,111,174,0.8); border-color: var(--pink); } 100% { box-shadow: 0 0 0 18px rgba(255,111,174,0), 0 20px 50px rgba(0,0,0,0.45); } }
+    .student-card.star-glow { animation: starGlow 0.8s ease-out; }
+    @keyframes starGlow { 0% { box-shadow: 0 0 40px rgba(57,255,136,0.8); border-color: var(--green); } 100% { box-shadow: 0 20px 50px rgba(0,0,0,0.45); } }
+    .score-feedback { font-size: 4.2em; text-shadow: 0 0 24px currentColor; }
+    .fx-layer { position: fixed; inset: 0; pointer-events: none; z-index: 75; overflow: hidden; }
+    .fx-particle { position: fixed; pointer-events: none; z-index: 76; will-change: transform, opacity; }
+    .confetti-piece { font-size: 2em; }
+    .levelup-level { font-size: 6em; }
+    .levelup-name { font-size: 2em; }
+    .group-header .score-btn { font-size: 1.3em; }
+    .reason-btn { min-height: 72px; font-size: 1.35em; }
+    .modal .card { max-width: 620px; }
+    /* 吉祥物平時藏在左下角，說話時才探出來，避免擋住學生卡片 */
+    .mascot-wrap { bottom: 26px; transform: translateY(150%); opacity: 0; transition: transform 0.35s cubic-bezier(.2,1.3,.4,1), opacity 0.25s ease; }
+    .mascot-wrap.talking { transform: translateY(0); opacity: 1; }
+    .mascot-avatar { font-size: 3.2em; }
+    .mascot-bubble { font-size: 1.15em; max-width: 360px; border-color: var(--cyan); background: rgba(10,22,48,0.95); }
+    @media (prefers-reduced-motion: reduce) { #scan-sweep { display: none; } }
     .version-tag { position: fixed; left: 10px; bottom: 6px; z-index: 45; font-family: 'Share Tech Mono', monospace; font-size: 12px; color: var(--text-secondary); opacity: 0.8; pointer-events: none; }
 </style>
 </head>
@@ -314,6 +375,14 @@
         <div class="mascot-avatar">🤖</div>
     </div>
     <div id="notice" class="notice"></div>
+    <div id="fx-layer" class="fx-layer"></div>
+    <div class="top-controls" role="toolbar" aria-label="顯示設定">
+        <button class="fs-btn fs-s" data-fs="m" title="字體：標準">A</button>
+        <button class="fs-btn fs-m" data-fs="l" title="字體：大">A</button>
+        <button class="fs-btn fs-l" data-fs="xl" title="字體：特大">A</button>
+        <span class="sep"></span>
+        <button id="mute-btn" title="音效開關">🔊</button>
+    </div>
     <div class="version-tag" id="version-tag">v5.0</div>
 
     <div id="class-dashboard" class="app-screen active">
@@ -948,30 +1017,27 @@
                     h('div', { class: 'card-tools' },
                         h('button', { class: 'delete-student-btn', dataset: { act: 'delete' }, title: '移除學生（紀錄保留）', text: '🗑️' }),
                         h('button', { class: 'adjust-btn', dataset: { act: 'adjust' }, title: '手動調整（填寫原因）', text: '✎' }))),
-                h('div', { class: 'badge-row' }, BADGE_DEFS.map(b => h('span', { class: 'badge-icon', title: b.name, dataset: { min: b.score }, text: b.icon }))),
-                h('div', { class: 'xp-ring' }, h('div', { class: 'xp-ring-inner' })),
-                h('div', { class: 'counters' },
-                    h('div', { class: 'counter counter-score' },
-                        h('div', { class: 'counter-label', text: '⭐ 加分' }),
-                        h('div', { class: 'counter-num score-num' }),
-                        h('div', { class: 'counter-btns' },
-                            h('button', { class: 'btn btn-soft score-btn', dataset: { act: 'score', amount: -1 }, title: '加分 −1', 'aria-label': '加分減一', text: '−' }),
-                            h('button', { class: 'btn btn-success score-btn', dataset: { act: 'score', amount: 1 }, title: '加分 +1', 'aria-label': '加分加一', text: '+' }))),
-                    h('div', { class: 'counter counter-heart' },
-                        h('div', { class: 'counter-label', text: '❤️ 愛心' }),
-                        h('div', { class: 'counter-num heart-num' }),
-                        h('div', { class: 'counter-btns' },
-                            h('button', { class: 'btn btn-soft score-btn', dataset: { act: 'heart', amount: -1 }, title: '愛心 −1（選原因）', 'aria-label': '愛心減一', text: '−' }),
-                            h('button', { class: 'btn btn-heart score-btn', dataset: { act: 'heart', amount: 1 }, title: '愛心 +1（選原因）', 'aria-label': '愛心加一', text: '+' })))));
+                h('div', { class: 'meta-row' },
+                    h('span', { class: 'lv-chip' }),
+                    h('div', { class: 'badge-row' }, BADGE_DEFS.map(b => h('span', { class: 'badge-icon', title: `${b.name}（${b.score} 分）`, dataset: { min: b.score }, text: b.icon })))),
+                h('div', { class: 'xp-bar', title: '升級進度' }, h('div', { class: 'xp-fill' })),
+                h('div', { class: 'counter-row counter-score' },
+                    h('button', { class: 'btn btn-soft score-btn', dataset: { act: 'score', amount: -1 }, title: '加分 −1', 'aria-label': '加分減一', text: '−' }),
+                    h('div', { class: 'counter-num score-num', title: '⭐ 加分' }, h('span', { class: 'ico', text: '⭐' }), h('span', { class: 'val' })),
+                    h('button', { class: 'btn btn-success score-btn', dataset: { act: 'score', amount: 1 }, title: '加分 +1', 'aria-label': '加分加一', text: '+' })),
+                h('div', { class: 'counter-row counter-heart' },
+                    h('button', { class: 'btn btn-soft score-btn', dataset: { act: 'heart', amount: -1 }, title: '愛心 −1（選原因）', 'aria-label': '愛心減一', text: '−' }),
+                    h('div', { class: 'counter-num heart-num', title: '❤️ 愛心' }, h('span', { class: 'ico', text: '❤️' }), h('span', { class: 'val' })),
+                    h('button', { class: 'btn btn-heart score-btn', dataset: { act: 'heart', amount: 1 }, title: '愛心 +1（選原因）', 'aria-label': '愛心加一', text: '+' })));
             updateStudentCard(card, s);
             return card;
         };
         const updateStudentCard = (card, s) => {
             const t = getTotal(s.id); const lvl = getLevelInfo(t.score);
-            card.querySelector('.score-num').textContent = t.score;
-            card.querySelector('.heart-num').textContent = t.heart;
-            card.querySelector('.xp-ring').style.setProperty('--pct', lvl.progress);
-            card.querySelector('.xp-ring-inner').textContent = `LV${lvl.level}`;
+            const setNum = (sel, v) => { const el = card.querySelector(sel); el.querySelector('.val').textContent = v; el.dataset.len = Math.min(4, Math.max(2, String(v).length)); };
+            setNum('.score-num', t.score); setNum('.heart-num', t.heart);
+            card.querySelector('.xp-fill').style.width = `${lvl.progress}%`;
+            card.querySelector('.lv-chip').textContent = `LV${lvl.level}`;
             card.querySelectorAll('.badge-icon').forEach(b => b.classList.toggle('earned', t.score >= Number(b.dataset.min)));
         };
         const refreshStudentCard = (sid) => {
@@ -1109,13 +1175,124 @@
             clearTimeout(badgeToastTimer); badgeToastTimer = setTimeout(() => $('badge-toast').classList.remove('active'), 2600);
         };
 
-        // ---------- 愛心特效（基本版；階段 5 強化） ----------
-        const Fx = {
-            heartPlus(card) { showScoreFeedback(card, 1, 'heart'); },
-            heartMinus(card) {
-                const f = h('div', { class: 'heart-fade', text: '♡' }); card.appendChild(f); setTimeout(() => f.remove(), 900);
+        // ---------- 音效：Web Audio API 即時合成，不需音效檔 ----------
+        const LS_MUTE_KEY = 'classroomPowerhouse_muted';
+        const LS_FS_KEY = 'classroomPowerhouse_fontSize';
+        const lsGet = (k) => { try { return localStorage.getItem(k); } catch { return null; } };
+        const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch { /* 無痕模式等情況忽略 */ } };
+        const Sound = {
+            ctx: null, muted: lsGet(LS_MUTE_KEY) === '1',
+            ensure() {
+                if (!this.ctx) { const AC = window.AudioContext || window.webkitAudioContext; if (!AC) return null; this.ctx = new AC(); }
+                if (this.ctx.state === 'suspended') this.ctx.resume();
+                return this.ctx;
             },
-            heartRain() { spawnConfetti(['❤️', '💖', '💕', '💗'], 40); },
+            tone(freq, start, dur, type = 'sine', vol = 0.12, slideTo = null) {
+                const ctx = this.ctx; const o = ctx.createOscillator(); const g = ctx.createGain();
+                o.type = type; o.frequency.setValueAtTime(freq, start);
+                if (slideTo) o.frequency.exponentialRampToValueAtTime(slideTo, start + dur);
+                g.gain.setValueAtTime(0.0001, start);
+                g.gain.exponentialRampToValueAtTime(vol, start + 0.012);
+                g.gain.exponentialRampToValueAtTime(0.0001, start + dur);
+                o.connect(g).connect(ctx.destination); o.start(start); o.stop(start + dur + 0.05);
+            },
+            play(name, n = 0) {
+                if (this.muted) return;
+                const ctx = this.ensure(); if (!ctx) return;
+                const t = ctx.currentTime + 0.01;
+                switch (name) {
+                    case 'plus': { const f = 660 * Math.pow(2, Math.min(n, 12) / 12); this.tone(f, t, 0.1, 'square', 0.06); this.tone(f * 1.5, t + 0.07, 0.22, 'square', 0.06); break; }
+                    case 'minus': this.tone(392, t, 0.18, 'triangle', 0.05, 330); break;
+                    case 'heart': [1047, 1319, 1568, 2093].forEach((f, i) => this.tone(f, t + i * 0.07, 0.35, 'sine', 0.09)); break;
+                    case 'rain': [784, 988, 1175, 1568, 1976, 2349, 1976, 2349].forEach((f, i) => this.tone(f, t + i * 0.1, 0.5, 'sine', 0.08)); break;
+                    case 'levelup': [523, 659, 784, 1047].forEach((f, i) => this.tone(f, t + i * 0.12, 0.28, 'square', 0.07)); this.tone(1047, t + 0.5, 0.8, 'triangle', 0.12); this.tone(1319, t + 0.5, 0.8, 'triangle', 0.08); break;
+                    case 'badge': [880, 1175, 1760].forEach((f, i) => this.tone(f, t + i * 0.1, 0.3, 'triangle', 0.09)); break;
+                }
+            },
+        };
+        const refreshMuteBtn = () => { $('mute-btn').textContent = Sound.muted ? '🔇' : '🔊'; $('mute-btn').title = Sound.muted ? '音效已關閉（點一下開啟）' : '音效開啟中（點一下靜音）'; $('mute-btn').classList.toggle('on', !Sound.muted); };
+        $('mute-btn').addEventListener('click', () => { Sound.muted = !Sound.muted; lsSet(LS_MUTE_KEY, Sound.muted ? '1' : '0'); refreshMuteBtn(); if (!Sound.muted) Sound.play('badge'); });
+
+        // ---------- 字體大小切換：標準／大／特大 ----------
+        const applyFontSize = (fs) => {
+            if (!['m', 'l', 'xl'].includes(fs)) fs = 'm';
+            if (fs === 'm') document.documentElement.removeAttribute('data-fs'); else document.documentElement.dataset.fs = fs;
+            document.querySelectorAll('.fs-btn').forEach(b => b.classList.toggle('on', b.dataset.fs === fs));
+            lsSet(LS_FS_KEY, fs);
+        };
+        document.querySelectorAll('.fs-btn').forEach(b => b.addEventListener('click', () => applyFontSize(b.dataset.fs)));
+
+        // ---------- 特效 ----------
+        const Fx = {
+            center(el) { const r = el.getBoundingClientRect ? el.getBoundingClientRect() : el; return [r.left + r.width / 2, r.top + r.height / 2]; },
+            particle(text, x, y, { dx = 0, dy = 0, dur = 900, scale = 1.2, rot = 0, size = '1.6em', delay = 0 } = {}) {
+                const p = h('span', { class: 'fx-particle', text });
+                p.style.left = x + 'px'; p.style.top = y + 'px'; p.style.fontSize = size;
+                $('fx-layer').appendChild(p);
+                const a = p.animate([
+                    { transform: 'translate(-50%,-50%) scale(0.3)', opacity: 1 },
+                    { transform: `translate(calc(-50% + ${dx * 0.7}px), calc(-50% + ${dy * 0.7}px)) scale(${scale}) rotate(${rot * 0.7}deg)`, opacity: 1, offset: 0.6 },
+                    { transform: `translate(calc(-50% + ${dx}px), calc(-50% + ${dy}px)) scale(${scale * 0.6}) rotate(${rot}deg)`, opacity: 0 },
+                ], { duration: dur, delay, easing: 'cubic-bezier(.2,.8,.3,1)', fill: 'backwards' });
+                a.onfinish = () => p.remove();
+            },
+            burst(el, chars, n = 12, dist = 110) {
+                const [x, y] = this.center(el);
+                for (let i = 0; i < n; i++) {
+                    const ang = (Math.PI * 2 * i) / n + Math.random() * 0.4;
+                    const d = dist * (0.6 + Math.random() * 0.7);
+                    this.particle(chars[i % chars.length], x, y, { dx: Math.cos(ang) * d, dy: Math.sin(ang) * d, dur: 650 + Math.random() * 350, rot: Math.random() * 360 - 180, size: (1.2 + Math.random()) + 'em' });
+                }
+            },
+            glow(card, cls) { card.classList.remove(cls); void card.offsetWidth; card.classList.add(cls); setTimeout(() => card.classList.remove(cls), 1100); },
+            scorePlus(card, btn) { this.glow(card, 'star-glow'); this.burst(btn || card, ['⭐', '✨', '🌟', '💫'], 14, 120); },
+            /** 愛心從按鈕（或原因按鈕）飛向學生卡片的愛心數字 */
+            heartPlus(card, from, amount = 1) {
+                const target = card.querySelector('.heart-num');
+                const [tx, ty] = this.center(target);
+                const [sx, sy] = from ? this.center(from) : [tx, ty + 80];
+                const p = h('span', { class: 'fx-particle', text: '❤️' });
+                p.style.left = sx + 'px'; p.style.top = sy + 'px'; p.style.fontSize = '3.2em';
+                $('fx-layer').appendChild(p);
+                const mx = (sx + tx) / 2 - sx, my = Math.min(sy, ty) - 140 - sy;
+                const a = p.animate([
+                    { transform: 'translate(-50%,-50%) scale(0.5)', opacity: 0.9 },
+                    { transform: `translate(calc(-50% + ${mx}px), calc(-50% + ${my}px)) scale(1.7)`, opacity: 1, offset: 0.5 },
+                    { transform: `translate(calc(-50% + ${tx - sx}px), calc(-50% + ${ty - sy}px)) scale(0.7)`, opacity: 1 },
+                ], { duration: 800, easing: 'cubic-bezier(.45,.05,.4,1)' });
+                a.onfinish = () => {
+                    p.remove();
+                    this.glow(card, 'heart-glow');
+                    this.burst(target, ['💖', '💕', '✨', '💗'], 10, 80);
+                    showScoreFeedback(card, amount, 'heart');
+                    bumpNum(card, '.heart-num');
+                };
+            },
+            /** 減愛心：只有小小的愛心淡出（不閃屏、不震動） */
+            heartMinus(card) {
+                const target = card.querySelector('.heart-num') || card;
+                const f = h('div', { class: 'heart-fade', text: '♡' });
+                card.appendChild(f);
+                const cr = card.getBoundingClientRect(), tr = target.getBoundingClientRect();
+                f.style.left = (tr.left - cr.left + tr.width / 2) + 'px'; f.style.top = (tr.top - cr.top + tr.height / 2) + 'px';
+                setTimeout(() => f.remove(), 900);
+            },
+            /** 全畫面愛心雨 */
+            heartRain(count = 30) {
+                const chars = ['❤️', '💖', '💕', '💗', '💝', '💓'];
+                const n = Math.min(90, 40 + count);
+                for (let i = 0; i < n; i++) {
+                    const p = h('span', { class: 'fx-particle', text: chars[i % chars.length] });
+                    p.style.left = Math.random() * 100 + 'vw'; p.style.top = '-60px'; p.style.fontSize = (1.4 + Math.random() * 2.2) + 'em';
+                    $('fx-layer').appendChild(p);
+                    const drift = (Math.random() - 0.5) * 160;
+                    const a = p.animate([
+                        { transform: 'translate(0,0) rotate(0deg)', opacity: 1 },
+                        { transform: `translate(${drift}px, 112vh) rotate(${Math.random() * 540 - 270}deg)`, opacity: 0.7 },
+                    ], { duration: 2200 + Math.random() * 1800, delay: Math.random() * 1400, easing: 'cubic-bezier(.3,.1,.6,1)', fill: 'backwards' });
+                    a.onfinish = () => p.remove();
+                }
+            },
         };
 
         // ---------- 業務邏輯 ----------
@@ -1127,25 +1304,27 @@
             const card = refreshStudentCard(sid);
             if (kind === 'score') {
                 if (card && !opts.silent) {
+                    bumpNum(card, '.score-num');
                     showScoreFeedback(card, delta);
-                    if (delta > 0) flashScreen('plus');
-                    registerCombo(delta); showMascotSpeech(delta > 0);
+                    if (delta > 0) {
+                        flashScreen('plus'); Fx.scorePlus(card, opts.btn);
+                        registerCombo(delta); Sound.play('plus', comboCount); showMascotSpeech(true);
+                    } else { registerCombo(0); Sound.play('minus'); }
                 }
                 const oldLv = getLevelInfo(before).level, newLv = getLevelInfo(after).level;
                 const oldB = getEarnedBadges(before).length, newB = getEarnedBadges(after).length;
-                if (newLv > oldLv) setTimeout(() => celebrateLevelUp(s.name, newLv), 350);
-                else if (newB > oldB) setTimeout(() => showBadgeToast(BADGE_DEFS[newB - 1]), 350);
+                if (newLv > oldLv) setTimeout(() => { celebrateLevelUp(s.name, newLv); Sound.play('levelup'); }, 350);
+                else if (newB > oldB) setTimeout(() => { showBadgeToast(BADGE_DEFS[newB - 1]); Sound.play('badge'); }, 350);
             }
         };
 
         const bumpNum = (card, sel) => { const n = card?.querySelector(sel); if (!n) return; n.classList.add('bump'); setTimeout(() => n.classList.remove('bump'), 200); };
 
         /** 愛心增減：效果（階段 5 強化） */
-        const heartFeedback = (sid, delta, btn) => {
+        const heartFeedback = (sid, delta, from) => {
             const card = refreshStudentCard(sid);
             if (!card) return;
-            bumpNum(card, '.heart-num');
-            if (delta > 0) { Fx.heartPlus(card, btn); }
+            if (delta > 0) { Sound.play('heart'); Fx.heartPlus(card, from, delta); showMascotSpeech(true, ['愛心滿滿！💖', '好溫暖的表現！❤️', '謝謝你的用心！💕'][Math.floor(Math.random() * 3)]); }
             else { Fx.heartMinus(card); showMascotSpeech(false); }
         };
 
@@ -1164,12 +1343,12 @@
             reasonResolve = resolve;
             $('reason-title').textContent = title; $('reason-sub').textContent = sub || '';
             $('reason-amount-wrap').style.display = 'none';
-            const btns = reasons.map(r => h('button', { class: `btn reason-btn ${okClass}`, text: r, onclick: () => closeReason({ reason: r, amount: 1 }) }));
+            const btns = reasons.map(r => h('button', { class: `btn reason-btn ${okClass}`, text: r, onclick: (e) => closeReason({ reason: r, amount: 1, rect: e.currentTarget.getBoundingClientRect() }) }));
             if (redeemMax != null) {
                 btns.push(h('button', { class: 'btn reason-btn btn-primary', text: '🎁 兌換福利', disabled: redeemMax <= 0 ? true : null, title: redeemMax <= 0 ? '愛心不足，無法兌換' : '',
                     onclick: () => { $('reason-amount').max = redeemMax; $('reason-amount').value = 1; $('reason-amount-wrap').style.display = 'block'; $('reason-amount').focus(); $('reason-amount').select(); } }));
             }
-            btns.push(h('button', { class: 'btn reason-btn btn-secondary wide', text: noneLabel, onclick: () => closeReason({ reason: '', amount: 1 }) }));
+            btns.push(h('button', { class: 'btn reason-btn btn-secondary wide', text: noneLabel, onclick: (e) => closeReason({ reason: '', amount: 1, rect: e.currentTarget.getBoundingClientRect() }) }));
             $('reason-grid').replaceChildren(...btns);
             $('reason-amount-ok').onclick = () => {
                 const n = parseInt($('reason-amount').value, 10);
@@ -1192,7 +1371,7 @@
                 okClass: delta > 0 ? 'btn-heart' : 'btn-soft',
             });
             if (!res) return;
-            await changeHeart(sid, delta > 0 ? res.amount : -res.amount, res.reason, btn);
+            await changeHeart(sid, delta > 0 ? res.amount : -res.amount, res.reason, res.rect || btn);
         };
 
         // ---------- 全班加愛心（排除少數） ----------
@@ -1226,8 +1405,8 @@
             const targets = studentsOf(c.id).filter(s => !selectState.excluded.has(s.id));
             exitSelectMode();
             await addEvents(targets.map(s => makeEvent({ classId: c.id, targetId: s.id, kind: 'heart', delta: 1, reason, batchId })));
-            targets.forEach(s => { const card = refreshStudentCard(s.id); bumpNum(card, '.heart-num'); });
-            Fx.heartRain(targets.length);
+            targets.forEach((s, i) => { const card = refreshStudentCard(s.id); if (card) setTimeout(() => { bumpNum(card, '.heart-num'); Fx.glow(card, 'heart-glow'); }, 200 + i * 40); });
+            Fx.heartRain(targets.length); Sound.play('rain');
             showMascotSpeech(true, `${targets.length} 位同學得到愛心！❤️`);
             refreshUndoBtn();
         });
@@ -1325,8 +1504,10 @@
             await addEvents([makeEvent({ classId: c.id, targetType: 'group', targetId: g, kind: 'score', delta, reason })]);
             const col = document.querySelector(`.group-column[data-group-id="${g}"]`);
             if (col) { col.querySelector('.group-score').textContent = getGroupTotal(c.id, g); showScoreFeedback(col, delta); }
-            if (delta > 0) flashScreen('plus');
-            registerCombo(delta); showMascotSpeech(delta > 0);
+            if (delta > 0) {
+                flashScreen('plus'); registerCombo(delta); Sound.play('plus', comboCount); showMascotSpeech(true);
+                if (col) Fx.burst(col.querySelector('.group-score'), ['⭐', '✨', '🌟', '🚀'], 16, 140);
+            } else { registerCombo(0); Sound.play('minus'); }
         };
 
         /** 新考段：每位學生寫一筆抵銷紀錄，使加分歸零（愛心不動、紀錄保留） */
@@ -1647,7 +1828,7 @@
             if (!btn) { if (!e.target.closest('button, input, .name-text')) openTimeline(sid); return; }
             const act = btn.dataset.act;
             if (act === 'delete') { removeStudent(sid); return; }
-            if (act === 'score') { await changeStudent(sid, 'score', Number(btn.dataset.amount)); bumpNum(card, '.score-num'); refreshUndoBtn(); }
+            if (act === 'score') { await changeStudent(sid, 'score', Number(btn.dataset.amount), '', { btn }); refreshUndoBtn(); }
             else if (act === 'heart') onHeartButton(sid, Number(btn.dataset.amount), btn);
             else if (act === 'adjust') openAdjust(sid);
         });
@@ -1838,6 +2019,7 @@
         };
         (async () => {
             $('version-tag').textContent = APP_VERSION;
+            applyFontSize(lsGet(LS_FS_KEY) || 'm'); refreshMuteBtn();
             resizeCanvas(); initParticles(); animateParticles();
             try { idb = await openDB(); }
             catch (err) { console.error(err); alert('無法開啟瀏覽器資料庫（IndexedDB）。請勿使用無痕視窗，或改用 Chrome / Edge。'); return; }
