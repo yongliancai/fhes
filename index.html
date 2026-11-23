@@ -259,6 +259,24 @@
     .mascot-wrap.talking .mascot-avatar { animation: mascotFloat 3s ease-in-out infinite, mascotBounce 0.4s ease; }
     @keyframes mascotBounce { 0%,100% { transform: scale(1); } 50% { transform: scale(1.25); } }
 
+    /* ---- History / timeline ---- */
+    .history-controls { display: flex; flex-wrap: wrap; gap: 12px; align-items: end; margin-bottom: 14px; }
+    .history-controls .field { margin: 0; }
+    .history-status { padding: 10px 14px; border-radius: 10px; background: rgba(0,0,0,0.3); border: 1px solid var(--panel-border); font-weight: 700; margin-bottom: 10px; }
+    .history-status.locked { border-color: rgba(57,255,136,0.5); color: var(--green); }
+    .history-status.open { border-color: rgba(255,210,63,0.5); color: var(--gold); }
+    .data-table td.left, .data-table th.left { text-align: left; }
+    .data-table .muted { color: var(--text-secondary); font-size: 0.85em; }
+    .data-table tr.undone td { text-decoration: line-through; opacity: 0.5; }
+    .tag { display: inline-block; font-size: 0.75em; padding: 1px 7px; border-radius: 8px; border: 1px solid currentColor; margin-left: 6px; text-decoration: none; }
+    .pos { color: var(--green); font-weight: 800; } .neg { color: var(--text-secondary); font-weight: 800; }
+    .heart-c { color: var(--pink); }
+    .section-title { margin: 26px 0 6px; color: var(--cyan); }
+    #timeline-modal .card { max-width: 860px; }
+    .timeline-head { display: flex; gap: 18px; flex-wrap: wrap; align-items: baseline; margin-bottom: 10px; font-weight: 700; }
+    .backup-reminder { position: fixed; top: 16px; left: 50%; transform: translate(-50%, -150%); z-index: 110; display: flex; gap: 12px; align-items: center; flex-wrap: wrap;
+        background: rgba(10,22,48,0.96); border: 1px solid var(--gold); border-radius: 14px; padding: 12px 18px; box-shadow: var(--glow-gold); font-weight: 700; transition: transform 0.3s ease; max-width: 94vw; }
+    .backup-reminder.show { transform: translate(-50%, 0); }
     .version-tag { position: fixed; left: 10px; bottom: 6px; z-index: 45; font-family: 'Share Tech Mono', monospace; font-size: 12px; color: var(--text-secondary); opacity: 0.8; pointer-events: none; }
 </style>
 </head>
@@ -320,6 +338,7 @@
                 <button class="nav-tab active" data-tab="students">個人模式</button>
                 <button class="nav-tab" data-tab="groups">小隊模式</button>
                 <button class="nav-tab" data-tab="leaderboard">排行榜</button>
+                <button class="nav-tab" data-tab="history">歷史</button>
                 <button class="nav-tab" data-tab="grades">成績結算</button>
             </div>
             <div id="students-tab" class="tab-content active card">
@@ -353,6 +372,23 @@
             </div>
             <div id="leaderboard-tab" class="tab-content card">
                 <div id="leaderboard-list"></div>
+            </div>
+            <div id="history-tab" class="tab-content card">
+                <div class="history-controls">
+                    <div class="field"><label for="history-date">日期</label><input type="date" id="history-date"></div>
+                    <button id="history-prev" class="btn btn-secondary" title="前一天">◀</button>
+                    <button id="history-next" class="btn btn-secondary" title="後一天">▶</button>
+                    <button id="history-today" class="btn btn-secondary">今天</button>
+                    <span style="flex:1"></span>
+                    <button id="settle-today-btn" class="btn btn-success">📌 今日結算</button>
+                    <button id="history-csv-day" class="btn btn-primary">⬇ 當日 CSV</button>
+                    <button id="history-csv-all" class="btn btn-secondary">⬇ 全部紀錄 CSV</button>
+                </div>
+                <div id="history-status" class="history-status"></div>
+                <h3 class="section-title">當日結算</h3>
+                <div class="table-wrap"><table class="data-table" id="history-summary"></table></div>
+                <h3 class="section-title">當日明細</h3>
+                <div class="table-wrap"><table class="data-table" id="history-detail"></table></div>
             </div>
             <div id="grades-tab" class="tab-content card">
                 <div class="grades-actions">
@@ -430,6 +466,24 @@
             </div>
             <div class="modal-actions"><button id="reason-cancel" class="btn btn-secondary">取消</button></div>
         </div>
+    </div>
+
+    <div id="timeline-modal" class="modal">
+        <div class="card">
+            <h2 id="timeline-title"></h2>
+            <div class="timeline-head" id="timeline-head"></div>
+            <div class="table-wrap"><table class="data-table" id="timeline-table"></table></div>
+            <div class="modal-actions">
+                <button id="timeline-csv" class="btn btn-secondary">⬇ 匯出 CSV</button>
+                <button id="timeline-close" class="btn btn-primary">關閉</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="backup-reminder" class="backup-reminder">
+        <span id="backup-reminder-text"></span>
+        <button id="backup-reminder-ok" class="btn btn-primary">⬇ 下載備份</button>
+        <button id="backup-reminder-later" class="btn btn-secondary">稍後</button>
     </div>
 
     <div id="adjust-modal" class="modal">
@@ -833,7 +887,7 @@
         };
         const renderCurrentTab = () => {
             const c = getCurrentClass(); if (!c) return;
-            ({ students: renderStudentsTab, groups: renderGroupsTab, leaderboard: renderLeaderboardTab, grades: renderGradesTab }[currentTab] || (() => {}))(c);
+            ({ students: renderStudentsTab, groups: renderGroupsTab, leaderboard: renderLeaderboardTab, history: renderHistoryTab, grades: renderGradesTab }[currentTab] || (() => {}))(c);
         };
 
         const buildStudentCard = (s) => {
@@ -1216,6 +1270,182 @@
             notify('已開始新考段，加分歸零');
         };
 
+        // =====================================================================
+        //  每日結算
+        // =====================================================================
+        const snapshotId = (classId, date) => `${classId}|${date}`;
+        const getSnapshot = (classId, date) => S.snapshots.find(s => s.id === snapshotId(classId, date));
+        const NO_REASON = '（未選原因）';
+
+        /** 計算某班某日的結算：當日依原因分列的增減＋日終累計 */
+        const computeSnapshot = (classId, date) => {
+            const students = {}; const groups = {};
+            const stu = (id) => students[id] || (students[id] = { scoreDelta: 0, heartDelta: 0, scoreByReason: {}, heartByReason: {}, scoreTotal: 0, heartTotal: 0 });
+            studentsOf(classId).forEach(s => stu(s.id));
+            for (const e of S.events) {
+                if (e.classId !== classId || e.date > date) continue;
+                if (e.targetType === 'group') {
+                    const g = groups[e.targetId] || (groups[e.targetId] = { scoreDelta: 0, scoreTotal: 0 });
+                    g.scoreTotal += e.delta; if (e.date === date) g.scoreDelta += e.delta;
+                    continue;
+                }
+                const r = stu(e.targetId);
+                if (e.kind === 'heart') r.heartTotal += e.delta; else r.scoreTotal += e.delta;
+                if (e.date === date) {
+                    const key = e.reason || NO_REASON;
+                    if (e.kind === 'heart') { r.heartDelta += e.delta; r.heartByReason[key] = (r.heartByReason[key] || 0) + e.delta; }
+                    else { r.scoreDelta += e.delta; r.scoreByReason[key] = (r.scoreByReason[key] || 0) + e.delta; }
+                }
+            }
+            for (const [id, r] of Object.entries(students)) {
+                const s = studentById(id); r.name = s?.name ?? '（已移除）'; r.seat = s?.seat ?? null;
+                [r.scoreByReason, r.heartByReason].forEach(m => Object.keys(m).forEach(k => { if (m[k] === 0) delete m[k]; }));
+            }
+            return { id: snapshotId(classId, date), classId, date, settledAt: Date.now(), students, groups };
+        };
+        const saveSnapshots = async (list) => {
+            if (!list.length) return;
+            list.forEach(sn => { S.snapshots = S.snapshots.filter(x => x.id !== sn.id); S.snapshots.push(sn); Cloud.markDay(sn.classId, sn.date); });
+            await dbWrite({ dailySnapshots: list });
+        };
+
+        /** 自動結算：所有班級中，今天以前尚未結算的日期 */
+        const autoSettle = async () => {
+            const today = localDate(); const yesterday = addDays(today, -1);
+            const created = [];
+            for (const c of aliveClasses()) {
+                const dates = new Set(S.events.filter(e => e.classId === c.id && e.date < today).map(e => e.date));
+                [...dates].sort().forEach(d => { if (!getSnapshot(c.id, d)) created.push(computeSnapshot(c.id, d)); });
+            }
+            await saveSnapshots(created);
+            const map = { ...(S.meta.lastSettledDate || {}) };
+            aliveClasses().forEach(c => { if (!map[c.id] || map[c.id] < yesterday) map[c.id] = yesterday; });
+            await setMeta('lastSettledDate', map);
+            if (created.length) {
+                const days = [...new Set(created.map(s => s.date))].sort();
+                showBackupReminder(`已自動結算 ${days.length} 天（${days.map(mdLabel).join('、')}），建議下載備份。`);
+            }
+            return created;
+        };
+        const settleToday = async () => {
+            const c = getCurrentClass(); if (!c) return;
+            const today = localDate();
+            const sn = computeSnapshot(c.id, today);
+            const existed = !!getSnapshot(c.id, today);
+            await saveSnapshots([sn]);
+            renderHistoryTab(c);
+            showBackupReminder(`${existed ? '已更新' : '已完成'}今日結算（${localTime(sn.settledAt)}），建議下載備份。`);
+        };
+
+        let reminderTimer = null;
+        const showBackupReminder = (text) => {
+            $('backup-reminder-text').textContent = '💾 ' + text;
+            $('backup-reminder').classList.add('show');
+            clearTimeout(reminderTimer); reminderTimer = setTimeout(() => $('backup-reminder').classList.remove('show'), 15000);
+        };
+        $('backup-reminder-ok').addEventListener('click', async () => { $('backup-reminder').classList.remove('show'); await exportBackup(); });
+        $('backup-reminder-later').addEventListener('click', () => $('backup-reminder').classList.remove('show'));
+
+        // 跨日（頁面整晚開著）：偵測日期變化後自動結算
+        let lastSeenDate = localDate();
+        setInterval(async () => {
+            const d = localDate();
+            if (d !== lastSeenDate) { lastSeenDate = d; await autoSettle(); if (getCurrentClass()) renderCurrentTab(); }
+        }, 60 * 1000);
+
+        // ---------- CSV ----------
+        const csvCell = (v) => { const s = String(v ?? ''); return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
+        const downloadCSV = (filename, rows) => downloadFile(filename, '﻿' + rows.map(r => r.map(csvCell).join(',')).join('\r\n'), 'text/csv;charset=utf-8');
+        const reasonText = (m) => Object.entries(m || {}).map(([k, v]) => `${k} ${signed(v)}`).join('、');
+        const statusText = (e) => e.undone ? '已復原' : e.undoOf ? '復原紀錄' : '';
+        const eventRowsCSV = (list) => [['日期', '時間', '座號', '對象', '項目', '增減', '原因', '狀態'],
+            ...list.map(e => [e.date, localTime(e.ts), e.targetType === 'student' ? (studentById(e.targetId)?.seat ?? '') : '', targetName(e),
+                e.kind === 'heart' ? '愛心' : '加分', e.delta, e.reason, statusText(e)])];
+
+        // ---------- 歷史分頁 ----------
+        let historyDate = null;
+        const daySummary = (c, date) => getSnapshot(c.id, date) || computeSnapshot(c.id, date);
+        const renderHistoryTab = (c) => {
+            const today = localDate();
+            if (!historyDate) historyDate = today;
+            $('history-date').value = historyDate; $('history-date').max = today;
+            $('history-next').disabled = historyDate >= today;
+            const snap = getSnapshot(c.id, historyDate);
+            const st = $('history-status');
+            if (historyDate === today) {
+                st.className = 'history-status open';
+                st.textContent = snap ? `📌 今天（${mdLabel(today)}）已於 ${localTime(snap.settledAt)} 結算；之後若有異動，可再按「今日結算」更新。` : `📝 今天（${mdLabel(today)}）尚未結算，表格為即時數字。`;
+            } else {
+                st.className = 'history-status ' + (snap ? 'locked' : 'open');
+                st.textContent = snap ? `🔒 ${mdLabel(historyDate)} 已結算（${localDateTime(snap.settledAt)}），已鎖定。事後補登請用「手動調整」的補登日期。` : `${mdLabel(historyDate)} 沒有紀錄。`;
+            }
+            $('settle-today-btn').style.display = historyDate === today ? '' : 'none';
+            $('settle-today-btn').textContent = getSnapshot(c.id, today) ? '📌 更新今日結算' : '📌 今日結算';
+
+            const sum = daySummary(c, historyDate);
+            const rows = Object.entries(sum.students).map(([id, r]) => ({ id, ...r })).sort((a, b) => (a.seat ?? 999) - (b.seat ?? 999));
+            const cell = (n) => h('span', { class: n > 0 ? 'pos' : n < 0 ? 'neg' : 'muted', text: n === 0 ? '0' : signed(n) });
+            $('history-summary').replaceChildren(
+                h('thead', {}, h('tr', {}, ['座號', '姓名', '⭐ 當日', '⭐ 原因', '❤️ 當日', '❤️ 原因', '⭐ 日終累計', '❤️ 日終累計'].map(t => h('th', { text: t })))),
+                h('tbody', {}, rows.map(r => h('tr', {},
+                    h('td', { text: r.seat ?? '' }), h('td', { class: 'left', text: r.name }),
+                    h('td', {}, cell(r.scoreDelta)), h('td', { class: 'left muted', text: reasonText(r.scoreByReason) }),
+                    h('td', {}, cell(r.heartDelta)), h('td', { class: 'left muted', text: reasonText(r.heartByReason) }),
+                    h('td', { text: r.scoreTotal }), h('td', { class: 'heart-c', text: r.heartTotal }))),
+                    Object.entries(sum.groups || {}).sort().map(([g, r]) => h('tr', {},
+                        h('td', { text: '—' }), h('td', { class: 'left', text: `第 ${g} 小隊` }), h('td', {}, cell(r.scoreDelta)), h('td', {}), h('td', {}), h('td', {}),
+                        h('td', { text: r.scoreTotal }), h('td', {})))));
+
+            const evs = S.events.filter(e => e.classId === c.id && e.date === historyDate).sort((a, b) => b.ts - a.ts);
+            $('history-detail').replaceChildren(
+                h('thead', {}, h('tr', {}, ['時間', '對象', '項目', '增減', '原因', '狀態'].map(t => h('th', { text: t })))),
+                h('tbody', {}, evs.length ? evs.map(e => h('tr', { class: e.undone ? 'undone' : '' },
+                    h('td', { text: localTime(e.ts) }), h('td', { class: 'left', text: targetName(e) }), h('td', { text: kindLabel(e.kind) }),
+                    h('td', {}, cell(e.delta)), h('td', { class: 'left', text: e.reason || '' }), h('td', { class: 'muted', text: statusText(e) })))
+                    : h('tr', {}, h('td', { colspan: '6', class: 'muted', text: '這一天沒有紀錄' }))));
+        };
+        const setHistoryDate = (d) => { const today = localDate(); historyDate = d > today ? today : d; renderHistoryTab(getCurrentClass()); };
+        $('history-date').addEventListener('change', (e) => { if (e.target.value) setHistoryDate(e.target.value); });
+        $('history-prev').addEventListener('click', () => setHistoryDate(addDays(historyDate || localDate(), -1)));
+        $('history-next').addEventListener('click', () => setHistoryDate(addDays(historyDate || localDate(), 1)));
+        $('history-today').addEventListener('click', () => setHistoryDate(localDate()));
+        $('settle-today-btn').addEventListener('click', settleToday);
+        $('history-csv-day').addEventListener('click', () => {
+            const c = getCurrentClass(); const sum = daySummary(c, historyDate);
+            const rows = [[`${c.name} ${historyDate} 結算`], ['座號', '姓名', '加分當日增減', '加分原因', '愛心當日增減', '愛心原因', '加分日終累計', '愛心日終累計'],
+                ...Object.values(sum.students).sort((a, b) => (a.seat ?? 999) - (b.seat ?? 999))
+                    .map(r => [r.seat ?? '', r.name, r.scoreDelta, reasonText(r.scoreByReason), r.heartDelta, reasonText(r.heartByReason), r.scoreTotal, r.heartTotal]),
+                ...Object.entries(sum.groups || {}).map(([g, r]) => ['', `第 ${g} 小隊`, r.scoreDelta, '', '', '', r.scoreTotal, '']),
+                [], ['當日明細'],
+                ...eventRowsCSV(S.events.filter(e => e.classId === c.id && e.date === historyDate))];
+            downloadCSV(`${c.name}_${historyDate}_結算.csv`, rows);
+        });
+        $('history-csv-all').addEventListener('click', () => {
+            const c = getCurrentClass();
+            downloadCSV(`${c.name}_全部紀錄_${stampForFile()}.csv`, eventRowsCSV(eventsOf(c.id)));
+        });
+
+        // ---------- 個人時間軸 ----------
+        const openTimeline = (sid) => {
+            const s = studentById(sid); if (!s) return;
+            const evs = S.events.filter(e => e.targetType === 'student' && e.targetId === sid);
+            let sc = 0, ht = 0;
+            const rows = evs.map(e => { if (e.kind === 'heart') ht += e.delta; else sc += e.delta; return { e, total: e.kind === 'heart' ? ht : sc }; }).reverse();
+            $('timeline-title').textContent = `🛰️ ${s.name} 的紀錄`;
+            $('timeline-head').replaceChildren(h('span', { text: `⭐ 加分 ${sc}` }), h('span', { class: 'heart-c', text: `❤️ 愛心 ${ht}` }), h('span', { class: 'muted', text: `共 ${evs.length} 筆` }));
+            $('timeline-table').replaceChildren(
+                h('thead', {}, h('tr', {}, ['日期', '時間', '項目', '增減', '原因', '當時累計'].map(t => h('th', { text: t })))),
+                h('tbody', {}, rows.length ? rows.map(({ e, total }) => h('tr', { class: e.undone ? 'undone' : '' },
+                    h('td', { text: e.date }), h('td', { text: localTime(e.ts) }), h('td', { text: kindLabel(e.kind) }),
+                    h('td', {}, h('span', { class: e.delta > 0 ? 'pos' : 'neg', text: signed(e.delta) })),
+                    h('td', { class: 'left' }, e.reason || '', statusText(e) ? h('span', { class: 'tag', text: statusText(e) }) : null),
+                    h('td', { class: e.kind === 'heart' ? 'heart-c' : '', text: total })))
+                    : h('tr', {}, h('td', { colspan: '6', class: 'muted', text: '還沒有紀錄' }))));
+            $('timeline-csv').onclick = () => downloadCSV(`${s.name}_個人紀錄_${stampForFile()}.csv`, eventRowsCSV(evs));
+            showModal('timeline-modal');
+        };
+        $('timeline-close').addEventListener('click', () => hideModal('timeline-modal'));
+
         // ---------- 備份（階段 4 會擴充） ----------
         const buildBackup = () => ({
             format: 'classroom-powerhouse', version: DATA_VERSION, appVersion: APP_VERSION, exportedAt: Date.now(), exportedAtLocal: localDateTime(Date.now()),
@@ -1249,8 +1479,10 @@
                 card.classList.toggle('excluded', selectState.excluded.has(sid));
                 updateSelectBanner(); return;
             }
-            const btn = e.target.closest('[data-act]'); if (!btn) return;
-            const sid = card.dataset.id; const act = btn.dataset.act;
+            const sid = card.dataset.id;
+            const btn = e.target.closest('[data-act]');
+            if (!btn) { if (!e.target.closest('button, input, .name-text')) openTimeline(sid); return; }
+            const act = btn.dataset.act;
             if (act === 'score') { await changeStudent(sid, 'score', Number(btn.dataset.amount)); bumpNum(card, '.score-num'); refreshUndoBtn(); }
             else if (act === 'heart') onHeartButton(sid, Number(btn.dataset.amount), btn);
             else if (act === 'adjust') openAdjust(sid);
@@ -1404,12 +1636,13 @@
             await loadAll();
             await migrateFromV4IfNeeded();
             recomputeTotals();
+            await autoSettle();
             renderDashboard(); switchScreen('dashboard');
             // 雲端（選用）：在背景連線並合併，不覆蓋本機
             const cfg = Cloud.config();
             if (cfg) {
                 Cloud.status('syncing', '連線中…');
-                if (await Cloud.connect(cfg) && await Cloud.pull()) { renderDashboard(); if (currentClassId) renderCurrentTab(); }
+                if (await Cloud.connect(cfg) && await Cloud.pull()) { await autoSettle(); renderDashboard(); if (currentClassId) renderCurrentTab(); }
             }
         })();
     </script>
