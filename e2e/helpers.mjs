@@ -99,7 +99,9 @@ export const openApp = async (opts = {}) => {
     const prompts = [];
     const consoleAll = [];
     page.on('pageerror', e => errors.push(`pageerror: ${e.message}`));
-    page.on('console', m => { consoleAll.push(m.text()); if (m.type() === 'error' && !/ERR_FAILED|net::|Failed to load resource/.test(m.text())) errors.push(`console: ${m.text()}`); });
+    // 測試刻意擋掉外部網路（字型）；各瀏覽器的訊息不同：Chromium「net::ERR_FAILED / Failed to load resource」、Firefox「Cross-Origin Request Blocked … fonts.googleapis.com」
+    page.on('console', m => { consoleAll.push(m.text()); if (m.type() === 'error' && !/ERR_FAILED|net::|Failed to load resource|Cross-Origin Request Blocked.*fonts\.googleapis\.com/.test(m.text())) errors.push(`console: ${m.text()} @ ${m.location()?.url?.replace(/^.*\//, '') || '?'}:${m.location()?.lineNumber ?? '?'}`); });
+    page.on('crash', () => errors.push('page crashed (browser renderer crash)'));
     const dialogs = [];
     page.on('dialog', async d => {
         dialogs.push(d.message());
@@ -175,7 +177,7 @@ export const axe = async (page, include) => {
     await page.addScriptTag({ content: AXE });
     return page.evaluate(async (inc) => {
         const r = await window.axe.run(inc ? { include: [inc] } : document, { resultTypes: ['violations'], rules: { 'color-contrast': { enabled: true } } });
-        return r.violations.filter(v => ['critical', 'serious'].includes(v.impact)).map(v => ({ id: v.id, impact: v.impact, n: v.nodes.length, sample: v.nodes[0]?.target?.join(' ') }));
+        return r.violations.filter(v => ['critical', 'serious'].includes(v.impact)).map(v => ({ id: v.id, impact: v.impact, n: v.nodes.length, sample: v.nodes[0]?.target?.join(' '), detail: v.nodes[0]?.any?.[0]?.message || '' }));
     }, include || null);
 };
 

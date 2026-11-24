@@ -45,6 +45,7 @@ test('axe-core: no critical/serious accessibility violations on the main screens
         const found = {};
         for (const [name, go] of screens) {
             await go(page);
+            await page.waitForTimeout(650);   // 與溢出測試相同：等畫面淡入動畫結束再量對比（Firefox 會量到半透明中的顏色）
             const v = await axe(page, name === 'sync-dialog' ? '#sync-modal' : null);
             if (v.length) found[name] = v;
         }
