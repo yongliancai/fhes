@@ -22,7 +22,8 @@ if (process.argv[1] && import.meta.url === new URL('file://' + resolve(process.a
   const errs = [];
   for (const p of walk(root)) {
     const rel = relative(root, p).replaceAll('\\', '/');
-    if (['.js', '.mjs', '.ts', '.html'].includes(extname(p))) {
+    if (['.js', '.mjs', '.ts', '.html'].includes(extname(p)) && !['scripts/guardrails.mjs', 'tests/guardrails.test.mjs'].includes(rel)) {
+      // Exempt only this checker and its deliberate violation fixtures, never application modules.
       // The existing Firebase integration is grandfathered in index.html until the separately approved cloud migration.
       errs.push(...checkAddedFile(rel, readFileSync(p, 'utf8')));
     }
