@@ -1,0 +1,14 @@
+{
+  "name": "fhes-classroom-powerhouse",
+  "private": true,
+  "version": "5.1.0",
+  "type": "module",
+  "description": "AI Code Factory P0-P2 safety and regression checks for the existing static app",
+  "scripts": {
+    "check:syntax": "node scripts/check-inline-js.mjs",
+    "check:guardrails": "node scripts/guardrails.mjs",
+    "test": "node --test",
+    "verify": "npm run check:syntax && npm run check:guardrails && npm test"
+  },
+  "engines": { "node": ">=20" }
+}
