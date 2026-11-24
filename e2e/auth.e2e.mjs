@@ -115,10 +115,11 @@ test('account isolation: A signs out, B cannot see A data; switching clears the 
     } finally { await app.close(); }
 });
 
-test('A offline queue is never pushed to B spreadsheet; it syncs to A sheet when A signs in again', async () => {
+test('A offline queue is never pushed to B spreadsheet; it syncs to A sheet when A signs in again', async (t) => {
     const emu = newEmu();
     const app = await openApp({ emu });
     const { page, context } = app;
+    const mark = (step) => t.diagnostic(`step ${step}: console errors so far = ${JSON.stringify(app.errors)}`);
     const openSync = async () => { await page.click('#db-status-badge'); await page.waitForSelector('#sync-modal.visible'); };
     const waitBadge = (re) => page.waitForFunction((src) => new RegExp(src).test(document.getElementById('db-status-text')?.textContent || ''), re.source, { timeout: 15000 });
     try {
@@ -131,6 +132,7 @@ test('A offline queue is never pushed to B spreadsheet; it syncs to A sheet when
         await waitBadge(/已同步/);
         const [sheetA] = [...emu.books.keys()];
         const eventsBefore = emu.rows(sheetA, 'ScoreEvents').length;
+        mark(1);
         // A 離線加分 → 待同步
         await context.setOffline(true);
         await page.click('.class-card:has(h3:text-is("佇列測試班"))');
@@ -140,16 +142,19 @@ test('A offline queue is never pushed to B spreadsheet; it syncs to A sheet when
         await page.click('#back-to-dashboard-btn');
         await openAccount(page);
         assert.match(await page.textContent('#account-modal'), /1 筆資料尚未同步/);
+        mark(2);
         // 登出（仍離線）→ 恢復網路 → B 登入並建立自己的試算表、同步
         await page.click('#acct-signout');
         await page.waitForSelector('#auth-gate', { state: 'visible' });
         await waitStatus(page, /目前離線/);
         await assertLocked(page, 'offline sign-out locks in place');
         assert.ok(!(await page.textContent('body')).includes('佇列測試班'), 'class name gone from the page after offline sign-out');
+        mark(3);
         // 恢復網路：瀏覽器的 online 事件會自動重新載入到乾淨的登入畫面（保險起見也手動送一次，頁面可能已在重新載入）
         await context.setOffline(false);
         await page.evaluate(() => window.dispatchEvent(new Event('online'))).catch(() => {});
         await signIn(page, TEACHER_B);
+        mark(4);
         const reqsBeforeB = emu.requests.length;
         await openSync(); await page.click('#sync-connect');
         await page.waitForFunction(() => !document.getElementById('sync-create')?.disabled);
@@ -162,6 +167,7 @@ test('A offline queue is never pushed to B spreadsheet; it syncs to A sheet when
         assert.ok(emu.requests.slice(reqsBeforeB).every(r => r.owner === TEACHER_B.sub), 'every request after B signed in used B credentials');
         assert.ok(emu.requests.slice(reqsBeforeB).every(r => !r.url.includes(sheetA)), 'B session never touched A sheet');
         assert.equal(emu.rows(sheetA, 'ScoreEvents').length, eventsBefore, 'A sheet unchanged while B was signed in');
+        mark(5);
         // A 回來：重新授權後，離線時的那一筆上傳到 A 的試算表
         await openAccount(page); await page.click('#acct-signout');
         await signIn(page, TEACHER_A);
@@ -169,6 +175,7 @@ test('A offline queue is never pushed to B spreadsheet; it syncs to A sheet when
         await page.keyboard.press('Escape');
         await waitBadge(/已同步/);
         assert.equal(emu.rows(sheetA, 'ScoreEvents').length, eventsBefore + 1, 'A queued change reached A sheet');
+        mark(6);
         assert.deepEqual(app.errors.filter(e => !/ERR_INTERNET_DISCONNECTED/.test(e)), []);
     } finally { await app.close(); }
 });
@@ -297,6 +304,7 @@ test('shared computer: "sign out and remove this account data" downloads a backu
         const dl = page.waitForEvent('download');
         await page.click('#acct-wipe');
         assert.match((await dl).suggestedFilename(), /移除本機資料前備份/);
+        await waitStatus(page, /移除這台電腦上此帳號/);      // 新頁面（舊頁面會先原地鎖定，不能拿來檢查）
         await assertLocked(page, 'locked after wipe');
         const after = (await dbNames(page)).filter(n => n.startsWith('fhes-acct-'));
         assert.equal(after.length, before.length - 1, 'exactly one account database removed');
