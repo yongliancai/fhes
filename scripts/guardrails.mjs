@@ -15,8 +15,8 @@ const HTML_SINK = /\.(?:innerHTML|outerHTML)\s*=(?!=)|\binsertAdjacentHTML\s*\(|
 const BROWSER_GLOBAL = /\b(?:document|window|indexedDB|localStorage|navigator)\s*\./;
 const IMPORT_FROM = /\bimport\s+(?:[^'"]*?\s+from\s+)?['"]([^'"]+)['"]/g;
 
-/** 暫時例外：舊版 index.html 的 Firebase 同步在 P5 以 Google Sheets 取代後移除，屆時此清單必須清空 */
-export const LEGACY_FIREBASE_ALLOWED = ['index.html'];
+/** P5 起：任何出貨程式（index.html、src/）都不可再載入 Firebase SDK；此清單必須維持空白（tests/guardrails.test.mjs 檢查） */
+export const LEGACY_FIREBASE_ALLOWED = [];
 
 /**
  * 檢查單一檔案；回傳錯誤訊息陣列。
@@ -34,6 +34,9 @@ export const checkFile = (path, text) => {
     }
     if (path.startsWith('src/') && HTML_SINK.test(text)) {
         errors.push(`HTML string sink (innerHTML/outerHTML/insertAdjacentHTML/document.write) in ${path}; build DOM nodes with textContent instead.`);
+    }
+    if (path.startsWith('src/ui/') && path !== 'src/ui/dom.js' && /\.replaceChildren\(/.test(text)) {
+        errors.push(`${path} calls replaceChildren directly; use fill() from dom.js (null children would render as the text "null", BUG-007).`);
     }
     if (path.startsWith('src/core/') || path.startsWith('src/data/')) {
         if (BROWSER_GLOBAL.test(text)) errors.push(`${path} must stay pure (no document/window/indexedDB/localStorage/navigator).`);

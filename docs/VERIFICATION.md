@@ -20,6 +20,9 @@ npm run test:e2e    # real-browser tests; screenshots → test-results/
 | 2026-11-24 | P3 | `npm run test:e2e` | Edge | PASS 10/10 (homework flow, settings/reward/backup, v1→v2 DB upgrade, v5.1 regression) |
 | 2026-11-24 | P4 | `npm run verify` | Windows 11, Node 22.23.1 | PASS — 73/73 unit (22 collection/XP) |
 | 2026-11-24 | P4 | `npm run test:e2e` | Edge | PASS 13/13 (+ group XP fairness/unlock/persistence, special items & tags/reduced motion, 72-character art gallery) |
+| 2026-11-24 | P5 | `npm run verify` | Windows 11, Node 22.23.1 | PASS — 93/93 unit (19 sync engine+adapter vs REST emulator) |
+| 2026-11-24 | P5 | mutations: no re-check before update / no conflict detection / no protection for hand-deleted rows | same | each mutant killed (race test, 3 conflict tests, manual-row test) |
+| 2026-11-24 | P5 | `npm run test:e2e` | Edge | PASS 15/15 (+ two-device sync with offline queue, token expiry, conflict resolution; invalid client id / denied consent) |
 
 ## Negative/positive checks
 - Guardrails: Firebase SDK import, OAuth secret/token, innerHTML sink, impure core, ui import from core/sync, unmarked fixture → rejected; Sheets URL, plain word "Firebase", textContent, public client-ID text → accepted (`tests/guardrails.test.mjs`).

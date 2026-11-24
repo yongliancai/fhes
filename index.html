@@ -426,7 +426,7 @@
                     <div class="credit-pill">設計：永濂老師</div>
                 </div>
                 <div class="header-actions">
-                    <button id="db-status-badge" class="db-status" title="點擊設定雲端資料庫（選用）">
+                    <button id="db-status-badge" class="db-status" title="雲端同步設定（Google 試算表，選用）">
                         <span class="db-dot" id="db-dot"></span>
                         <span id="db-status-text">僅存本機</span>
                     </button>
@@ -444,6 +444,7 @@
             <div class="header">
                 <h1 id="class-view-title"></h1>
                 <div class="header-actions">
+                    <button id="class-sync-badge" class="db-status" title="雲端同步狀態（點一下開啟設定）"><span class="db-dot" id="class-sync-dot"></span><span id="class-sync-text">僅存本機</span></button>
                     <button id="back-to-dashboard-btn" class="btn btn-secondary">← 返回總覽</button>
                 </div>
             </div>
@@ -531,29 +532,6 @@
             <div class="modal-actions">
                 <button id="cancel-edit-class" class="btn btn-secondary">取消</button>
                 <button id="confirm-edit-class" class="btn btn-primary">儲存</button>
-            </div>
-        </div>
-    </div>
-
-    <div id="firebase-config-modal" class="modal">
-        <div class="card">
-            <h2>☁️ 雲端同步設定（選用）</h2>
-            <p class="setup-note">
-                不設定也能正常使用，資料會存在這台電腦的瀏覽器。<br>
-                若要多台電腦同步，請貼上 Firebase 主控台「專案設定 → 一般 → 你的應用程式」提供的 SDK 設定值，並啟用 <code>Firestore Database</code>。
-                設定只會存在這台瀏覽器。
-            </p>
-            <div class="field"><label>API Key</label><input type="text" id="fb-apiKey" placeholder="AIzaSy..."></div>
-            <div class="field"><label>Auth Domain</label><input type="text" id="fb-authDomain" placeholder="your-project.firebaseapp.com"></div>
-            <div class="field"><label>Project ID</label><input type="text" id="fb-projectId" placeholder="your-project-id"></div>
-            <div class="field"><label>Storage Bucket</label><input type="text" id="fb-storageBucket" placeholder="your-project.appspot.com"></div>
-            <div class="field"><label>Messaging Sender ID</label><input type="text" id="fb-messagingSenderId" placeholder="123456789"></div>
-            <div class="field"><label>App ID</label><input type="text" id="fb-appId" placeholder="1:123456789:web:abcxyz"></div>
-            <div class="field"><label>資料代號（同一個 Firebase 專案放多組資料時用來區分）</label><input type="text" id="fb-docId" placeholder="預設: default"></div>
-            <div class="modal-actions">
-                <button id="cancel-firebase-config" class="btn btn-secondary">取消</button>
-                <button id="disconnect-firebase-config" class="btn btn-danger">中斷連線</button>
-                <button id="save-firebase-config" class="btn btn-primary">儲存並連線</button>
             </div>
         </div>
     </div>
@@ -733,6 +711,7 @@
         import { fillCollectionDefaults } from './src/core/collection.js';
         import { xpLedger, xpOf, groupKey, XP_VERSION } from './src/core/xp.js';
         import { initCollectionUI } from './src/ui/collection-ui.js';
+        import { initSyncUI } from './src/ui/sync-ui.js';
         import { $, h } from './src/ui/dom.js';
         import { initHomeworkUI } from './src/ui/homework-ui.js';
 
@@ -804,6 +783,9 @@
 
         // ---------- 記憶體狀態 ----------
         const S = { classes: [], students: [], events: [], snapshots: [], meta: {}, hwAssignments: [], hwEvents: [], xpEvents: [], specialItems: [], grants: [] };
+        let SYNC = null;
+        /** 任何資料變動後呼叫：排程雲端同步（沒設定雲端就什麼都不做） */
+        const afterDataChange = () => { SYNC?.schedule(); };
         const eventById = new Map();
         const totals = new Map();       // studentId -> { score:可用加分, earned:累計獲得, heart }
         const groupTotals = new Map();  // `${classId}|${group}` -> score
@@ -837,7 +819,7 @@
         const saveClass = async (c, studentsToSave = []) => {
             c.updatedAt = Date.now();
             await dbWrite({ classes: [c], ...(studentsToSave.length ? { students: studentsToSave } : {}) });
-            Cloud.markClass(c.id);
+            afterDataChange();
         };
 
         const makeEvent = ({ classId, targetType = 'student', targetId, kind, delta, reason = '', batchId = null, undoOf = null,
@@ -853,7 +835,7 @@
             if (!list.length && !extraPuts.length) return list;
             list.forEach(e => { S.events.push(e); eventById.set(e.id, e); applyToTotals(e); });
             await dbWrite({ events: [...list, ...extraPuts] });
-            [...list, ...extraPuts].forEach(e => Cloud.markDay(e.classId, e.date));
+            afterDataChange();
             return list;
         };
 
@@ -890,132 +872,8 @@
             await setMeta('dataVersion', DATA_VERSION);
         };
 
-        // =====================================================================
-        //  雲端同步（Firebase，選用）
-        //  classroomPowerhouseV5/{docId}/classes/{classId}           班級＋名單
-        //  classroomPowerhouseV5/{docId}/classes/{classId}/days/{d}  當日紀錄＋快照
-        // =====================================================================
-        const LS_CONFIG_KEY = 'classroomPowerhouse_fbConfig';
-        const LS_DOCID_KEY = 'classroomPowerhouse_fbDocId';
-        const FB_VER = '10.13.0';
-        const Cloud = {
-            fb: null, dirtyClasses: new Set(), dirtyDays: new Set(), timer: null, busy: false,
-            config() { try { return JSON.parse(localStorage.getItem(LS_CONFIG_KEY)); } catch { return null; } },
-            docId() { return localStorage.getItem(LS_DOCID_KEY) || 'default'; },
-            status(state, text) { $('db-dot').className = 'db-dot' + (state ? ' ' + state : ''); $('db-status-text').textContent = text; },
-            async connect(config) {
-                try {
-                    const [appMod, fsMod] = await Promise.all([
-                        import(`https://www.gstatic.com/firebasejs/${FB_VER}/firebase-app.js`),
-                        import(`https://www.gstatic.com/firebasejs/${FB_VER}/firebase-firestore.js`),
-                    ]);
-                    const m = { ...appMod, ...fsMod };
-                    // 修正 v4：重複 initializeApp 會失敗 → 先刪除既有 app 再建立
-                    const old = m.getApps().find(a => a.name === 'cp');
-                    if (old) await m.deleteApp(old);
-                    const app = m.initializeApp(config, 'cp');
-                    this.fb = { m, db: m.getFirestore(app) };
-                    return true;
-                } catch (err) { console.error('Firebase 連線失敗', err); this.fb = null; this.status('error', '雲端連線失敗（僅存本機）'); return false; }
-            },
-            disconnect() { this.fb = null; this.status('', '僅存本機'); },
-            root() { const { m, db } = this.fb; return m.doc(db, 'classroomPowerhouseV5', this.docId()); },
-            markClass(classId) { if (!this.fb) return; this.dirtyClasses.add(classId); this.queue(); },
-            markDay(classId, date) { if (!this.fb) return; this.dirtyDays.add(`${classId}|${date}`); this.queue(); },
-            queue() { if (!this.fb) return; this.status('syncing', '同步中…'); clearTimeout(this.timer); this.timer = setTimeout(() => this.push(), 800); },
-            async push() {
-                if (!this.fb) return;
-                if (this.busy) { this.queue(); return; }
-                this.busy = true;
-                const { m } = this.fb;
-                const classIds = [...this.dirtyClasses]; const days = [...this.dirtyDays];
-                this.dirtyClasses.clear(); this.dirtyDays.clear();
-                try {
-                    for (const cid of classIds) {
-                        const c = classById(cid); if (!c) continue;
-                        await m.setDoc(m.doc(this.root(), 'classes', cid), { cls: c, students: S.students.filter(s => s.classId === cid), updatedAt: c.updatedAt || 0 });
-                    }
-                    for (const key of days) {
-                        const [cid, date] = key.split('|');
-                        const events = S.events.filter(e => e.classId === cid && e.date === date);
-                        const snap = S.snapshots.find(s => s.id === `${cid}|${date}`) || null;
-                        await m.setDoc(m.doc(this.root(), 'classes', cid, 'days', date), { classId: cid, date, events, snapshot: snap, updatedAt: Date.now() });
-                    }
-                    this.status('connected', '已同步至雲端');
-                } catch (err) {
-                    console.error('寫入雲端失敗', err);
-                    classIds.forEach(c => this.dirtyClasses.add(c)); days.forEach(d => this.dirtyDays.add(d));
-                    this.status('error', '同步失敗（已存本機）');
-                } finally { this.busy = false; }
-            },
-            /** 下載雲端並合併：班級/名單以 updatedAt 較新者為準；紀錄依 id 合併（不會互相覆蓋） */
-            async pull() {
-                if (!this.fb) return false;
-                const { m } = this.fb;
-                this.status('syncing', '讀取雲端…');
-                try {
-                    const classSnap = await m.getDocs(m.collection(this.root(), 'classes'));
-                    if (classSnap.empty) {
-                        // 舊版 v4 雲端資料（單一文件）
-                        const legacy = await m.getDoc(m.doc(this.fb.db, 'classroomPowerhouse', this.docId()));
-                        if (legacy.exists() && isV4Data(legacy.data().allClasses) && aliveClasses().length === 0) {
-                            const arr = legacy.data().allClasses;
-                            downloadFile(`班級動力站_v4雲端原始備份_${stampForFile()}.json`, JSON.stringify(arr));
-                            const conv = convertV4(arr);
-                            await dbWrite({ classes: conv.classes, students: conv.students, events: conv.events });
-                            S.classes.push(...conv.classes); S.students.push(...conv.students); S.events.push(...conv.events);
-                            recomputeTotals();
-                            notify('已將雲端 v4 資料升級為 v5', 4000);
-                        }
-                        this.markAllDirty();
-                        await this.push();
-                        return true;
-                    }
-                    const puts = { classes: [], students: [], events: [], dailySnapshots: [] };
-                    const remoteClassIds = new Set();
-                    for (const cd of classSnap.docs) {
-                        const r = cd.data(); if (!r || !r.cls) continue;
-                        const cid = r.cls.id; remoteClassIds.add(cid);
-                        const local = classById(cid);
-                        if (!local || (r.updatedAt || 0) > (local.updatedAt || 0)) {
-                            if (local) Object.assign(local, r.cls); else S.classes.push(r.cls);
-                            S.students = S.students.filter(s => s.classId !== cid).concat(r.students || []);
-                            puts.classes.push(r.cls); puts.students.push(...(r.students || []));
-                        } else if ((local.updatedAt || 0) > (r.updatedAt || 0)) this.dirtyClasses.add(cid);
-                        const daySnap = await m.getDocs(m.collection(this.root(), 'classes', cid, 'days'));
-                        const remoteDays = new Set();
-                        daySnap.forEach(dd => {
-                            const d = dd.data(); remoteDays.add(d.date);
-                            const remoteIds = new Set();
-                            (d.events || []).forEach(re => {
-                                remoteIds.add(re.id);
-                                const le = eventById.get(re.id);
-                                if (!le) { S.events.push(re); eventById.set(re.id, re); puts.events.push(re); }
-                                else if ((re.updatedAt || 0) > (le.updatedAt || 0) || (re.undone && !le.undone && !le.updatedAt)) { Object.assign(le, re); puts.events.push(le); }
-                                else if ((le.updatedAt || 0) > (re.updatedAt || 0) || (le.undone && !re.undone)) this.dirtyDays.add(`${cid}|${d.date}`);
-                            });
-                            if (S.events.some(e => e.classId === cid && e.date === d.date && !remoteIds.has(e.id))) this.dirtyDays.add(`${cid}|${d.date}`);
-                            if (d.snapshot && !S.snapshots.find(s => s.id === d.snapshot.id)) { S.snapshots.push(d.snapshot); puts.dailySnapshots.push(d.snapshot); }
-                        });
-                        new Set(S.events.filter(e => e.classId === cid).map(e => e.date)).forEach(date => { if (!remoteDays.has(date)) this.dirtyDays.add(`${cid}|${date}`); });
-                    }
-                    S.classes.filter(c => !remoteClassIds.has(c.id)).forEach(c => {
-                        this.dirtyClasses.add(c.id);
-                        new Set(S.events.filter(e => e.classId === c.id).map(e => e.date)).forEach(d => this.dirtyDays.add(`${c.id}|${d}`));
-                    });
-                    await dbWrite(Object.fromEntries(Object.entries(puts).filter(([, v]) => v.length)));
-                    await upgradeData();
-                    recomputeTotals();
-                    this.status('connected', '已連接雲端');
-                    if (this.dirtyClasses.size || this.dirtyDays.size) await this.push();
-                    return true;
-                } catch (err) { console.error('讀取雲端失敗', err); this.status('error', '讀取雲端失敗（使用本機資料）'); return false; }
-            },
-            markAllDirty() {
-                S.classes.forEach(c => this.dirtyClasses.add(c.id));
-                S.events.forEach(e => this.dirtyDays.add(`${e.classId}|${e.date}`));
-            },
-        };
+        // 雲端同步：v6 起改用 Google 帳號＋Google 試算表（src/sync/*、src/ui/sync-ui.js）。
+        // 舊版 Firebase 程式已移除；舊的 Firebase 遠端資料不會被讀取、修改或刪除。
 
         // ---------- 遊戲化：等級 / 徽章 ----------
         const BADGE_DEFS = [
@@ -1596,7 +1454,7 @@
             const e = recLastEvent(); if (!e) return;
             if (!confirm('復原剛才那一筆？')) return;
             e.undone = true; e.reviewNote = '記錄同學自行復原'; e.updatedAt = Date.now();
-            await dbWrite({ events: [e] }); Cloud.markDay(e.classId, e.date);
+            await dbWrite({ events: [e] }); afterDataChange();
             rec.lastId = null; rec.count = Math.max(0, rec.count - 1);
             await setMeta('recordMode', rec);
             refreshRecordUndo();
@@ -1626,7 +1484,7 @@
             const now = Date.now();
             list.forEach(e => { e.updatedAt = now; });
             await dbWrite({ events: list });
-            list.forEach(e => { Cloud.markDay(e.classId, e.date); if (e.confirmedDate) Cloud.markDay(e.classId, e.confirmedDate); });
+            afterDataChange();
             recomputeTotals();
         };
         const afterReview = () => {
@@ -1786,7 +1644,8 @@
         };
         const saveSnapshots = async (list) => {
             if (!list.length) return;
-            list.forEach(sn => { S.snapshots = S.snapshots.filter(x => x.id !== sn.id); S.snapshots.push(sn); Cloud.markDay(sn.classId, sn.date); });
+            list.forEach(sn => { S.snapshots = S.snapshots.filter(x => x.id !== sn.id); S.snapshots.push(sn); });
+            afterDataChange();
             await dbWrite({ dailySnapshots: list });
         };
 
@@ -2205,44 +2064,12 @@
             }
             await upgradeData();
             recomputeTotals();
-            Cloud.markAllDirty(); Cloud.queue();
+            afterDataChange();
             await autoSettle();
             currentClassId = null; renderDashboard(); switchScreen('dashboard');
             notify('導入完成！');
         });
 
-        // ---------- 雲端設定 Modal ----------
-        const fbFields = ['apiKey', 'authDomain', 'projectId', 'storageBucket', 'messagingSenderId', 'appId'];
-        const openFirebaseConfigModal = () => {
-            const saved = Cloud.config() || {};
-            fbFields.forEach(f => { $('fb-' + f).value = saved[f] || ''; });
-            $('fb-docId').value = Cloud.docId() === 'default' ? '' : Cloud.docId();
-            showModal('firebase-config-modal');
-        };
-        $('db-status-badge').addEventListener('click', openFirebaseConfigModal);
-        $('cancel-firebase-config').addEventListener('click', () => hideModal('firebase-config-modal'));
-        $('save-firebase-config').addEventListener('click', async () => {
-            const config = {}; fbFields.forEach(f => { config[f] = $('fb-' + f).value.trim(); });
-            if (!config.apiKey || !config.projectId || !config.appId) { alert('請至少填寫 API Key、Project ID、App ID。'); return; }
-            localStorage.setItem(LS_CONFIG_KEY, JSON.stringify(config));
-            localStorage.setItem(LS_DOCID_KEY, $('fb-docId').value.trim() || 'default');
-            hideModal('firebase-config-modal');
-            Cloud.status('syncing', '連線中…');
-            if (!(await Cloud.connect(config))) { alert('連線設定有誤，請確認後再試一次。'); return; }
-            await Cloud.pull();
-            renderDashboard(); if (currentClassId) renderClassView();
-        });
-        $('disconnect-firebase-config').addEventListener('click', () => {
-            if (!confirm('確定要中斷雲端同步嗎？之後只存在這台電腦。')) return;
-            localStorage.removeItem(LS_CONFIG_KEY); localStorage.removeItem(LS_DOCID_KEY);
-            Cloud.disconnect(); hideModal('firebase-config-modal');
-        });
-        $('reload-cloud-btn').addEventListener('click', async () => {
-            if (!Cloud.fb) { openFirebaseConfigModal(); return; }
-            await Cloud.pull();
-            renderDashboard(); if (currentClassId) renderClassView();
-            notify('已與雲端同步（紀錄已合併）');
-        });
         document.querySelectorAll('.modal').forEach(m => m.addEventListener('click', (e) => { if (e.target === m) m.classList.remove('visible'); }));
         document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && rec) { recPickSid = null; $('record-reason').hidden = true; return; } if (e.key === 'Escape') document.querySelectorAll('.modal.visible').forEach(m => m.classList.remove('visible')); });
 
@@ -2260,7 +2087,6 @@
         window.addEventListener('resize', () => { resizeCanvas(); initParticles(); });
 
         // ---------- 新模組（作業、圖鑑、同步）共用的應用程式介面 ----------
-        const afterDataChange = () => { /* P5：排程雲端同步 */ };
         const app = {
             S, getCurrentClass, studentsOf, studentById, seatName, dbWrite, notify, uid, localDate, localTime, mdLabel, addDays, stampForFile,
             deviceId: () => S.meta.deviceId || 'dev-unknown', saveClass, afterDataChange, downloadCSV,
@@ -2268,6 +2094,13 @@
         };
         const HW = initHomeworkUI(app);
         const COL = initCollectionUI(app);
+        SYNC = initSyncUI({
+            S, S_KEY, dbWrite, dbGetAll, setMeta, notify, $, localDateTime, appVersion: APP_VERSION, deviceId: app.deviceId,
+            onRemoteChange: async () => {
+                await upgradeData(); recomputeTotals(); renderDashboard();
+                if (currentClassId && classById(currentClassId) && !classById(currentClassId).deleted) { renderCurrentTab(); refreshPendingBtn(); }
+            },
+        });
 
         // ---------- 初始化 ----------
         const loadAll = async () => {
@@ -2293,12 +2126,8 @@
             // 重新整理時若仍在秩序記錄模式，直接回到記錄畫面（不會露出老師畫面）
             const rm = S.meta.recordMode;
             if (rm && classById(rm.classId) && !classById(rm.classId).deleted) { rec = rm; currentClassId = rm.classId; currentTab = 'students'; renderClassView(); showRecordOverlay(); }
-            // 雲端（選用）：在背景連線並合併，不覆蓋本機
-            const cfg = Cloud.config();
-            if (cfg) {
-                Cloud.status('syncing', '連線中…');
-                if (await Cloud.connect(cfg) && await Cloud.pull()) { await autoSettle(); renderDashboard(); if (currentClassId) renderCurrentTab(); }
-            }
+            // 雲端（選用）：Google 試算表同步；需要老師按「重新連線」才會取得授權（token 只放記憶體）
+            await SYNC.init();
         })();
     </script>
 </body>

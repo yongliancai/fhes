@@ -149,3 +149,13 @@
 }
 html.reduce-motion *, html.reduce-motion *::before, html.reduce-motion *::after { animation-duration: 0.001ms !important; animation-iteration-count: 1 !important; transition-duration: 0.001ms !important; }
 html.reduce-motion #particle-canvas, html.reduce-motion #scan-sweep { display: none; }
+
+/* ---------- 雲端同步 ---------- */
+.db-status[data-state="warn"], .db-status[data-state="error"] { border-color: var(--gold); color: var(--gold); }
+.sync-status { margin: 0 0 10px; padding-left: 1.2em; line-height: 1.8; }
+.sync-conflicts { display: flex; flex-direction: column; gap: 12px; }
+.sync-conflict { border: 2px solid var(--gold); border-radius: 12px; padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; }
+.sync-cmp { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.sync-cmp pre { white-space: pre-wrap; word-break: break-all; margin: 4px 0 0; padding: 8px; border-radius: 8px; background: rgba(0,0,0,0.3); font-size: 0.85em; max-height: 10em; overflow: auto; }
+#sync-modal input[type=text] { width: 100%; }
+@media (max-width: 600px) { .sync-cmp { grid-template-columns: 1fr; } }

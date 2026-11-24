@@ -13,9 +13,9 @@ test('positive: Google Sheets module and plain mention of the word Firebase are 
     assert.deepEqual(checkFile('src/sync/sheets.js', 'export const API = "https://sheets.googleapis.com/v4/spreadsheets";'), []);
     assert.deepEqual(checkFile('src/ui/notice.js', "const t = '舊版 Firebase 雲端資料不會被刪除';"), []);
 });
-test('legacy Firebase exemption list is explicit', () => {
-    assert.ok(Array.isArray(LEGACY_FIREBASE_ALLOWED));
-    for (const p of LEGACY_FIREBASE_ALLOWED) assert.deepEqual(checkFile(p, '<script>initializeApp(x)</script>'), []);
+test('P5: Firebase is fully removed — no exemptions, and index.html itself is now checked', () => {
+    assert.deepEqual(LEGACY_FIREBASE_ALLOWED, []);
+    assert.ok(checkFile('index.html', "<script>import('https://www.gstatic.com/firebasejs/10.13.0/firebase-app.js')</script>").length > 0);
 });
 test('negative: hard-coded OAuth secrets and tokens are rejected anywhere', () => {
     assert.ok(checkFile('src/sync/auth.js', "const secret = 'GOCSPX-abcdefghijklmnopqrstuvwx';").length > 0);
@@ -55,4 +55,10 @@ test('the real repository passes all guardrails', () => {
     const { errs, scanned } = runGuardrails();
     assert.deepEqual(errs, []);
     assert.ok(scanned > 10);
+});
+
+test('BUG-007: src/ui must use fill() instead of replaceChildren (null would render as "null")', () => {
+    assert.ok(checkFile('src/ui/x.js', "card.replaceChildren(a, cond ? b : null);").length > 0);
+    assert.deepEqual(checkFile('src/ui/x.js', 'fill(card, a, cond ? b : null);'), []);
+    assert.deepEqual(checkFile('src/ui/dom.js', 'el.replaceChildren(...kids);'), []);
 });

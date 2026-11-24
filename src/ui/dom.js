@@ -46,3 +46,6 @@ export const makeModal = (id, { wide = false, label = '' } = {}) => {
 };
 
 export const pct = (x) => x == null ? '—' : `${Math.round(x * 100)}%`;
+
+/** replaceChildren 會把 null 變成 "null" 文字（BUG-007）；一律透過 fill() 過濾掉 null / false */
+export const fill = (el, ...kids) => { el.replaceChildren(...kids.flat(Infinity).filter(k => k != null && k !== false)); return el; };

@@ -1,5 +1,5 @@
 // 作業分頁 UI：今日作業、匿名統計（投影安全）、教師矩陣、批次登記、追蹤清單、個人歷程、作業類別設定
-import { h, makeModal, pct } from './dom.js';
+import { h, makeModal, pct, fill } from './dom.js';
 import {
     SUBMISSION, CORRECTION, SUBMISSION_ICON, CORRECTION_ICON, projectRecords, getRecord, buildChangeEvents, buildUndoBatch, buildResolveEvent,
     assignmentStats, followUpLists, studentHistory, lastUndoableBatch, addHwType, renameHwType, setHwTypeActive, canDeleteHwType, typeName, makeAssignment, copyAssignments,
@@ -91,7 +91,7 @@ export const initHomeworkUI = (app) => {
                 h('input', { type: 'checkbox', checked: showArchived ? true : null, onchange: (e) => { showArchived = e.target.checked; render(c); } }),
                 ` 顯示已封存（${archivedCount}）`));
         }
-        tab.replaceChildren(...parts);
+        fill(tab, ...parts);
     };
 
     const statBar = (label, value, cls = '') => h('div', { class: 'hw-stat ' + cls }, h('span', { class: 'hw-stat-v', text: value }), h('span', { class: 'hw-stat-l', text: label }));
@@ -194,7 +194,7 @@ export const initHomeworkUI = (app) => {
         const r = getRecord(records, a.id, s.id);
         const set = async (field, value) => { await change(c, a.id, [s.id], field, value); cellModal.close(); render(c); };
         const hist = eventsOf(c).filter(e => e.assignmentId === a.id && e.studentId === s.id).sort((x, y) => y.ts - x.ts);
-        cellModal.card.replaceChildren(
+        fill(cellModal.card, 
             h('h2', { text: `${s.seat ?? ''}號 ${s.name}` }),
             h('p', { class: 'modal-sub', text: `${aLabel(c, a)}${a.dueDate ? `（期限 ${app.mdLabel(a.dueDate)}）` : ''}` }),
             r.conflict ? h('div', { class: 'hw-conflict' },
@@ -254,7 +254,7 @@ export const initHomeworkUI = (app) => {
             due: h('input', { id: 'hw-f-due', type: 'date', value: a?.dueDate || app.addDays(a?.assignedDate || date, 1) }),
         };
         const field = (lab, input, id) => h('div', { class: 'field' }, h('label', { for: id, text: lab }), input);
-        editModal.card.replaceChildren(
+        fill(editModal.card, 
             h('h2', { text: a ? '✏️ 編輯作業' : '📚 新增作業' }),
             field('作業類別', f.type, 'hw-f-type'), field('範圍／標題', f.title, 'hw-f-title'), field('說明', f.note, 'hw-f-note'),
             h('div', { class: 'field-row' }, field('指派日期', f.assigned, 'hw-f-assigned'), field('繳交期限', f.due, 'hw-f-due')),
@@ -306,7 +306,7 @@ export const initHomeworkUI = (app) => {
         const active = assignmentsOf(c).filter(a => !a.archived);
         const sum = { missing: 0, late: 0, needs: 0, done: 0 };
         active.forEach(a => { const r = getRecord(records, a.id, s.id); if (r.submission === 'missing') sum.missing++; if (r.late) sum.late++; if (r.correction === 'needs') sum.needs++; if (r.correction === 'done') sum.done++; });
-        studentModal.card.replaceChildren(
+        fill(studentModal.card, 
             h('h2', { text: `📚 ${app.seatName(s)} 的作業` }),
             h('div', { class: 'timeline-head' }, h('span', { text: `待補交 ${sum.missing}` }), h('span', { text: `補交 ${sum.late}` }), h('span', { text: `待訂正 ${sum.needs}` }), h('span', { text: `已訂正 ${sum.done}` })),
             h('div', { class: 'table-wrap' }, h('table', { class: 'data-table' },
@@ -339,7 +339,7 @@ export const initHomeworkUI = (app) => {
             return r;
         });
         const ratio = (a, b) => pct(b ? a / b : null);
-        statsModal.card.replaceChildren(
+        fill(statsModal.card, 
             h('h2', { text: `📊 作業統計（近 ${days} 天，${list.length} 份）` }),
             h('div', { class: 'hw-toolbar' }, [7, 30, 90].map(d => h('button', { class: 'btn ' + (d === days ? 'btn-primary' : 'btn-secondary'), text: `近 ${d} 天`, onclick: () => openStats(c, d) })),
                 h('span', { class: 'spacer' }),
@@ -379,7 +379,7 @@ export const initHomeworkUI = (app) => {
         const newName = h('input', { type: 'text', id: 'hwt-new', maxlength: '10', placeholder: '新類別名稱' });
         const rewardOn = h('input', { type: 'checkbox', id: 'hw-reward-on', checked: c.hwReward?.enabled ? true : null });
         const rewardXp = h('input', { type: 'number', id: 'hw-reward-xp', min: '1', max: '50', value: c.hwReward?.xp ?? 5, style: 'max-width:5em' });
-        settingsModal.card.replaceChildren(
+        fill(settingsModal.card, 
             h('h2', { text: '⚙️ 作業設定' }),
             h('h3', { class: 'hw-sec', text: '📚 作業類別' }),
             h('p', { class: 'modal-sub', text: '預設類別不能刪除，可以停用；已有作業的類別只能停用，歷史紀錄會保留。' }),

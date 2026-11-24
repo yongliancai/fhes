@@ -3,6 +3,7 @@ import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { openApp, teardown, importFile, fixturePath, shot } from './helpers.mjs';
+import { strayNullTexts } from './helpers.mjs';
 
 after(teardown);
 const NAMES = ['代號甲', '代號乙', '代號丙'];
@@ -56,6 +57,7 @@ test('homework flow: batch, unchecked≠missing, correction, follow-up, privacy,
         await cell(page, '代號丙').click();
         assert.equal(await page.locator('#hw-cell-modal [data-cor="done"]').isDisabled(), true);
         await page.click('#hw-cell-modal .modal-actions .btn');
+        assert.deepEqual(await strayNullTexts(page), [], 'no stray "null" text in the cell editor (BUG-007)');
         await shot(page, 'p3-homework-teacher');
         // 投影模式：只有匿名統計，任何姓名都不出現
         await page.click('#hw-view-toggle');
@@ -86,6 +88,7 @@ test('homework flow: batch, unchecked≠missing, correction, follow-up, privacy,
         await page.waitForSelector('#hw-student-modal.visible');
         assert.ok((await page.locator('#hw-student-modal tbody tr').count()) >= 3, 'history keeps original + undo events');
         await page.click('#hw-student-modal .modal-actions .btn');
+        assert.deepEqual(await strayNullTexts(page), [], 'no stray "null" text (BUG-007)');
         assert.deepEqual(app.errors, []);
     } finally { await app.close(); }
 });

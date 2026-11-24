@@ -2,6 +2,7 @@
 import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
 import { openApp, teardown, createClass, shot, setup } from './helpers.mjs';
+import { strayNullTexts } from './helpers.mjs';
 
 after(teardown);
 
@@ -107,6 +108,7 @@ test('special items: max 2 tags, disabled tag not selectable, teacher grant, tag
         await page.click('#col-celebrate .btn');
         assert.equal(await page.locator('.col-card.special.owned').count(), 1);
         await shot(page, 'p4-special');
+        assert.deepEqual(await strayNullTexts(page), [], 'no stray "null" text (BUG-007)');
         // 減少動態
         await page.click('#motion-btn');
         assert.equal(await page.evaluate(() => document.documentElement.classList.contains('reduce-motion')), true);

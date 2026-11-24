@@ -20,6 +20,27 @@ Each entry names the regression test that fails on the buggy version and passes 
 - **FIX**: `lastUndoableBatch(hwEvents, today)` derives it from stored events (today's latest batch with no `undoOfBatch` compensation).
 - **PREVENT/PROVE**: unit test `last undoable batch is derived from stored events (survives reloads), today only, once`; the E2E flow switches tabs and reloads before undoing.
 
+## BUG-004 — sync status invisible inside a class
+- **DETECT**: `e2e/sync.e2e.mjs` could not open the sync dialog while in a class: the only status badge lived on the dashboard. A teacher working in class would never see 「需要重新連線」.
+- **FIX**: second badge in the class-view header, kept in sync by `setStatus()`. **PROVE**: the E2E opens the dialog from the class view during the token-expiry step.
+
+## BUG-005 — conflict choice lost when a background sync was running
+- **DETECT**: E2E conflict step; clicking 「用雲端的」 while a scheduled sync was in flight did nothing (`runSync` returned early).
+- **ROOT_CAUSE**: resolutions were only passed as an argument to the run that started.
+- **FIX**: resolutions are queued and consumed by the next run; re-queued if that run fails.
+
+## BUG-006 — spurious conflicts on Classes when two devices edit students
+- **DETECT**: E2E debug log showed two conflicts (`classes|…`, `students|…`) for a single student rename.
+- **ROOT_CAUSE**: `saveClass()` bumps `class.updatedAt` on every roster edit, so both devices changed the class row.
+- **FIX**: `autoMergeChoice()` merges versions that differ only in bookkeeping fields (`updatedAt`, `lastSyncAt`) by taking the newer one; any real field difference still becomes a conflict.
+- **PROVE**: unit test `BUG-006: versions that differ only in updatedAt merge automatically…` (also asserts a real edit still conflicts); E2E asserts exactly one conflict is shown.
+
+## BUG-007 — the word "null" rendered inside new dialogs
+- **DETECT**: E2E debug dump of the sync dialog showed a stray `null` line.
+- **ROOT_CAUSE**: `Element.replaceChildren(a, cond ? b : null)` converts `null` into a text node.
+- **FIX**: `fill()` in `src/ui/dom.js` filters null/false; all new UI modules use it.
+- **PREVENT**: guardrail bans `.replaceChildren(` in `src/ui/` outside `dom.js` (negative + positive test). **PROVE**: `strayNullTexts()` E2E check fails with the bug re-injected (`hw-cell-modal` reported) and passes after the fix.
+
 ## TEST-HARNESS notes (not product bugs, recorded so they are not repeated)
 - `page.waitForSelector('#import-modal:not(.visible)')` waits for *visible* by default → use `{ state: 'hidden' }`.
 - Reading a card number immediately after a click races the async IndexedDB write → `waitVal()` polls until the expected value or timeout and then lets the assertion show the real value.

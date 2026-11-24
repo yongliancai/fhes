@@ -1,5 +1,5 @@
 // 圖鑑／園區分頁：小組與全班的六世界收藏、棲地場景、解鎖、成長、特殊收藏與標籤、XP 設定
-import { h, makeModal } from './dom.js';
+import { h, makeModal, fill } from './dom.js';
 import { CATALOG, WORLDS, RARITIES, rarityById, worldById, catalogById, CONFIRM_LABEL, GROWTH_TRACKS } from '../data/catalog.js';
 import { xpLedger, xpOf, groupKey, milestoneState, DEFAULT_CLASS_MILESTONES } from '../core/xp.js';
 import {
@@ -77,7 +77,7 @@ export const initCollectionUI = (app) => {
             h('button', { class: 'col-world special' + (world === 'special' ? ' on' : ''), role: 'tab', 'aria-selected': world === 'special' ? 'true' : 'false', dataset: { world: 'special' },
                 onclick: () => { world = 'special'; render(c); } }, '🎖️ 特殊收藏'));
 
-        tab.replaceChildren(chips, summary, worldTabs, world === 'special' ? specialView(c, ledger, ownerId) : worldView(c, ledger, ownerId, ms.reached.length, energy));
+        fill(tab, chips, summary, worldTabs, world === 'special' ? specialView(c, ledger, ownerId) : worldView(c, ledger, ownerId, ms.reached.length, energy));
     };
 
     const worldView = (c, ledger, ownerId, decor, energy) => {
@@ -140,7 +140,7 @@ export const initCollectionUI = (app) => {
         const gs = has ? growthStage({ ledger, grant: g }) : null;
         const track = GROWTH_TRACKS[it.track] || GROWTH_TRACKS.animal;
         const artBox = h('div', { class: 'col-detail-art' + (has ? ' owned' : '') }, creatureSVG(it, { size: 180, silhouette: !has, stage: gs?.stage ?? 0 }));
-        detail.card.replaceChildren(
+        fill(detail.card, 
             h('h2', { text: hidden ? '？？？' : `${it.name}` }),
             h('div', { class: 'col-detail-meta' }, rarityBadge(it.rarity),
                 special ? h('span', { class: 'hw-tag', text: '特殊收藏' }) : h('span', { class: 'hw-tag', text: `${worldById.get(it.world).icon} ${worldById.get(it.world).name} No.${String(it.no).padStart(2, '0')}` }),
@@ -163,7 +163,7 @@ export const initCollectionUI = (app) => {
 
     const celebrate = (c, it) => {
         const ov = makeModal('col-celebrate', { label: '解鎖成功' });
-        ov.card.replaceChildren(h('div', { class: 'col-celebrate' },
+        fill(ov.card, h('div', { class: 'col-celebrate' },
             h('p', { class: 'col-celebrate-t', text: `🎉 ${ownerLabel(c, owner)} 收藏了` }),
             h('div', { class: 'col-celebrate-art' }, creatureSVG(it, { size: 200, stage: 0 })),
             h('p', { class: 'col-celebrate-n' }, `${it.name} `, rarityBadge(it.rarity)),
@@ -234,7 +234,7 @@ export const initCollectionUI = (app) => {
                 h('input', { type: 'checkbox', class: 'sp-tag', value: t.id, checked: keep ? true : null, disabled: !t.active && !keep ? true : null }),
                 ` ${t.name}${t.active ? '' : '（已停用）'}`);
         });
-        spModal.card.replaceChildren(
+        fill(spModal.card, 
             h('h2', { text: sp ? '✏️ 編輯特殊收藏' : '🎖️ 新增特殊收藏' }),
             h('div', { class: 'field' }, h('label', { for: 'sp-name', text: '名稱' }), name),
             h('div', { class: 'field-row' }, h('div', { class: 'field' }, h('label', { for: 'sp-rarity', text: '稀有度（固定，不受標籤影響）' }), rarity),
@@ -273,7 +273,7 @@ export const initCollectionUI = (app) => {
                 await app.saveClass(c); openTags(c); render(c);
             } })));
         const add = h('input', { type: 'text', id: 'tag-new', maxlength: '10', placeholder: '新標籤名稱' });
-        tagModal.card.replaceChildren(
+        fill(tagModal.card, 
             h('h2', { text: '🏷️ 特殊收藏標籤' }),
             h('p', { class: 'modal-sub', text: '預設標籤可以停用但不能刪除；停用後舊收藏仍顯示，新收藏不能選。自訂標籤可改名或刪除（刪除前會顯示影響並確認兩次）。' }),
             h('div', {}, rows),
@@ -305,7 +305,7 @@ export const initCollectionUI = (app) => {
         const costInputs = RARITIES.map(r => h('label', { class: 'inline-check' }, `${r.icon} ${r.name}`, h('input', { type: 'number', min: '1', max: '500', class: 'col-cost-in', dataset: { r: r.id }, value: col.costs?.[r.id] ?? DEFAULT_COSTS[r.id], style: 'max-width:5.5em' })));
         const bonusAmt = h('input', { type: 'number', id: 'col-bonus-xp', min: '1', max: '100', value: '5', style: 'max-width:5em' });
         const bonusReason = h('input', { type: 'text', id: 'col-bonus-reason', maxlength: '30', placeholder: '原因，例如：全班合作完成大掃除' });
-        setModal.card.replaceChildren(
+        fill(setModal.card, 
             h('h2', { text: '⚙️ 圖鑑設定' }),
             h('div', { class: 'field' }, h('label', { for: 'col-mode', text: '解鎖方式' }), mode),
             h('div', { class: 'field' }, h('label', { text: '各稀有度需要的探索能量（所有世界相同，主題家園沒有加成）' }), h('div', { class: 'col-costs' }, costInputs)),

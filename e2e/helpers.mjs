@@ -83,3 +83,10 @@ export const importFile = async (page, path, mode = 'all') => {
     await page.waitForSelector('#import-modal', { state: 'hidden' });
     await page.waitForFunction(() => document.getElementById('class-dashboard')?.classList.contains('active'));
 };
+
+/** BUG-007 回歸：畫面上不可出現由 null 轉成的 "null" 文字節點 */
+export const strayNullTexts = (page) => page.evaluate(() => {
+    const out = []; const w = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+    while (w.nextNode()) if (w.currentNode.nodeValue.trim() === 'null') out.push(w.currentNode.parentElement?.closest('[id]')?.id || w.currentNode.parentElement?.tagName);
+    return out;
+});
