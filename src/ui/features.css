@@ -159,3 +159,27 @@ html.reduce-motion #particle-canvas, html.reduce-motion #scan-sweep { display: n
 .sync-cmp pre { white-space: pre-wrap; word-break: break-all; margin: 4px 0 0; padding: 8px; border-radius: 8px; background: rgba(0,0,0,0.3); font-size: 0.85em; max-height: 10em; overflow: auto; }
 #sync-modal input[type=text] { width: 100%; }
 @media (max-width: 600px) { .sync-cmp { grid-template-columns: 1fr; } }
+.col-owner-bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-start; justify-content: space-between; }
+.col-owner-bar .col-owners { flex: 1 1 auto; }
+
+/* ---------- 響應式：分頁不擠成直排；手機版間距 ---------- */
+.nav-tab { min-width: 5.2em; white-space: nowrap; }
+@media (max-width: 600px) {
+    .app-screen { padding: 12px 10px 96px; }
+    .card { padding: 16px 12px; }
+    .header { margin-top: 52px; margin-bottom: 14px; }
+    h1 { font-size: 1.45em; }
+    .class-view-nav { gap: 4px; }
+    .nav-tab { flex: 1 1 28%; padding: 8px 4px; }
+    .top-controls { top: 6px; right: 6px; gap: 2px; }
+    .top-controls button { min-width: 40px; height: 40px; padding: 0 4px; font-size: 16px; }
+    .modal .card { width: 96%; padding: 18px 14px; }
+    .hw-cards { grid-template-columns: 1fr; }
+    .hw-toolbar .btn { padding: 8px 12px; }
+    .col-summary { grid-template-columns: 1fr; }
+    .col-grid { grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); gap: 8px; }
+    .col-card { min-height: 170px; }
+    #student-grid { grid-template-columns: repeat(auto-fill, minmax(9.6rem, 1fr)); gap: 10px; }
+    .reason-grid { grid-template-columns: 1fr; }
+    .hw-follow { grid-template-columns: 1fr; }
+}

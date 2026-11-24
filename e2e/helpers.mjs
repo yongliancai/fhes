@@ -48,7 +48,9 @@ export const openApp = async (opts = {}) => {
         else await d.accept();
     });
     await page.goto(url + (opts.query || ''));
-    await page.waitForFunction(() => document.getElementById('class-dashboard')?.classList.contains('active'));
+    // 等到 App 真的跑起來（「新增班級」卡片由模組腳本產生）；腳本壞掉時立即失敗並附上錯誤
+    try { await page.waitForSelector('#add-class-card', { timeout: 10000 }); }
+    catch { throw new Error(`App did not start: ${errors.join(' | ') || 'no page error captured'}`); }
     return { page, context, errors, prompts, close: () => context.close() };
 };
 

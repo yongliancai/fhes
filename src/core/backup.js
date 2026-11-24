@@ -52,3 +52,13 @@ export const backupSummary = (p) => ({
     classes: (p.classes || []).filter(c => !c.deleted).length,
     ...Object.fromEntries(BACKUP_TABLES.filter(k => k !== 'classes').map(k => [k, (p[k] || []).length])),
 });
+
+/** v5.1 能讀的資料表（回退到 v5.1 時使用；作業、XP、圖鑑不包含在內） */
+export const V51_TABLES = ['classes', 'students', 'events', 'dailySnapshots'];
+/** 匯出 v5.1 相容備份：版本標 5.1、只含 v5.1 認得的資料表（多出來的欄位 v5.1 會忽略） */
+export const buildLegacyV51Backup = (state, { now = Date.now(), exportedAtLocal = '', meta = {} } = {}) => ({
+    format: BACKUP_FORMAT, version: 5.1, appVersion: 'v6.0 → v5.1 相容匯出', exportedAt: now, exportedAtLocal,
+    ...Object.fromEntries(V51_TABLES.map(k => [k, state[k] || []])),
+    meta,
+    note: '此檔供回退到 v5.1 使用；不含作業、XP、圖鑑資料（請另外保留 v6 完整備份）。',
+});

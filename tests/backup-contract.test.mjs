@@ -67,3 +67,15 @@ test('build → parse round trip is lossless for every table', () => {
     for (const k of BACKUP_TABLES) assert.deepEqual(back[k], state[k], k);
     assert.deepEqual(backupSummary(back), { classes: 1, students: 3, events: 10, dailySnapshots: 1, hwAssignments: 1, hwEvents: 1, xpEvents: 1, specialItems: 1, grants: 1 });
 });
+
+test('rollback: v5.1-compatible export is accepted by a v5.1 parser and keeps all score history', async () => {
+    const { buildLegacyV51Backup } = await import('../src/core/backup.js');
+    const fx = fixture('backup-v5.1.json');
+    const state = { classes: fx.classes, students: fx.students, events: fx.events.map(e => ({ ...e, xpv: 1, xpGroup: 1 })), dailySnapshots: fx.dailySnapshots, hwEvents: [{ id: 'x' }], grants: [{ id: 'g' }] };
+    const out = JSON.parse(JSON.stringify(buildLegacyV51Backup(state, { meta: fx.meta })));
+    assert.equal(out.version, 5.1);
+    assert.equal(out.hwEvents, undefined, 'v6-only tables are not included');
+    const parsedBy51 = parseBackup(out, { dataVersion: 5.1, convertV4: conv });   // 等同 v5.1 程式的檢查
+    assert.equal(parsedBy51.events.length, fx.events.length);
+    assert.throws(() => parseBackup({ ...out, version: 6 }, { dataVersion: 5.1, convertV4: conv }), /較新版本/, 'a normal v6 backup is refused by v5.1 — hence this export');
+});

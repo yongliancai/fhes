@@ -46,4 +46,13 @@ Each entry names the regression test that fails on the buggy version and passes 
 - Reading a card number immediately after a click races the async IndexedDB write → `waitVal()` polls until the expected value or timeout and then lets the assertion show the real value.
 - An element with an infinite idle animation is never "stable" for Playwright → `click({ force: true })` for scene actors.
 - Async UI actions that re-render (tag delete: two confirms + save + re-render) must be awaited with `waitFor({ state: 'detached' })`, not an immediate `count()` (caught as a 1-in-2 flake; fixed and re-run 3×).
+- `openApp()` used to wait for `#class-dashboard.active`, which is present in static HTML, so a broken module script was only noticed 30 s later by an unrelated selector. It now waits for `#add-class-card` (rendered by the script) and fails immediately with the captured page error.
+- Re-render races after async saves (homework archive → restore → toggle): wait for the post-render state (`waitFor`) before the next click.
+- Never edit source files while a background E2E run is in progress; a mid-edit syntax error made one Chrome run report a false failure (recorded in VERIFICATION, re-run afterwards).
+
+## Design issue found while writing the rollback guide — no v5.1-readable export
+- **DETECT**: drafting `docs/DEPLOY-CHECKLIST.md`: after upgrading, IndexedDB is at version 2 (v5.1 cannot open it) and v6 backups are version 6 (v5.1 refuses them), so rolling back would lose everything recorded after the upgrade.
+- **FIX**: 「⬇ v5.1 相容備份」 exports classes/students/events/dailySnapshots as version 5.1 (homework/XP/collection are listed as excluded).
+- **PROVE**: unit test (`rollback: v5.1-compatible export is accepted by a v5.1 parser…`, also asserts a normal v6 file is refused) and E2E download check.
+
 - `node --test tests/` treats the directory as a file on Node 22 → use plain `node --test` (auto-discovery) or a quoted glob.

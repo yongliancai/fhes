@@ -9,6 +9,8 @@ npm run test:e2e    # real-browser tests; screenshots → test-results/
 ```
 `E2E_CHANNEL=chrome|msedge|chromium` overrides the browser; `E2E_HEADED=1` shows it.
 
+Status words follow the Code Factory guide strictly: **PASS** = actually executed and passed; **FAIL** = executed and failed; **BLOCKED** = cannot run without something only the user can provide; **NOT_CONFIGURED** = no check exists; **NOT_VERIFIED** = not run in this work; **NOT_APPLICABLE** = deliberately out of scope.
+
 ## Evidence log
 | Date | Phase | Command | Environment | Result |
 |---|---|---|---|---|
@@ -16,14 +18,43 @@ npm run test:e2e    # real-browser tests; screenshots → test-results/
 | 2026-11-24 | P2 | `npm run verify` | Windows 11, Node 22.23.1 | PASS — syntax, guardrails, ESLint, 30/30 unit |
 | 2026-11-24 | P2 | `node --test e2e/legacy-v51.e2e.mjs` | Edge (playwright-core 1.56.1) | PASS 7/7 |
 | 2026-11-24 | P2 | mutation: `isCounted = () => true` | same | unit 3 FAIL + E2E order-recording FAIL (guards effective); restored → PASS |
-| 2026-11-24 | P3 | `npm run verify` | Windows 11, Node 22.23.1 | PASS — 51/51 unit (18 homework) |
-| 2026-11-24 | P3 | `npm run test:e2e` | Edge | PASS 10/10 (homework flow, settings/reward/backup, v1→v2 DB upgrade, v5.1 regression) |
-| 2026-11-24 | P4 | `npm run verify` | Windows 11, Node 22.23.1 | PASS — 73/73 unit (22 collection/XP) |
-| 2026-11-24 | P4 | `npm run test:e2e` | Edge | PASS 13/13 (+ group XP fairness/unlock/persistence, special items & tags/reduced motion, 72-character art gallery) |
-| 2026-11-24 | P5 | `npm run verify` | Windows 11, Node 22.23.1 | PASS — 93/93 unit (19 sync engine+adapter vs REST emulator) |
-| 2026-11-24 | P5 | mutations: no re-check before update / no conflict detection / no protection for hand-deleted rows | same | each mutant killed (race test, 3 conflict tests, manual-row test) |
-| 2026-11-24 | P5 | `npm run test:e2e` | Edge | PASS 15/15 (+ two-device sync with offline queue, token expiry, conflict resolution; invalid client id / denied consent) |
+| 2026-11-24 | P3 | `npm run verify` / `npm run test:e2e` | Windows 11 / Edge | PASS — 51/51 unit, 10/10 E2E |
+| 2026-11-24 | P4 | `npm run verify` / `npm run test:e2e` | Windows 11 / Edge | PASS — 73/73 unit, 13/13 E2E |
+| 2026-11-24 | P5 | `npm run verify` / `npm run test:e2e` | Windows 11 / Edge | PASS — 93/93 unit, 15/15 E2E |
+| 2026-11-24 | P5 | mutations: no re-check before update / no conflict detection / no protection for hand-deleted rows | Node | each mutant killed (race test; 3 conflict tests; manual-row test); restored → PASS |
+| 2026-11-24 | P6 | BUG-007 red/green: `fill()` reverted in the homework cell editor | Edge | E2E FAIL (`hw-cell-modal` stray "null") → restored → PASS |
+| 2026-11-24 | P6 | `E2E_CHANNEL=chrome npm run test:e2e` (run during an edit) | Chrome | 20/21 — the one failure was the app failing to start while `index.html` briefly had a syntax error mid-edit; harness now fails fast with the page error (see BUG-LOG harness notes). Re-run below. |
+| 2026-11-24 | P6 final | `npm run verify` | Windows 11, Node 22.23.1 | PASS — syntax + imports, guardrails (55 files), ESLint (40 files), 94/94 unit, exit 0 |
+| 2026-11-24 | P6 final | `npm run test:e2e` | Edge | PASS 23/23, exit 0 |
+| 2026-11-24 | P6 final | `E2E_CHANNEL=chrome npm run test:e2e` | Chrome | PASS 23/23, exit 0 (independent second run, different browser) |
+| CI | every push | GitHub Actions `Quality (no deployment)`: `verify` + `e2e` (ubuntu, Chrome) | ubuntu-latest, Node 22 | green for P2 (feff057), P3 (4b6bb42), P4 (853a880); later runs are listed in Draft PR #1 |
 
-## Negative/positive checks
-- Guardrails: Firebase SDK import, OAuth secret/token, innerHTML sink, impure core, ui import from core/sync, unmarked fixture → rejected; Sheets URL, plain word "Firebase", textContent, public client-ID text → accepted (`tests/guardrails.test.mjs`).
-- ESLint `no-undef`/`no-unused-vars` cover the inline module of `index.html`.
+## Acceptance matrix
+| ID | Requirement | Evidence | Status |
+|---|---|---|---|
+| A-01 | Project rules discoverable by a fresh agent | `AGENTS.md` → `docs/PROJECT-ENGINEERING.md`; not re-tested in a brand-new AI session | **NOT_VERIFIED** |
+| A-02 | Static guardrails block violations, allow valid code | `tests/guardrails.test.mjs` (Firebase SDK, secrets/tokens, innerHTML, impure core, layer imports, fixtures, replaceChildren), `tests/lint.test.mjs` | PASS |
+| A-03 | v4 / v5 / v5.1 backups import with identical numbers | `tests/backup-contract.test.mjs`, `tests/score-events.test.mjs` (hand-checked totals), E2E imports, IndexedDB v1→v2 in-place upgrade | PASS |
+| A-04 | Only confirmed events count; pending/rejected never | unit + E2E order-recording; mutation test | PASS |
+| A-05 | Group/class XP not double counted; penalties/redemptions never remove items | `tests/collection.test.mjs`, `e2e/collection` | PASS |
+| A-06 | Group size gives no multiplier; regrouping keeps history | unit (2 vs 7 members; move groups), E2E (6 students / 2 groups) | PASS |
+| A-07 | Unchecked ≠ missing; submitted ≠ corrected | `tests/homework.test.mjs`, `e2e/homework` | PASS |
+| A-08 | Batch, late submission, correction time, undo, archive/restore | unit + E2E | PASS |
+| A-09 | 6 × 12, rarity 5/4/2/1, special items outside the 12 | `validateCatalog()` + negative case | PASS |
+| A-10 | ≤ 2 tags; disabled builtin kept on old items, not selectable for new; custom delete with impact + double confirm | unit + E2E | PASS |
+| A-11 | Google auth: minimal scope, expiry, denial, offline | emulator unit + E2E (fake GIS script + emulated Sheets API at the network layer) | PASS (emulated) · real Google OAuth: **BLOCKED** (needs the user's OAuth Client ID and approval to use a test spreadsheet) |
+| A-12 | Two-device conflicts, retry dedupe, offline queue | `tests/sync.test.mjs` (19 scenarios + BUG-006, 3 mutants killed), `e2e/sync` | PASS (emulated) · real Sheets: **BLOCKED** |
+| A-13 | No Firebase SDK/UI left; remote Firestore untouched | guardrail `LEGACY_FIREBASE_ALLOWED = []` + test; app never connects to Firebase | PASS |
+| A-14 | JSON round trip; cloud copy restores a new device; rollback path | backup round trip unit/E2E; device B pulls everything in `e2e/sync`; v5.1-compatible rollback export (unit + E2E) | PASS (emulated cloud) |
+| A-15 | Phone / tablet / laptop / projector, keyboard, reduced motion | `e2e/responsive-a11y` (no overflow at 375/768/1280/1920; axe-core critical+serious = 0; keyboard), reduced-motion E2E | PASS |
+| A-16 | CI actually runs | GitHub Actions runs above | PASS |
+| A-17 | No production deploy / merge / real data without approval | no merge, no Pages change, synthetic data only | PASS |
+| — | v5.1 daily settlement + CSV | `e2e/legacy-v51 › daily settlement snapshot and day CSV` | PASS |
+| — | Visual regression (pixel baseline comparison) | screenshots are produced (CI artifact `e2e-screenshots`) for human review; no automatic pixel diff | NOT_CONFIGURED |
+| — | Real devices (iPad, interactive whiteboard), Safari/WebKit, Firefox | emulated viewports on Chromium (Edge/Chrome) only | NOT_VERIFIED |
+| — | Final illustrated artwork | original placeholder SVGs, labelled in the UI; ledger in `docs/ASSET-LICENSES.md` | NOT_APPLICABLE for this PR |
+
+## What a green run does NOT prove
+- Real Google OAuth / Google Sheets behaviour (quotas, consent screens, `origin_mismatch`, account policies).
+- Safari/WebKit and Firefox behaviour; physical touch devices.
+- Classroom usability and teacher workload — needs a real trial with synthetic data first.

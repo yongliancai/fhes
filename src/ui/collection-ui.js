@@ -52,8 +52,8 @@ export const initCollectionUI = (app) => {
                     h('span', { text: `⬡ 第 ${g} 小隊${dissolved ? '（已解散）' : ''}` }), h('small', { text: `XP ${xp}` }));
             }),
             h('button', { class: 'col-owner class' + (owner.type === 'class' ? ' on' : ''), role: 'tab', 'aria-selected': owner.type === 'class' ? 'true' : 'false', dataset: { owner: 'class' },
-                onclick: () => { owner = { type: 'class', id: c.id }; render(c); } }, h('span', { text: '🏫 全班' }), h('small', { text: `XP ${classXp}` })),
-            h('span', { class: 'spacer' }),
+                onclick: () => { owner = { type: 'class', id: c.id }; render(c); } }, h('span', { text: '🏫 全班' }), h('small', { text: `XP ${classXp}` })));
+        const ownerBar = h('div', { class: 'col-owner-bar' }, chips,
             h('button', { class: 'btn btn-secondary', id: 'col-settings', text: '⚙️ 圖鑑設定', onclick: () => openSettings(c) }));
 
         const ownerId = owner.type === 'class' ? c.id : owner.id;
@@ -77,7 +77,7 @@ export const initCollectionUI = (app) => {
             h('button', { class: 'col-world special' + (world === 'special' ? ' on' : ''), role: 'tab', 'aria-selected': world === 'special' ? 'true' : 'false', dataset: { world: 'special' },
                 onclick: () => { world = 'special'; render(c); } }, '🎖️ 特殊收藏'));
 
-        fill(tab, chips, summary, worldTabs, world === 'special' ? specialView(c, ledger, ownerId) : worldView(c, ledger, ownerId, ms.reached.length, energy));
+        fill(tab, ownerBar, summary, worldTabs, world === 'special' ? specialView(c, ledger, ownerId) : worldView(c, ledger, ownerId, ms.reached.length, energy));
     };
 
     const worldView = (c, ledger, ownerId, decor, energy) => {

@@ -113,6 +113,15 @@ test('homework settings, reward rule (off by default), backup round trip', async
         assert.ok(!opts.includes('國隨'));
         await page.click('#hw-edit-modal .modal-actions .btn-secondary');
         await addAssignment(page, '週記', '第 12 週');
+        // 封存與還原
+        await addAssignment(page, '考卷', '暫時的');
+        await page.locator('.hw-card:has(.hw-title:text-is("暫時的")) .btn', { hasText: '封存' }).click();
+        await page.locator('.hw-card:has(.hw-title:text-is("暫時的"))').waitFor({ state: 'detached' });
+        await page.check('.hw-archived-toggle input');
+        await page.locator('.hw-card.archived:has(.hw-title:text-is("暫時的")) .btn', { hasText: '還原' }).click();
+        await page.locator('.hw-card:not(.archived):has(.hw-title:text-is("暫時的"))').waitFor();   // 等還原後重繪完成
+        await page.click('.hw-archived-toggle input');
+        await page.locator('.hw-archived-toggle').waitFor({ state: 'detached' });                  // 沒有封存的作業 → 切換鈕消失
         // 全部交齊 → 出現全班獎勵按鈕
         await page.locator('.hw-matrix thead input[type=checkbox]').check();
         await page.click('.hw-batch [data-batch="submitted"]');
@@ -125,7 +134,8 @@ test('homework settings, reward rule (off by default), backup round trip', async
         const [dl] = await Promise.all([page.waitForEvent('download'), page.click('#export-data-btn')]);
         const json = JSON.parse(readFileSync(await dl.path(), 'utf8'));
         assert.equal(json.version, 6);
-        assert.equal(json.hwAssignments.length, 1);
+        assert.equal(json.hwAssignments.length, 2);
+        assert.equal(json.hwAssignments.filter(a => a.archived).length, 0, 'restored assignment is active again');
         assert.equal(json.hwEvents.length, 3);
         assert.equal(json.xpEvents.length, 1);
         assert.equal(json.xpEvents[0].source, 'hw-bonus');

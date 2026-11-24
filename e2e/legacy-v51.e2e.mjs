@@ -163,3 +163,39 @@ test('IndexedDB v1 created by v5.1 upgrades in place to v2 without losing data',
         assert.deepEqual(errors, []);
     } finally { await context.close(); }
 });
+
+test('rollback export: "v5.1 相容備份" downloads a version-5.1 file with every score event', async () => {
+    const app = await openApp();
+    const { page } = app;
+    try {
+        await createClass(page, '回退測試班', 2);
+        for (let i = 0; i < 3; i++) await cardOf(page, 1).locator('[data-act="score"]').click();
+        await waitVal(page, 1, 'score', 3);
+        await page.click('#back-to-dashboard-btn');
+        const [dl] = await Promise.all([page.waitForEvent('download'), page.click('#export-v51-btn')]);
+        const json = JSON.parse(readFileSync(await dl.path(), 'utf8'));
+        assert.equal(json.version, 5.1);
+        assert.equal(json.events.length, 3);
+        assert.equal(json.hwEvents, undefined);
+        assert.deepEqual(app.errors, []);
+    } finally { await app.close(); }
+});
+
+test('daily settlement snapshot and day CSV (v5.1 features) still work', async () => {
+    const app = await openApp();
+    const { page } = app;
+    try {
+        await createClass(page, '結算測試班', 2);
+        for (let i = 0; i < 2; i++) await cardOf(page, 1).locator('[data-act="score"]').click();
+        await waitVal(page, 1, 'score', 2);
+        await page.click('.nav-tab[data-tab="history"]');
+        await page.click('#settle-today-btn');
+        await page.waitForFunction(() => /已於/.test(document.getElementById('history-status')?.textContent || ''));
+        const row = await page.locator('#history-summary tbody tr').first().textContent();
+        assert.match(row, /\+2/);
+        const [dl] = await Promise.all([page.waitForEvent('download'), page.click('#history-csv-day')]);
+        const csv = readFileSync(await dl.path(), 'utf8');
+        assert.match(csv, /時段/); assert.match(csv, /記錄人/);
+        assert.deepEqual(app.errors, []);
+    } finally { await app.close(); }
+});

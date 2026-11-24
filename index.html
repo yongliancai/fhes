@@ -433,6 +433,7 @@
                     <button id="reload-cloud-btn" class="btn btn-secondary" title="與雲端同步">🔄 同步</button>
                     <button id="load-data-btn" class="btn btn-secondary">載入備份</button>
                     <button id="export-data-btn" class="btn btn-primary">匯出備份</button>
+                    <button id="export-v51-btn" class="btn btn-secondary" title="只在需要退回舊版 v5.1 時使用：包含加扣分、愛心、歷史；不含作業、XP、圖鑑">⬇ v5.1 相容備份</button>
                 </div>
             </div>
             <div id="class-dashboard-grid"></div>
@@ -705,7 +706,7 @@
         import { uid } from './src/core/ids.js';
         import { isCounted, effDate, byEffTs, applyTo, applyEventToTotals, normalizeEvent } from './src/core/score.js';
         import { SESSIONS, DEFAULT_SESSION_TIMES, ensureClassDefaults, newClassObj as coreNewClassObj, sessionAt } from './src/core/classes.js';
-        import { isV4Data, convertV4 as coreConvertV4, parseBackup as coreParseBackup, buildBackup as coreBuildBackup, BACKUP_TABLES } from './src/core/backup.js';
+        import { isV4Data, convertV4 as coreConvertV4, parseBackup as coreParseBackup, buildBackup as coreBuildBackup, BACKUP_TABLES, buildLegacyV51Backup } from './src/core/backup.js';
         import { registerClassDefaults } from './src/core/classes.js';
         import { fillHomeworkDefaults } from './src/core/homework.js';
         import { fillCollectionDefaults } from './src/core/collection.js';
@@ -2016,6 +2017,11 @@
         });
 
         $('export-data-btn').addEventListener('click', () => exportBackup());
+        $('export-v51-btn').addEventListener('click', () => {
+            if (!confirm('匯出「v5.1 相容備份」？\n只在需要退回舊版 v5.1 時使用。\n包含：班級、學生、加扣分、愛心、每日結算。\n不包含：作業、XP、圖鑑（請另外保留一般的「匯出備份」）。')) return;
+            const now = Date.now();
+            downloadFile(`班級動力站_v5.1相容備份_${stampForFile()}.json`, JSON.stringify(buildLegacyV51Backup({ ...S, dailySnapshots: S.snapshots }, { now, exportedAtLocal: localDateTime(now), meta: { lastSettledDate: S.meta.lastSettledDate || {} } })));
+        });
         $('load-data-btn').addEventListener('click', () => $('file-input').click());
         $('file-input').addEventListener('change', (e) => {
             const file = e.target.files[0]; e.target.value = '';
