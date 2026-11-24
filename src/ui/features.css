@@ -183,3 +183,39 @@ html.reduce-motion #particle-canvas, html.reduce-motion #scan-sweep { display: n
     .reason-grid { grid-template-columns: 1fr; }
     .hw-follow { grid-template-columns: 1fr; }
 }
+
+/* ---------- 登入畫面（方案 A）與帳號 ---------- */
+.auth-gate { display: none; }
+body.locked .auth-gate { display: flex; position: fixed; inset: 0; z-index: 60; align-items: center; justify-content: center; padding: 16px; overflow-y: auto; }
+body.locked .app-screen, body.locked .modal, body.locked .record-overlay, body.locked .mascot-wrap, body.locked .backup-reminder { display: none !important; }
+.auth-card { width: min(440px, 100%); background: rgba(8,18,40,0.92); border: 1px solid var(--panel-border); border-radius: 22px; padding: 28px 24px 18px; text-align: center; box-shadow: 0 0 40px rgba(0,229,255,0.15); margin: auto; }
+.auth-logo { font-size: 3em; line-height: 1; }
+.auth-card h1 { font-size: 1.8em; margin: 8px 0 0; color: var(--text-primary); }
+.auth-sub { font-family: 'Share Tech Mono', monospace; letter-spacing: 0.2em; color: var(--cyan); margin: 2px 0 14px; font-size: 0.85em; }
+.auth-lead { color: var(--text-primary); margin: 0 0 18px; font-size: 1.08em; }
+.gsi-button { display: flex; justify-content: center; min-height: 44px; margin: 0 auto 10px; }
+.auth-status { min-height: 1.4em; margin: 8px 0; font-weight: 700; }
+.auth-status[data-kind="error"] { color: var(--pink); }
+.auth-status[data-kind="warn"] { color: var(--gold); }
+.auth-status[data-kind="info"] { color: var(--cyan); }
+.auth-setup { text-align: left; margin: 12px 0; }
+.auth-setup[hidden] { display: none; }
+.auth-setup label { display: block; font-size: 0.85em; color: var(--text-secondary); margin-bottom: 6px; }
+.auth-setup-row { display: flex; gap: 8px; }
+.auth-setup-row input { flex: 1 1 auto; min-width: 0; }
+.auth-help { text-align: left; color: var(--text-secondary); margin-top: 10px; }
+.auth-help summary { cursor: pointer; color: var(--cyan); min-height: 36px; display: flex; align-items: center; }
+.auth-help li { margin: 4px 0; }
+.auth-credit { margin: 14px 0 0; font-size: 0.8em; color: var(--text-secondary); }
+.account-slot:empty { display: none; }
+.account-chip { display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px 6px 6px; border-radius: 22px; background: rgba(0,0,0,0.3); border: 1px solid var(--panel-border); color: var(--text-primary); font: inherit; font-size: 0.85em; font-weight: 700; cursor: pointer; min-height: 40px; max-width: 260px; }
+.account-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.account-avatar { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; flex: 0 0 28px; border-radius: 50%; background: linear-gradient(135deg, var(--cyan), var(--green)); color: #04131f; font-weight: 900; }
+.account-avatar.big { width: 48px; height: 48px; flex-basis: 48px; font-size: 1.4em; }
+.account-id { display: flex; gap: 14px; align-items: center; margin: 10px 0 16px; text-align: left; }
+.small { font-size: 0.82em; }
+.legacy-banner { margin: 0 0 16px; padding: 10px 14px; border-radius: 12px; border: 1px solid rgba(255,200,0,0.5); background: rgba(255,200,0,0.08); color: var(--gold); font-weight: 700; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+.legacy-banner[hidden] { display: none; }
+.legacy-list { border: 1px solid var(--panel-border); border-radius: 12px; padding: 8px 14px; margin: 10px 0; }
+.legacy-row { display: flex; }
+@media (max-width: 600px) { .account-chip { max-width: 160px; } .auth-card { padding: 22px 16px 14px; } }

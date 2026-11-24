@@ -22,16 +22,24 @@
 | `src/sync/schema.js` | sync | 11 sheets (Classes, Students, ScoreEvents, DailySnapshots, HomeworkAssignments, HomeworkEvents, XPEvents, Catalog, CollectionGrants, Settings, SyncMeta); fixed columns A–G + readable columns |
 | `src/sync/engine.js` | sync | three-way hash sync, row-level push, re-check before update, tombstones, auto-merge of bookkeeping-only diffs, error classification, backoff |
 | `src/sync/sheets-adapter.js` | sync | Google Sheets REST (batchGet/append/batchUpdate/create/addSheet), RAW writes |
-| `src/sync/google-auth.js` | sync | Google Identity Services token model, scope `drive.file`, in-memory token |
+| `src/sync/google-auth.js` | sync | Sheets authorization (GIS token model, `openid drive.file`), bound to the signed-in `sub` via userinfo; in-memory token |
+| `src/auth/id-token.js` | auth (pure) | Google ID token verification (RS256/JWKS, iss, aud/azp, exp/iat/nbf, nonce, sub); `accountKey(sub)`; nonce |
+| `src/auth/google-signin.js` | auth | loads GIS, renders the Sign in with Google button, fetches JWKS (memory only), verifies; 12 h session |
+| `src/config.js` | config | deploy-time public `GOOGLE_CLIENT_ID` (empty in the repo) |
+| `src/core/legacy.js` | core | rules for claiming pre-login data: summary, plan import (selected classes, skip existing), plan undo |
+| `src/ui/auth-ui.js` | ui | login gate, account chip/menu, sign-out/switch/wipe, cross-tab sign-out, session watchdog |
+| `src/ui/legacy-ui.js` | ui | reads the legacy DB without creating it, banner, preview/choose/backup/copy/undo/remove |
 | `src/ui/sync-ui.js` | ui | local store adapter (IndexedDB + `syncState`), status badges, settings dialog, conflicts, scheduler |
 | `src/ui/dom.js` | ui | `h()`/`s()` DOM builders (textContent only), dynamic modals |
 | `src/ui/homework-ui.js` | ui | homework tab: projection-safe stats, teacher matrix, batch, follow-up, history, settings, reward rule |
 | `src/ui/features.css` | ui | styles for v6 features |
 
-Dependency direction: `ui → sync → core/data`. `core`/`data` are pure (no browser globals). Enforced by `scripts/guardrails.mjs`.
+Dependency direction: `ui → sync → auth/core/data`; `auth` depends on nothing else. `core`/`data` are pure (no browser globals). Enforced by `scripts/guardrails.mjs`.
 
 ## Browser storage
-IndexedDB `classroomPowerhouseV5`:
+Since v6.1 every Google account has its own IndexedDB `fhes-acct-<SHA-256(iss|sub)[0..32]>` with the schema below. The old database `classroomPowerhouseV5` belongs to no account: it is only read (never created/upgraded) by `src/ui/legacy-ui.js` for the explicit claim flow (ADR-012). localStorage holds only device preferences and the public OAuth Client ID; sessionStorage holds only a one-shot notice code. No credential is stored anywhere (ADR-011).
+
+Schema (per account DB; same as the old `classroomPowerhouseV5`):
 - v1 stores (v5/v5.1): `classes`, `students`, `events`, `dailySnapshots`, `meta`.
 - v2 stores (v6): `hwAssignments`, `hwEvents`, `xpEvents`, `specialItems`, `grants` (all indexed by `classId`), `syncState` (key → last synced hash/row).
 - Upgrade is additive (`onupgradeneeded` checks `oldVersion`); verified by `e2e/legacy-v51.e2e.mjs › IndexedDB v1 … upgrades in place`.
@@ -59,6 +67,6 @@ In-memory `S` mirrors the stores; totals are recomputed from events.
 
 ## Tests
 - `tests/*.test.mjs` — Node built-in runner, imports production modules directly; synthetic fixtures in `tests/fixtures/` (v4/v5/v5.1 backups with hand-checked expected totals).
-- `e2e/*.e2e.mjs` — playwright-core + system browser against `scripts/serve.mjs`.
+- `e2e/*.e2e.mjs` — playwright-core + system browser against `scripts/serve.mjs`. Every test signs in through `tests/helpers/fake-google.mjs` (fake GIS that really RS256-signs ID tokens with a per-run key, JWKS and userinfo routes); `e2e/auth.e2e.mjs` covers the gate, invalid tokens, isolation, sessions and token leaks.
 - `tests/helpers/sheets-emulator.mjs` — Google Sheets REST emulator with fault injection; used by unit tests (fake fetch) and E2E (network routes for `sheets.googleapis.com` and a fake GIS script). Not shipped.
 - `scripts/guardrails.mjs`, `scripts/lint.mjs`, `scripts/check-inline-js.mjs` — deterministic checks.

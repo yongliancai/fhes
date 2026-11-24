@@ -1,7 +1,7 @@
 {
   "name": "fhes-classroom-powerhouse",
   "private": true,
-  "version": "6.0.0",
+  "version": "6.1.0",
   "type": "module",
   "description": "班級經營動力站：靜態單頁應用（無建置步驟）＋ 品質檢查與測試",
   "scripts": {

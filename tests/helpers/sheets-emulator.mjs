@@ -8,30 +8,34 @@ const parseRange = (range) => {
     return { sheet: m[1], c1: colIndex(m[2]), r1: m[3] ? Number(m[3]) : 1, c2: m[4] ? colIndex(m[4]) : null, r2: m[5] ? Number(m[5]) : null };
 };
 
-export const createSheetsEmulator = ({ validTokens = ['test-token'] } = {}) => {
+// tokenOwner：把 access token 對應到帳號（sub）。有提供時：token 有效 ⇔ 對應得到帳號且未被撤銷；
+// 試算表記錄建立者，其他帳號存取 → 404（drive.file：App 看不到別人的檔案）。
+export const createSheetsEmulator = ({ validTokens = ['test-token'], tokenOwner = null } = {}) => {
     const books = new Map();
     const tokens = new Set(validTokens);
+    const revoked = new Set();
     const faults = [];
-    const writes = [];   // 每次寫入：{ kind: 'append'|'update'|'header'|'create'|'addSheet', sheet, rows }
+    const writes = [];
+    const requests = [];   // 每個通過驗證的請求：{ method, url, owner }   // 每次寫入：{ kind: 'append'|'update'|'header'|'create'|'addSheet', sheet, rows }
     let seq = 0;
 
     const json = (status, body) => ({ status, body });
     const book = (id) => books.get(id);
     const sheetRows = (b, title) => { if (!b.sheets.has(title)) throw Object.assign(new Error('no sheet'), { status: 400, msg: `Unable to parse range: ${title}` }); return b.sheets.get(title); };
 
-    const handleInner = (method, url, body) => {
+    const handleInner = (method, url, body, owner) => {
         const u = new URL(url);
         const path = decodeURIComponent(u.pathname.replace(/^\/v4\/spreadsheets/, ''));
         if (method === 'POST' && path === '') {
             const id = `emu${String(++seq).padStart(4, '0')}abcdefghijklmnopq`;
-            books.set(id, { title: body.properties?.title || 'Untitled', sheets: new Map((body.sheets || []).map(s => [s.properties.title, []])) });
+            books.set(id, { owner, title: body.properties?.title || 'Untitled', sheets: new Map((body.sheets || []).map(s => [s.properties.title, []])) });
             writes.push({ kind: 'create', sheet: '*', rows: 0 });
             return json(200, { spreadsheetId: id, properties: { title: body.properties?.title } });
         }
         const m = path.match(/^\/([^/:]+)(.*)$/);
         const id = m?.[1]; const rest = m?.[2] || '';
         const b = book(id);
-        if (!b) return json(404, { error: { code: 404, message: 'Requested entity was not found.' } });
+        if (!b || (b.owner && owner !== b.owner && !(b.shared || []).includes(owner))) return json(404, { error: { code: 404, message: 'Requested entity was not found.' } });
         if (method === 'GET' && rest === '') return json(200, { properties: { title: b.title }, sheets: [...b.sheets.keys()].map(title => ({ properties: { title } })) });
         if (method === 'POST' && rest === ':batchUpdate') {
             for (const r of body.requests || []) if (r.addSheet) { b.sheets.set(r.addSheet.properties.title, []); writes.push({ kind: 'addSheet', sheet: r.addSheet.properties.title, rows: 0 }); }
@@ -78,9 +82,13 @@ export const createSheetsEmulator = ({ validTokens = ['test-token'] } = {}) => {
         if (fault) { if (--fault.times <= 0) faults.splice(fi, 1); }
         if (fault?.network && !fault.afterApply) throw Object.assign(new TypeError('Failed to fetch'), { network: true });
         if (fault?.status && !fault.afterApply) return json(fault.status, { error: { code: fault.status, message: fault.message || 'injected' } });
-        if (!tokens.has(auth.replace(/^Bearer\s+/, ''))) return json(401, { error: { code: 401, message: 'Request had invalid authentication credentials.' } });
+        const tok = auth.replace(/^Bearer\s+/, '');
+        const owner = tokenOwner ? tokenOwner(tok) : null;
+        const valid = tokenOwner ? (!!owner && !revoked.has(tok)) || tokens.has(tok) : tokens.has(tok);
+        if (!valid) return json(401, { error: { code: 401, message: 'Request had invalid authentication credentials.' } });
+        requests.push({ method, url, owner });
         let res;
-        try { res = handleInner(method, url, body); } catch (e) { res = json(e.status || 500, { error: { code: e.status || 500, message: e.msg || e.message } }); }
+        try { res = handleInner(method, url, body, owner); } catch (e) { res = json(e.status || 500, { error: { code: e.status || 500, message: e.msg || e.message } }); }
         if (fault?.afterApply) { if (fault.network) throw Object.assign(new TypeError('Failed to fetch'), { network: true }); return json(fault.status || 500, { error: { code: fault.status || 500 } }); }
         return res;
     };
@@ -93,11 +101,12 @@ export const createSheetsEmulator = ({ validTokens = ['test-token'] } = {}) => {
     };
 
     return {
-        fetch: fetchFn, handle, books, writes,
+        fetch: fetchFn, handle, books, writes, requests,
         /** 注入錯誤：{ match: RegExp, method, status, network, afterApply, times } */
         fault: (f) => faults.push({ times: 1, ...f }),
         clearFaults: () => { faults.length = 0; },
-        addToken: (t) => tokens.add(t), revokeToken: (t) => tokens.delete(t),
+        addToken: (t) => tokens.add(t), revokeToken: (t) => { tokens.delete(t); revoked.add(t); },
+        share: (id, sub) => { const b = books.get(id); b.shared = [...(b.shared || []), sub]; },
         /** 直接讀某工作表的資料列（第 2 列起） */
         rows: (id, sheet) => (books.get(id)?.sheets.get(sheet) || []).slice(1).filter(r => r && r.length),
         /** 模擬老師在 Google 試算表上手動刪掉某列 */

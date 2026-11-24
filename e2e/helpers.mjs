@@ -1,10 +1,14 @@
 // E2E 共用：啟動靜態伺服器 + 系統瀏覽器（playwright-core，不下載瀏覽器）
 // 本機 Windows 預設 Edge；CI（ubuntu）預設 Chrome。可用 E2E_CHANNEL 覆寫（chrome / msedge / chromium）。
-import { chromium } from 'playwright-core';
+import { chromium, firefox, webkit } from 'playwright-core';
 import { mkdirSync, readFileSync } from 'node:fs';
 import { resolve, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createRequire } from 'node:module';
 import { startServer } from '../scripts/serve.mjs';
+import { createTestKeys, fakeGisScript, subOfAccessToken, TEST_CLIENT_ID, TEACHER_A } from '../tests/helpers/fake-google.mjs';
+export { TEST_CLIENT_ID, TEACHER_A };
+export { TEACHER_B, OTHER_CLIENT_ID } from '../tests/helpers/fake-google.mjs';
 
 export const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 export const OUT = join(ROOT, 'test-results');
@@ -13,14 +17,19 @@ export const fixturePath = (name) => join(ROOT, 'tests', 'fixtures', name);
 export const fixture = (name) => JSON.parse(readFileSync(fixturePath(name), 'utf8'));
 
 const channel = process.env.E2E_CHANNEL || (process.platform === 'win32' ? 'msedge' : 'chrome');
+/** E2E_BROWSER=firefox|webkit：用 playwright 官方建置的 Firefox / WebKit（CI 相容性工作會先安裝） */
+export const ENGINE = process.env.E2E_BROWSER || 'chromium';
 
 let shared = null;
 /** 一個測試檔共用一個瀏覽器與伺服器；每個測試用全新 context（全新 IndexedDB） */
 export const setup = async () => {
     if (shared) return shared;
     const { server, url } = await startServer(0);
-    const browser = await chromium.launch({ channel: channel === 'chromium' ? undefined : channel, headless: process.env.E2E_HEADED !== '1' });
-    shared = { server, url, browser };
+    const headless = process.env.E2E_HEADED !== '1';
+    const browser = ENGINE === 'firefox' ? await firefox.launch({ headless })
+        : ENGINE === 'webkit' ? await webkit.launch({ headless })
+            : await chromium.launch({ channel: channel === 'chromium' ? undefined : channel, headless });
+    shared = { server, url, browser, keys: await createTestKeys() };
     return shared;
 };
 export const teardown = async () => {
@@ -28,30 +37,82 @@ export const teardown = async () => {
     await shared.browser.close(); shared.server.close(); shared = null;
 };
 
+/** 假 Google：GIS 程式庫、JWKS、userinfo（每個 context 都要接；外部網路其他一律擋掉） */
+export const wireFakeGoogle = async (context) => {
+    const { keys } = await setup();
+    const revoked = [];   // Google 撤銷端點收到的 token（測試登出／換帳號是否真的撤銷授權）
+    await context.route('https://oauth2.googleapis.com/revoke', async (r) => {
+        revoked.push(decodeURIComponent(String(r.request().postData() || '').replace(/^token=/, '')));
+        await r.fulfill({ status: 200, contentType: 'application/json', body: '{}' });
+    });
+    await context.route('https://accounts.google.com/gsi/client', r => r.fulfill({ status: 200, contentType: 'text/javascript', body: fakeGisScript(keys) }));
+    await context.route('https://www.googleapis.com/oauth2/v3/certs', r => r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(keys.jwks) }));
+    await context.route('https://openidconnect.googleapis.com/v1/userinfo', async (r) => {
+        const sub = subOfAccessToken(((await r.request().allHeaders()).authorization || '').replace(/^Bearer\s+/, ''));
+        await r.fulfill(sub ? { status: 200, contentType: 'application/json', body: JSON.stringify({ sub }) } : { status: 401, body: '{}' });
+    });
+    return { revoked };
+};
+/** Google 試算表 API → 模擬器（網路層） */
+export const wireSheets = async (context, emu) => {
+    await context.route('https://sheets.googleapis.com/**', async (r) => {
+        const req = r.request();
+        let res;
+        try { res = emu.handle(req.method(), req.url(), req.postData() ? JSON.parse(req.postData()) : undefined, await req.allHeaders()); }
+        catch { await r.abort('failed'); return; }
+        await r.fulfill({ status: res.status, contentType: 'application/json', body: JSON.stringify(res.body) });
+    });
+};
+
+/** 在登入畫面按（假）Google 登入按鈕。mode='ok' 時等到進入主畫面 */
+export const signIn = async (page, account = TEACHER_A, mode = 'ok') => {
+    await page.waitForSelector('#fake-gsi-btn', { timeout: 10000 });
+    await page.evaluate(([a, m]) => { Object.assign(window.__fakeGoogle, { account: a, mode: m }); }, [account, mode]);
+    await page.click('#fake-gsi-btn');
+    if (mode === 'ok') await page.waitForSelector('#add-class-card', { timeout: 10000 });
+};
+
+/** 重新整理後一定回到登入畫面（方案 A）；再用同一個帳號登入 */
+export const reloadAndSignIn = async (page, account = TEACHER_A) => {
+    await page.reload();
+    await page.waitForSelector('#auth-gate', { state: 'visible' });
+    await signIn(page, account);
+};
+
 /**
  * 開新頁面：自動接受 confirm/alert，回答 prompt（依佇列），收集 console error / pageerror。
- * opts.viewport、opts.reducedMotion、opts.query
+ * opts.viewport、opts.reducedMotion、opts.query、opts.emu（Sheets 模擬器）
+ * opts.signIn（預設 true：以合成老師帳號登入）、opts.account、opts.clientId（null = 不預設 Client ID）
  */
 export const openApp = async (opts = {}) => {
     const { url, browser } = await setup();
     const context = await browser.newContext({ acceptDownloads: true, viewport: opts.viewport || { width: 1280, height: 800 },
         reducedMotion: opts.reducedMotion || 'no-preference', locale: 'zh-TW', timezoneId: 'Asia/Taipei', ...(opts.context || {}) });
-    // 字型來自 Google Fonts；測試環境擋掉外部網路，避免不穩定（字型缺少不影響功能）
+    // 外部網路一律擋掉（字型等）；Google 相關端點由假 Google／模擬器回應
     await context.route(/^https?:\/\/(?!127\.0\.0\.1)/, r => r.abort());
+    const { revoked } = await wireFakeGoogle(context);
+    if (opts.emu) await wireSheets(context, opts.emu);
+    const clientId = opts.clientId === undefined ? TEST_CLIENT_ID : opts.clientId;
+    if (clientId) await context.addInitScript((cid) => { try { if (!localStorage.getItem('fhes_google_client_id')) localStorage.setItem('fhes_google_client_id', cid); } catch { /* ignore */ } }, clientId);
     const page = await context.newPage();
     const errors = [];
     const prompts = [];
+    const consoleAll = [];
     page.on('pageerror', e => errors.push(`pageerror: ${e.message}`));
-    page.on('console', m => { if (m.type() === 'error' && !/ERR_FAILED|net::|Failed to load resource/.test(m.text())) errors.push(`console: ${m.text()}`); });
+    page.on('console', m => { consoleAll.push(m.text()); if (m.type() === 'error' && !/ERR_FAILED|net::|Failed to load resource/.test(m.text())) errors.push(`console: ${m.text()}`); });
+    const dialogs = [];
     page.on('dialog', async d => {
+        dialogs.push(d.message());
         if (d.type() === 'prompt') { const v = prompts.shift(); if (v === null) await d.dismiss(); else await d.accept(v ?? ''); }
         else await d.accept();
     });
     await page.goto(url + (opts.query || ''));
-    // 等到 App 真的跑起來（「新增班級」卡片由模組腳本產生）；腳本壞掉時立即失敗並附上錯誤
-    try { await page.waitForSelector('#add-class-card', { timeout: 10000 }); }
-    catch { throw new Error(`App did not start: ${errors.join(' | ') || 'no page error captured'}`); }
-    return { page, context, errors, prompts, close: () => context.close() };
+    if (opts.signIn !== false) {
+        // 等到 App 真的跑起來（「新增班級」卡片由模組腳本產生）；腳本壞掉時立即失敗並附上錯誤
+        try { await signIn(page, opts.account || TEACHER_A); }
+        catch { throw new Error(`App did not start: ${errors.join(' | ') || 'no page error captured'}`); }
+    } else await page.waitForSelector('#auth-gate', { timeout: 10000 });
+    return { page, context, errors, prompts, consoleAll, dialogs, url, revoked, close: () => context.close() };
 };
 
 export const shot = (page, name) => page.screenshot({ path: join(OUT, `${name}.png`), fullPage: false });
@@ -92,3 +153,29 @@ export const strayNullTexts = (page) => page.evaluate(() => {
     while (w.nextNode()) if (w.currentNode.nodeValue.trim() === 'null') out.push(w.currentNode.parentElement?.closest('[id]')?.id || w.currentNode.parentElement?.tagName);
     return out;
 });
+
+const AXE = readFileSync(createRequire(import.meta.url).resolve('axe-core/axe.min.js'), 'utf8');
+/** 頁面水平溢出：回傳超出視窗寬度的可見元素（最多 5 個） */
+export const overflow = (page) => page.evaluate(() => {
+    const W = document.documentElement.clientWidth; const out = [];
+    if (document.documentElement.scrollWidth > W + 1) out.push(`document ${document.documentElement.scrollWidth}>${W}`);
+    for (const el of document.querySelectorAll('body *')) {
+        const r = el.getBoundingClientRect();
+        if (!r.width || getComputedStyle(el).visibility === 'hidden') continue;
+        if (el.closest('.table-wrap, .hw-matrix-wrap, .modal:not(.visible), #fx-layer, #confetti-container, canvas, .col-scene, svg')) continue;
+        // 固定定位的提示（徽章 toast、通知）平常停在畫面外等待滑入，不會造成頁面捲動
+        let fixed = false; for (let a = el; a && a !== document.body; a = a.parentElement) if (getComputedStyle(a).position === 'fixed' && !a.classList.contains('modal')) { fixed = true; break; }
+        if (fixed) continue;
+        if (r.right > W + 1) out.push(`${el.tagName.toLowerCase()}${el.id ? '#' + el.id : ''}.${[...el.classList].join('.')} right=${Math.round(r.right)}`);
+        if (out.length >= 5) break;
+    }
+    return out;
+});
+export const axe = async (page, include) => {
+    await page.addScriptTag({ content: AXE });
+    return page.evaluate(async (inc) => {
+        const r = await window.axe.run(inc ? { include: [inc] } : document, { resultTypes: ['violations'], rules: { 'color-contrast': { enabled: true } } });
+        return r.violations.filter(v => ['critical', 'serious'].includes(v.impact)).map(v => ({ id: v.id, impact: v.impact, n: v.nodes.length, sample: v.nodes[0]?.target?.join(' ') }));
+    }, include || null);
+};
+

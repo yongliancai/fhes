@@ -53,6 +53,8 @@ export const createSheetsAdapter = ({ spreadsheetId, getToken, fetchFn = globalT
 
     return {
         spreadsheetId,
+        /** 只讀取試算表名稱，確認目前帳號有存取權（403/404 → 丟錯，不寫入任何東西） */
+        async probe() { return req('GET', `${base}?fields=${encodeURIComponent('properties.title')}`); },
         /** 缺少的工作表補建；標題列不對就寫入第 1 列（不碰資料列） */
         async ensureSchema(tables = SYNC_TABLES) {
             if (ensured) return;

@@ -27,6 +27,13 @@ Status words follow the Code Factory guide strictly: **PASS** = actually execute
 | 2026-11-24 | P6 final | `npm run verify` | Windows 11, Node 22.23.1 | PASS — syntax + imports, guardrails (55 files), ESLint (40 files), 94/94 unit, exit 0 |
 | 2026-11-24 | P6 final | `npm run test:e2e` | Edge | PASS 23/23, exit 0 |
 | 2026-11-24 | P6 final | `E2E_CHANNEL=chrome npm run test:e2e` | Chrome | PASS 23/23, exit 0 (independent second run, different browser) |
+| 2026-11-25 | v6.1 baseline | `npm ci` / `npm run verify` / `npm run test:e2e` (before sign-in work, @ f9693d3) | Windows 11 / Edge | PASS — 94/94 unit, 23/23 E2E |
+| 2026-11-25 | v6.1 | first full E2E after adding the login gate | Edge | 37/39 — collection & homework persistence steps reloaded and expected the dashboard without signing in (expected under 方案 A); tests now `reloadAndSignIn()` → PASS |
+| 2026-11-25 | v6.1 | `e2e/auth` during development | Edge | found BUG-008 (offline sign-out → browser error page); session-expiry flake traced to `clock.fastForward` (harness note) |
+| 2026-11-25 | v6.1 | mutation testing (7 mutants on the security checks, script restores each file) | Node + Edge | M1 signature check removed → KILLED (unit 3 + E2E); M2 audience check removed → KILLED; M3 Sheets `sub` match removed → KILLED; M4 one shared DB for all accounts → KILLED; M5 no in-place wipe on sign-out → KILLED; M7 `SYNC.stop()` no-op → first SURVIVED (TEST-GAP-001), revoke assertion added → KILLED; M6 only the redundant `stopped` flag removed → SURVIVED (documented redundancy) |
+| 2026-11-25 | v6.1 final | `npm run verify` | Windows 11, Node 22.23.1 | PASS — syntax + imports, guardrails, ESLint, 113/113 unit (94 + 19 auth), exit 0 |
+| 2026-11-25 | v6.1 final | `npm run test:e2e` | Edge | PASS 39/39, exit 0 |
+| 2026-11-25 | v6.1 final | `E2E_CHANNEL=chrome npm run test:e2e` | Chrome | PASS 39/39, exit 0 (independent second run) |
 | CI | every push | GitHub Actions `Quality (no deployment)`: `verify` + `e2e` (ubuntu, Chrome) | ubuntu-latest, Node 22 | green for P2 (feff057), P3 (4b6bb42), P4 (853a880); later runs are listed in Draft PR #1 |
 
 ## Acceptance matrix
@@ -49,6 +56,21 @@ Status words follow the Code Factory guide strictly: **PASS** = actually execute
 | A-15 | Phone / tablet / laptop / projector, keyboard, reduced motion | `e2e/responsive-a11y` (no overflow at 375/768/1280/1920; axe-core critical+serious = 0; keyboard), reduced-motion E2E | PASS |
 | A-16 | CI actually runs | GitHub Actions runs above | PASS |
 | A-17 | No production deploy / merge / real data without approval | no merge, no Pages change, synthetic data only | PASS |
+| A-18 | Not signed in → no system access, no account DB, nothing rendered; reload/deep link never bypass | `e2e/auth › not signed in…`, `› account isolation…` (reload + `#class-view` deep link) | PASS (emulated Google) |
+| A-19 | Successful sign-in opens the correct account's data area | `e2e/auth` (DB per account, name has no sub/email), unit `accountKey` | PASS (emulated) |
+| A-20 | Cancelled sign-in does not unlock | `e2e/auth › cancelled sign-in…` | PASS (emulated) |
+| A-21 | Invalid / expired / wrong-audience / wrong-issuer / forged / replayed / alg-none / no-sub ID tokens never unlock | unit `tests/auth.test.mjs` (12 negative cases, real RS256 signatures) + E2E (7 modes in the browser) | PASS |
+| A-22 | Signature, issuer, audience, expiry verified (no backend: verified in the browser against JWKS; ADR-011) | unit + mutation (signature check removed → tests fail) | PASS · server-side verification: NOT_APPLICABLE (no backend by design, see ADR-011) |
+| A-23 | Sheets consent denied / scope missing → local data intact | `e2e/sync › Sheets authorization…`, unit | PASS (emulated) |
+| A-24 | Sheets authorization for a different account than the signed-in one is blocked (token revoked) | unit + E2E + mutation | PASS (emulated) |
+| A-25 | After A signs out, B sees none of A's data; switching leaves no trace of A on the page | `e2e/auth › account isolation…` | PASS (emulated) |
+| A-26 | A's offline queue never reaches B's spreadsheet; it reaches A's sheet when A returns | `e2e/auth › A offline queue…` (request log per account) | PASS (emulated) |
+| A-27 | Shared browser (other tab), offline reopen, 12 h session expiry, wipe-on-sign-out | `e2e/auth` (4 tests) | PASS (emulated) |
+| A-28 | Legacy v4 / v5.1 / early-v6 data not lost and never auto-assigned | `e2e/legacy-v51` (v5.1 IndexedDB claim + undo, v4 cache claim), unit `planLegacyImport/Undo` | PASS |
+| A-29 | No credential in localStorage, sessionStorage, IndexedDB, cookies, URL, console, backup or sheet | `e2e/auth › no credential ever lands…` + guardrails (persist/log/decode-only) with negative tests | PASS (emulated tokens) |
+| A-30 | Login screen + account dialog: 4 viewports, axe critical/serious = 0, keyboard sign-in | `e2e/auth` (4 viewport tests + keyboard) | PASS |
+| A-31 | Firefox / WebKit (Safari engine) | CI job `e2e-compat` (playwright builds) — see evidence log | see evidence log |
+| A-32 | Real Google sign-in + Sheets with a real account | needs a real OAuth Client ID and approval | **BLOCKED** |
 | — | v5.1 daily settlement + CSV | `e2e/legacy-v51 › daily settlement snapshot and day CSV` | PASS |
 | — | Visual regression (pixel baseline comparison) | screenshots are produced (CI artifact `e2e-screenshots`) for human review; no automatic pixel diff | NOT_CONFIGURED |
 | — | Real devices (iPad, interactive whiteboard), Safari/WebKit, Firefox | emulated viewports on Chromium (Edge/Chrome) only | NOT_VERIFIED |
@@ -56,5 +78,7 @@ Status words follow the Code Factory guide strictly: **PASS** = actually execute
 
 ## What a green run does NOT prove
 - Real Google OAuth / Google Sheets behaviour (quotas, consent screens, `origin_mismatch`, account policies).
+- Real "Sign in with Google": FedCM / popup behaviour, real JWKS rotation, Workspace admin policies, third-party-cookie settings per browser. All sign-in tests use a fake GIS library that signs tokens with a per-run test key.
+- That local data is protected from someone with DevTools on the same browser profile — it is not (ADR-011, `docs/AUTH-SECURITY.md`).
 - Safari/WebKit and Firefox behaviour; physical touch devices.
 - Classroom usability and teacher workload — needs a real trial with synthetic data first.

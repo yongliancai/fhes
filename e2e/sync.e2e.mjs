@@ -2,26 +2,14 @@
 // 兩個瀏覽器 context = 兩台裝置（各自的 IndexedDB）。這不是真實 Google 帳號測試（見 docs/VERIFICATION：真實 OAuth = BLOCKED）。
 import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
-import { openApp, teardown, createClass, cardOf, waitVal, shot } from './helpers.mjs';
+import { openApp, teardown, createClass, cardOf, waitVal, shot, TEACHER_A, TEACHER_B } from './helpers.mjs';
+import { subOfAccessToken } from '../tests/helpers/fake-google.mjs';
 import { strayNullTexts } from './helpers.mjs';
 import { createSheetsEmulator } from '../tests/helpers/sheets-emulator.mjs';
 
 after(teardown);
-const CLIENT_ID = '1234567890-testclientabc.apps.googleusercontent.com';
-const FAKE_GIS = `window.google = { accounts: { oauth2: {
-  initTokenClient: (o) => ({ requestAccessToken: () => setTimeout(() => window.__denyScope ? o.callback({ error: 'access_denied' }) : o.callback({ access_token: window.__fakeToken || 'test-token', expires_in: window.__fakeExpires || 3600, scope: o.scope }), 20) }),
-  hasGrantedAllScopes: () => true, revoke: (t, cb) => cb && cb() } } };`;
-
-const wireGoogle = async (context, emu) => {
-    await context.route('https://accounts.google.com/gsi/client', r => r.fulfill({ status: 200, contentType: 'text/javascript', body: FAKE_GIS }));
-    await context.route('https://sheets.googleapis.com/**', async (r) => {
-        const req = r.request();
-        let res;
-        try { res = emu.handle(req.method(), req.url(), req.postData() ? JSON.parse(req.postData()) : undefined, await req.allHeaders()); }
-        catch { await r.abort('failed'); return; }
-        await r.fulfill({ status: res.status, contentType: 'application/json', body: JSON.stringify(res.body) });
-    });
-};
+const A_TOKEN1 = `at.${TEACHER_A.sub}.1`;
+const newEmu = () => createSheetsEmulator({ validTokens: [], tokenOwner: subOfAccessToken });
 const openSync = async (page) => {
     const inClass = await page.evaluate(() => document.getElementById('class-view').classList.contains('active'));
     await page.click(inClass ? '#class-sync-badge' : '#db-status-badge');
@@ -32,9 +20,8 @@ const badge = (page) => page.textContent('#db-status-text');
 const waitBadge = (page, re, timeout = 15000) => page.waitForFunction((src) => new RegExp(src).test(document.getElementById('db-status-text')?.textContent || ''), re.source, { timeout });
 
 test('two devices sync through Google Sheets: setup, join, offline queue, token expiry, conflict resolution', async () => {
-    const emu = createSheetsEmulator();
-    const A = await openApp(); const B = await openApp();
-    await wireGoogle(A.context, emu); await wireGoogle(B.context, emu);
+    const emu = newEmu();
+    const A = await openApp({ emu }); const B = await openApp({ emu });   // 同一位老師（帳號 A）的兩台裝置
     try {
         // ---- 裝置 A：建立資料、連線、建立試算表
         await createClass(A.page, '同步測試班', 3);
@@ -43,7 +30,7 @@ test('two devices sync through Google Sheets: setup, join, offline queue, token 
         await A.page.click('#back-to-dashboard-btn');
         assert.match(await badge(A.page), /僅存本機/);
         await openSync(A.page);
-        await A.page.fill('#sync-client-id', CLIENT_ID);
+        assert.match(await A.page.textContent('#sync-account'), /teacher\.a@example\.test/);
         await A.page.click('#sync-connect');
         await A.page.waitForFunction(() => !document.getElementById('sync-create')?.disabled);
         await A.page.click('#sync-create');
@@ -54,11 +41,10 @@ test('two devices sync through Google Sheets: setup, join, offline queue, token 
         const [sheetId] = [...emu.books.keys()];
         assert.equal(emu.rows(sheetId, 'Students').length, 3);
         assert.equal(emu.rows(sheetId, 'ScoreEvents').length, 2);
-        assert.ok(emu.rows(sheetId, 'Students').every(r => !/test-token/.test(JSON.stringify(r))), 'no token stored in the sheet');
+        assert.ok(emu.rows(sheetId, 'Students').every(r => !/at\./.test(JSON.stringify(r))), 'no token stored in the sheet');
 
         // ---- 裝置 B：全新瀏覽器，貼上同一份試算表
         await openSync(B.page);
-        await B.page.fill('#sync-client-id', CLIENT_ID);
         await B.page.click('#sync-connect');
         await B.page.waitForFunction(() => !document.getElementById('sync-create')?.disabled);
         await B.page.fill('#sync-sheet-id', `https://docs.google.com/spreadsheets/d/${sheetId}/edit#gid=0`);
@@ -86,11 +72,11 @@ test('two devices sync through Google Sheets: setup, join, offline queue, token 
         assert.equal(await waitVal(B.page, 2, 'score', 1), 1);
 
         // ---- 授權過期：Google 拒絕舊 token → 顯示需要重新連線，修改保留；重新連線後同步
-        emu.revokeToken('test-token'); emu.addToken('token-2');
+        emu.revokeToken(A_TOKEN1);
         await cardOf(A.page, 3).locator('[data-act="score"]').click();
         await waitBadge(A.page, /重新連線|授權/);
         assert.equal(emu.rows(sheetId, 'ScoreEvents').length, 3);
-        await A.page.evaluate(() => { window.__fakeToken = 'token-2'; });
+        await A.page.evaluate(() => { window.__fakeGoogle.tokenGen = 2; });
         await openSync(A.page);
         await A.page.click('#sync-connect');
         await A.page.waitForFunction(() => /已同步/.test(document.getElementById('db-status-text')?.textContent || ''), null, { timeout: 15000 });
@@ -98,7 +84,7 @@ test('two devices sync through Google Sheets: setup, join, offline queue, token 
         assert.equal(emu.rows(sheetId, 'ScoreEvents').length, 4, 'queued change uploaded after re-auth');
 
         // ---- 衝突：兩台都改 1 號的名字
-        await B.page.evaluate(() => { window.__fakeToken = 'token-2'; });
+        await B.page.evaluate(() => { window.__fakeGoogle.tokenGen = 2; });
         await openSync(B.page); await B.page.click('#sync-connect'); await waitBadge(B.page, /已同步/); await closeSync(B.page);
         const rename = async (page, name) => {
             await cardOf(page, 1).locator('.name-text').click();
@@ -126,20 +112,60 @@ test('two devices sync through Google Sheets: setup, join, offline queue, token 
     } finally { await A.close(); await B.close(); }
 });
 
-test('wrong client id format and denied consent are handled without breaking the app', async () => {
-    const emu = createSheetsEmulator();
-    const A = await openApp();
-    await wireGoogle(A.context, emu);
+test('Sheets authorization: denied consent, missing file scope and a different Google account are refused without touching local data', async () => {
+    const emu = newEmu();
+    const A = await openApp({ emu });
     try {
+        await createClass(A.page, '授權測試班', 3);
+        await cardOf(A.page, 1).locator('[data-act="score"]').click();
+        await waitVal(A.page, 1, 'score', 1);
+        await A.page.click('#back-to-dashboard-btn');
         await openSync(A.page);
-        await A.page.fill('#sync-client-id', 'my-secret-password');
-        await A.page.click('#sync-connect');                // alert 被自動接受
-        assert.equal(emu.books.size, 0);
-        await A.page.fill('#sync-client-id', CLIENT_ID);
-        await A.page.evaluate(() => { window.__denyScope = true; });
+        // 1) 拒絕授權
+        await A.page.evaluate(() => { window.__fakeGoogle.denyScope = true; });
         await A.page.click('#sync-connect');
         await A.page.waitForFunction(() => /拒絕/.test(document.getElementById('sync-modal')?.textContent || ''));
         assert.equal(await A.page.isDisabled('#sync-create'), true);
+        // 2) 沒勾選檔案存取權限 → 拒絕並撤銷 token
+        await A.page.evaluate(() => { window.__fakeGoogle.denyScope = false; window.__fakeGoogle.noDriveScope = true; });
+        await A.page.click('#sync-connect');
+        await A.page.waitForFunction(() => /檔案存取/.test(document.getElementById('sync-modal')?.textContent || ''));
+        assert.equal(await A.page.isDisabled('#sync-create'), true);
+        // 3) 授權視窗選了另一個帳號（B）→ 帳號不符：拒絕、撤銷 token、不能建立試算表
+        await A.page.evaluate((b) => { window.__fakeGoogle.noDriveScope = false; window.__fakeGoogle.oauthAccount = b; }, TEACHER_B);
+        await A.page.click('#sync-connect');
+        await A.page.waitForFunction(() => /帳號與目前登入的帳號不同/.test(document.getElementById('sync-modal')?.textContent || ''));
+        assert.equal(await A.page.isDisabled('#sync-create'), true);
+        const fg = await A.page.evaluate(() => ({ revoked: window.__fakeGoogle.revoked || [], hint: window.__fakeGoogle.lastHint }));
+        assert.ok(fg.revoked.includes(`at.${TEACHER_B.sub}.1`), 'mismatched token is revoked');
+        assert.equal(fg.hint, TEACHER_A.email, 'the consent window is pre-selected with the signed-in account');
+        assert.equal(emu.books.size, 0, 'nothing was created in any spreadsheet');
+        assert.equal(emu.requests.length, 0, 'no Sheets request was made with a refused token');
+        // 本機資料完好
+        await A.page.keyboard.press('Escape');
+        await A.page.click('.class-card:has(h3:text-is("授權測試班"))');
+        assert.equal(await waitVal(A.page, 1, 'score', 1), 1);
         assert.deepEqual(A.errors, []);
     } finally { await A.close(); }
+});
+
+test('a spreadsheet the signed-in account cannot access is refused (no fallback to another sheet)', async () => {
+    const emu = newEmu();
+    const A = await openApp({ emu });
+    const B = await openApp({ emu, account: TEACHER_B });
+    try {
+        await openSync(A.page); await A.page.click('#sync-connect');
+        await A.page.waitForFunction(() => !document.getElementById('sync-create')?.disabled);
+        await A.page.click('#sync-create'); await A.page.waitForSelector('#sync-sheet-link');
+        const [sheetA] = [...emu.books.keys()];
+        await openSync(B.page); await B.page.click('#sync-connect');
+        await B.page.waitForFunction(() => !document.getElementById('sync-create')?.disabled);
+        await B.page.fill('#sync-sheet-id', sheetA);
+        await B.page.click('#sync-use');
+        await B.page.waitForFunction(() => /無法存取這份試算表/.test(document.getElementById('sync-modal')?.textContent || ''));
+        assert.equal(await B.page.locator('#sync-sheet-link').count(), 0, 'B keeps no spreadsheet configured');
+        assert.equal(emu.books.size, 1, 'no replacement spreadsheet created');
+        assert.ok(emu.requests.filter(r => r.owner === TEACHER_B.sub).every(r => r.method === 'GET'), 'B never wrote anything');
+        assert.deepEqual(A.errors, []); assert.deepEqual(B.errors, []);
+    } finally { await A.close(); await B.close(); }
 });

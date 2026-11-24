@@ -384,8 +384,36 @@
 </style>
 <link rel="stylesheet" href="src/ui/features.css">
 </head>
-<body>
+<body class="locked">
     <canvas id="particle-canvas"></canvas>
+    <!-- 登入畫面（方案 A）：驗證 Google 登入之前，不開啟任何帳號資料庫、不渲染任何班級資料 -->
+    <main id="auth-gate" class="auth-gate" aria-labelledby="auth-title">
+        <div class="auth-card">
+            <div class="auth-logo" aria-hidden="true">🚀</div>
+            <h1 id="auth-title">班級經營動力站</h1>
+            <p class="auth-sub">CLASS COMMAND CENTER</p>
+            <p class="auth-lead">請用老師的 Google 帳號登入，才能進入班級資料。</p>
+            <div id="gsi-button" class="gsi-button"></div>
+            <p id="auth-status" class="auth-status" role="status" aria-live="polite"></p>
+            <div id="auth-setup" class="auth-setup">
+                <label for="auth-client-id">OAuth Client ID（公開識別碼，不是密碼；由管理者提供，設定方式見說明文件）</label>
+                <div class="auth-setup-row">
+                    <input id="auth-client-id" type="text" autocomplete="off" spellcheck="false" placeholder="1234567890-xxxx.apps.googleusercontent.com">
+                    <button id="auth-client-save" class="btn btn-secondary" type="button">儲存</button>
+                </div>
+            </div>
+            <details class="auth-help">
+                <summary>登入說明與隱私</summary>
+                <ul>
+                    <li>每個 Google 帳號在這台電腦有自己的資料區，彼此看不到。</li>
+                    <li>系統只取得你的帳號識別碼、名稱與 Email，用來分開資料；不會讀取你的 Gmail 或雲端硬碟其他檔案。</li>
+                    <li>共用電腦用完請按右上角帳號 →「登出」。</li>
+                    <li>登入需要網路；登入後短暫斷線仍可繼續使用，恢復後自動同步。</li>
+                </ul>
+            </details>
+            <p class="auth-credit">設計：永濂老師</p>
+        </div>
+    </main>
     <div id="scanlines"></div>
     <div id="scan-sweep"></div>
     <div id="screen-flash" class="screen-flash"></div>
@@ -418,7 +446,7 @@
     </div>
     <div class="version-tag" id="version-tag">v5.1</div>
 
-    <div id="class-dashboard" class="app-screen active">
+    <div id="class-dashboard" class="app-screen">
         <div class="container">
             <div class="header">
                 <div class="title-block">
@@ -426,6 +454,7 @@
                     <div class="credit-pill">設計：永濂老師</div>
                 </div>
                 <div class="header-actions">
+                    <span id="account-slot" class="account-slot"></span>
                     <button id="db-status-badge" class="db-status" title="雲端同步設定（Google 試算表，選用）">
                         <span class="db-dot" id="db-dot"></span>
                         <span id="db-status-text">僅存本機</span>
@@ -436,6 +465,7 @@
                     <button id="export-v51-btn" class="btn btn-secondary" title="只在需要退回舊版 v5.1 時使用：包含加扣分、愛心、歷史；不含作業、XP、圖鑑">⬇ v5.1 相容備份</button>
                 </div>
             </div>
+            <div id="legacy-banner" class="legacy-banner" role="status" hidden></div>
             <div id="class-dashboard-grid"></div>
         </div>
     </div>
@@ -706,7 +736,7 @@
         import { uid } from './src/core/ids.js';
         import { isCounted, effDate, byEffTs, applyTo, applyEventToTotals, normalizeEvent } from './src/core/score.js';
         import { SESSIONS, DEFAULT_SESSION_TIMES, ensureClassDefaults, newClassObj as coreNewClassObj, sessionAt } from './src/core/classes.js';
-        import { isV4Data, convertV4 as coreConvertV4, parseBackup as coreParseBackup, buildBackup as coreBuildBackup, BACKUP_TABLES, buildLegacyV51Backup } from './src/core/backup.js';
+        import { convertV4 as coreConvertV4, parseBackup as coreParseBackup, buildBackup as coreBuildBackup, BACKUP_TABLES, buildLegacyV51Backup } from './src/core/backup.js';
         import { registerClassDefaults } from './src/core/classes.js';
         import { fillHomeworkDefaults } from './src/core/homework.js';
         import { fillCollectionDefaults } from './src/core/collection.js';
@@ -715,8 +745,11 @@
         import { initSyncUI } from './src/ui/sync-ui.js';
         import { $, h } from './src/ui/dom.js';
         import { initHomeworkUI } from './src/ui/homework-ui.js';
+        import { waitForSignIn, initAccountUI } from './src/ui/auth-ui.js';
+        import { initLegacyUI } from './src/ui/legacy-ui.js';
+        import { accountKey } from './src/auth/id-token.js';
 
-        const APP_VERSION = 'v6.0';
+        const APP_VERSION = 'v6.1';
         const DATA_VERSION = 6;
         registerClassDefaults(fillHomeworkDefaults);
         registerClassDefaults(fillCollectionDefaults);
@@ -739,7 +772,10 @@
         };
 
         // ---------- IndexedDB ----------
-        const DB_NAME = 'classroomPowerhouseV5';
+        // 帳號分區（ADR-012）：每個 Google 帳號一個資料庫「fhes-acct-<SHA-256(sub) 前 32 碼>」。
+        // 舊的「classroomPowerhouseV5」不屬於任何帳號，只透過 src/ui/legacy-ui.js 的轉移流程讀取，絕不自動指定給登入帳號。
+        let DB_NAME = null;
+        const accountDbName = (key) => `fhes-acct-${key}`;
         // v1（v5/v5.1）：classes, students, events, dailySnapshots, meta
         // v2（v6）：作業 hwAssignments / hwEvents、XP xpEvents、圖鑑 specialItems / grants、同步狀態 syncState
         const DB_VERSION = 2;
@@ -748,6 +784,7 @@
         const S_KEY = (t) => t === 'dailySnapshots' ? 'snapshots' : t;
         let idb = null;
         const openDB = () => new Promise((resolve, reject) => {
+            if (!DB_NAME) { reject(new Error('尚未登入：不開啟任何資料庫')); return; }
             const r = indexedDB.open(DB_NAME, DB_VERSION);
             r.onupgradeneeded = (ev) => {
                 const d = r.result; const old = ev.oldVersion;
@@ -852,26 +889,9 @@
         const setMeta = async (key, value) => { S.meta[key] = value; await dbWrite({ meta: [{ key, value }] }); };
 
         // ---------- v4 轉換 ----------
-        const LS_V4_KEY = 'classroomPowerhouse_cache_v4';
-        /** v4 的 allClasses 陣列 → v5 { classes, students, events }（規則在 src/core/backup.js） */
+        /** v4 的 allClasses 陣列 → v5 { classes, students, events }（規則在 src/core/backup.js）。
+         *  v6.1 起不再「自動」把 v4 快取轉進資料庫：它不屬於任何帳號，改由舊資料轉移流程讓老師選擇（ADR-012）。 */
         const convertV4 = (arr) => { const now = Date.now(); return coreConvertV4(arr, { uid, now, today: localDate(now), newClassObj: coreNewClassObj }); };
-
-        /** 第一次開啟 v5：從 localStorage 的 v4 快取升級 */
-        const migrateFromV4IfNeeded = async () => {
-            if (S.meta.dataVersion) return;
-            const raw = localStorage.getItem(LS_V4_KEY);
-            let arr = null;
-            if (raw) { try { arr = JSON.parse(raw); } catch { arr = null; } }
-            if (arr && isV4Data(arr) && arr.length) {
-                downloadFile(`班級動力站_v4原始備份_${stampForFile()}.json`, raw);
-                const conv = convertV4(arr);
-                await dbWrite({ classes: conv.classes, students: conv.students, events: conv.events });
-                S.classes.push(...conv.classes); S.students.push(...conv.students); S.events.push(...conv.events);
-                await setMeta('migratedFromV4At', Date.now());
-                setTimeout(() => notify('已從 v4 升級：舊分數已轉為「期初結轉」加分，並已下載原始備份', 5000), 600);
-            }
-            await setMeta('dataVersion', DATA_VERSION);
-        };
 
         // 雲端同步：v6 起改用 Google 帳號＋Google 試算表（src/sync/*、src/ui/sync-ui.js）。
         // 舊版 Firebase 程式已移除；舊的 Firebase 遠端資料不會被讀取、修改或刪除。
@@ -2110,30 +2130,56 @@
 
         // ---------- 初始化 ----------
         const loadAll = async () => {
+            if (!idb) throw new Error('尚未登入');
             const all = await Promise.all(STORES.map(dbGetAll));
             STORES.forEach((t, i) => { S[S_KEY(t)] = t === 'meta' ? Object.fromEntries(all[i].map(m => [m.key, m.value])) : all[i]; });
             recomputeTotals();
         };
         /** 這台裝置的代號（作業事件、同步紀錄用；不含個資） */
         const ensureDeviceId = async () => { if (!S.meta.deviceId) await setMeta('deviceId', `dev-${uid()}`); };
+        let LEGACY = null;
         (async () => {
             $('version-tag').textContent = APP_VERSION;
             applyFontSize(lsGet(LS_FS_KEY) || 'm'); refreshMuteBtn(); applyHideHearts(lsGet(LS_HIDE_HEARTS_KEY) === '1'); applyReduceMotion(lsGet(LS_MOTION_KEY) === '1');
             resizeCanvas(); initParticles(); animateParticles();
+            // 1) 登入（方案 A）：Google 登入並在瀏覽器驗證 ID token 簽章／發行者／受眾／期限／nonce 之前，什麼資料都不開
+            const { identity, signIn, clientId } = await waitForSignIn({ $ });
+            // 2) 打開「這個帳號」的資料庫
+            DB_NAME = accountDbName(await accountKey(identity.sub));
             try { idb = await openDB(); }
             catch (err) { console.error(err); alert('無法開啟瀏覽器資料庫（IndexedDB）。請勿使用無痕視窗，或改用 Chrome / Edge。'); return; }
             await loadAll();
             await ensureDeviceId();
-            await migrateFromV4IfNeeded();
+            if (!S.meta.dataVersion) await setMeta('dataVersion', DATA_VERSION);
             await upgradeData();
             recomputeTotals();
             await autoSettle();
             renderDashboard(); switchScreen('dashboard');
-            // 重新整理時若仍在秩序記錄模式，直接回到記錄畫面（不會露出老師畫面）
+            // 3) 帳號選單、跨分頁登出、工作階段到期
+            const accountTag = DB_NAME;
+            initAccountUI({ $, identity, signIn, hooks: {
+                accountTag,
+                stopSync: () => SYNC.stop(),
+                // 登出時先清掉記憶體中的班級資料（再整頁重新載入；離線時無法重新載入也不會留下前一位老師的資料）
+                wipeMemory: () => { Object.keys(S).forEach(k => { S[k] = Array.isArray(S[k]) ? [] : {}; }); totals.clear(); groupTotals.clear(); eventById.clear(); currentClassId = null; rec = null; idb?.close(); idb = null; },
+                pendingCount: () => SYNC.pendingCount(),
+                openSync: () => SYNC.openModal(),
+                backup: () => exportBackup('班級動力站_移除本機資料前備份'),
+                wipeLocal: async () => { idb?.close(); idb = null; await new Promise((ok, no) => { const r = indexedDB.deleteDatabase(accountTag); r.onsuccess = ok; r.onerror = () => no(r.error); r.onblocked = ok; }); },
+            } });
+            // 4) 舊資料（未歸屬帳號）：只提示，由老師預覽、選擇後才複製
+            LEGACY = initLegacyUI({
+                S, $, dbWrite, setMeta, notify, downloadFile, stampForFile, convertV4, afterDataChange,
+                buildBackupOf: (p) => coreBuildBackup(p, { dataVersion: DATA_VERSION, appVersion: `${APP_VERSION}（舊資料）`, now: Date.now(), exportedAtLocal: localDateTime(Date.now()), meta: { lastSettledDate: p.meta?.lastSettledDate || {} } }),
+                exportAccountBackup: (prefix) => exportBackup(prefix),
+                refresh: async () => { await upgradeData(); recomputeTotals(); await autoSettle(); renderDashboard(); },
+            });
+            await LEGACY.detect();
+            // 重新整理時若仍在秩序記錄模式，登入後直接回到記錄畫面（不會露出老師畫面）
             const rm = S.meta.recordMode;
             if (rm && classById(rm.classId) && !classById(rm.classId).deleted) { rec = rm; currentClassId = rm.classId; currentTab = 'students'; renderClassView(); showRecordOverlay(); }
-            // 雲端（選用）：Google 試算表同步；需要老師按「重新連線」才會取得授權（token 只放記憶體）
-            await SYNC.init();
+            // 5) 雲端（選用）：Google 試算表授權必須是同一個帳號（sub 比對）；token 只放記憶體
+            await SYNC.init({ identity, clientId });
         })();
     </script>
 </body>

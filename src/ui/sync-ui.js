@@ -4,7 +4,7 @@ import { h, makeModal, fill } from './dom.js';
 import { entityHash } from '../core/ids.js';
 import { createSyncEngine, backoffMs, asSyncError, diffKeys } from '../sync/engine.js';
 import { createSheetsAdapter, createSpreadsheet, parseSpreadsheetId } from '../sync/sheets-adapter.js';
-import { createGoogleAuth, isValidClientId } from '../sync/google-auth.js';
+import { createGoogleAuth } from '../sync/google-auth.js';
 import { SYNC_TABLES } from '../sync/schema.js';
 
 const TABLE_LABEL = { classes: '班級', students: '學生', events: '加扣分紀錄', dailySnapshots: '每日結算', hwAssignments: '作業', hwEvents: '作業紀錄', xpEvents: 'XP', specialItems: '特殊收藏', grants: '收藏', settings: '設定', syncMeta: '裝置' };
@@ -18,6 +18,8 @@ export const initSyncUI = (app) => {
     const cfg = () => S.meta.sync || {};
     const saveCfg = (patch) => app.setMeta('sync', { ...cfg(), ...patch });
     let auth = null; let engine = null;
+    let identity = null; let clientId = '';
+    let stopped = false;      // 登出／切換帳號後：不再同步任何東西（A 帳號的佇列絕不送到 B）
     let syncState = new Map();
     let timer = null; let running = false; let again = false; let attempt = 0;
     /** 老師對衝突的選擇先排隊：若剛好有背景同步在跑，下一輪一定會套用（BUG-005） */
@@ -99,6 +101,7 @@ export const initSyncUI = (app) => {
         engine = createSyncEngine({ local, remote, deviceId: app.deviceId(), tables: SYNC_TABLES });
     };
     const runSync = async ({ resolutions = [], manual = false } = {}) => {
+        if (stopped) return null;
         resolutions.forEach(r => queuedResolutions.set(r.key, r.use));
         if (!engine) { if (manual) openModal(); return null; }
         if (running) { again = true; return null; }
@@ -134,6 +137,7 @@ export const initSyncUI = (app) => {
         }
     };
     const schedule = (delay = 4000) => {
+        if (stopped) return;
         if (!cfg().spreadsheetId) { refreshIdle(); return; }
         clearTimeout(timer);
         timer = setTimeout(() => runSync(), delay);
@@ -145,16 +149,13 @@ export const initSyncUI = (app) => {
 
     // ------------------------------------------------------------ 連線與試算表
     const connect = async () => {
-        const clientId = (app.$('sync-client-id')?.value ?? cfg().clientId ?? '').trim();
-        if (!isValidClientId(clientId)) { alert('請先填入正確的 OAuth Client ID（格式：數字-英數.apps.googleusercontent.com）。設定方式見說明文件。'); return; }
-        if (clientId !== cfg().clientId) await saveCfg({ clientId });
-        auth = createGoogleAuth({ clientId });
+        if (!auth) { alert('請先登入 Google 帳號。'); return; }
         try {
             setStatus('syncing', '等待 Google 授權…');
             await auth.connect({ prompt: cfg().consented ? '' : 'consent' });
             await saveCfg({ consented: true });
             buildEngine();
-            app.notify('已連接 Google 帳號');
+            app.notify('已連接 Google 試算表授權');
             if (cfg().spreadsheetId) await runSync({ manual: true });
         } catch (err) { const e = asSyncError(err); await saveCfg({ lastError: { kind: e.kind, message: e.message, at: Date.now() } }); setStatus('error', e.message); alert(e.message); }
         renderModal(); refreshIdle();
@@ -174,7 +175,11 @@ export const initSyncUI = (app) => {
     const useSheet = async () => {
         const id = parseSpreadsheetId(app.$('sync-sheet-id')?.value);
         if (!id) { alert('請貼上 Google 試算表的網址或 ID。'); return; }
+        if (!auth?.isConnected()) { alert('請先按「連接 Google 試算表授權」。'); return; }
         if (cfg().spreadsheetId && cfg().spreadsheetId !== id && !confirm('改用另一份試算表？\n本機資料不會刪除，會與新試算表合併；有不同的地方會列為衝突讓你決定。')) return;
+        // 先確認目前帳號真的能存取這份試算表；沒有權限就拒絕，不改用其他試算表、也不寫入任何東西
+        try { await createSheetsAdapter({ spreadsheetId: id, getToken: () => auth.getToken() }).probe(); }
+        catch (err) { const e = asSyncError(err); const msg = ['permission', 'notfound'].includes(e.kind) ? '目前登入的 Google 帳號無法存取這份試算表（找不到或沒有權限），已拒絕。請確認網址，或用建立它的帳號登入。' : e.message; setStatus('error', msg); alert(msg); renderModal(); return; }
         await saveCfg({ spreadsheetId: id });
         syncState.clear(); await app.dbWrite({}, {}, ['syncState']);
         buildEngine();
@@ -210,11 +215,10 @@ export const initSyncUI = (app) => {
             h('h2', { text: '☁️ 雲端同步（Google 帳號＋Google 試算表）' }),
             h('p', { class: 'setup-note', text: '不設定也能使用，資料存在這台電腦。設定後，資料會同步到「你自己的」Google 試算表，可在多台電腦使用。請先確認符合學校的個人資料規定；試算表預設不分享給任何人。' }),
             legacy ? h('p', { class: 'hw-banner teacher', text: '偵測到舊版 Firebase 設定：v6 已不再連線 Firebase，舊雲端資料不會被讀取或刪除。若需要舊雲端資料，請用 v5.1 版「匯出備份」後，在這裡「載入備份」。' }) : null,
-            h('h3', { class: 'hw-sec', text: '1. Google 帳號' }),
-            h('div', { class: 'field' }, h('label', { for: 'sync-client-id', text: 'OAuth Client ID（公開識別碼，不是密碼；建立方式見說明文件 GOOGLE-SHEETS-SETUP）' }),
-                h('input', { id: 'sync-client-id', type: 'text', value: c.clientId || '', placeholder: '1234567890-xxxx.apps.googleusercontent.com', autocomplete: 'off', spellcheck: 'false' })),
+            h('h3', { class: 'hw-sec', text: '1. Google 試算表授權' }),
+            h('p', { id: 'sync-account', text: `授權帳號必須是目前登入的帳號：${identity?.email || identity?.name || '（未登入）'}。Google 視窗若選了其他帳號，系統會拒絕。` }),
             h('div', { class: 'modal-actions wrap' },
-                h('button', { class: 'btn btn-primary', id: 'sync-connect', text: connected ? '✅ 已連線（重新授權）' : (c.consented ? '🔄 重新連線 Google' : '🔐 連接 Google 帳號'), onclick: connect }),
+                h('button', { class: 'btn btn-primary', id: 'sync-connect', text: connected ? '✅ 已授權（重新授權）' : (c.consented ? '🔄 重新連線 Google' : '🔐 連接 Google 試算表授權'), onclick: connect }),
                 c.spreadsheetId || connected ? h('button', { class: 'btn btn-danger', id: 'sync-disconnect', text: '中斷同步', onclick: disconnect }) : null),
             h('h3', { class: 'hw-sec', text: '2. 試算表' }),
             c.spreadsheetId ? h('p', {}, '目前：', h('a', { href: sheetUrl, target: '_blank', rel: 'noopener', id: 'sync-sheet-link', text: '開啟 Google 試算表 ↗' }), h('span', { class: 'muted', text: `（${c.spreadsheetId.slice(0, 8)}…）` })) : h('p', { class: 'muted', text: '尚未指定。第一台電腦請按「建立新的試算表」；其他電腦請貼上同一份試算表的網址。' }),
@@ -253,12 +257,21 @@ export const initSyncUI = (app) => {
     app.$('reload-cloud-btn')?.addEventListener('click', () => runSync({ manual: true }));
 
     return {
-        async init() {
+        /** 登入後呼叫：試算表授權綁定登入帳號（sub）；設定與同步狀態都在這個帳號自己的資料庫裡 */
+        async init({ identity: id, clientId: cid }) {
+            identity = id; clientId = cid;
             await loadSyncState();
-            const c = cfg();
-            if (c.clientId && c.spreadsheetId) { auth = createGoogleAuth({ clientId: c.clientId }); buildEngine(); }
+            auth = createGoogleAuth({ clientId, expectedSub: identity.sub, loginHint: identity.email });
+            buildEngine();
             await refreshIdle();
         },
+        /** 登出／切換帳號：停止排程、撤銷記憶體中的 token、不再送出任何資料 */
+        async stop() {
+            stopped = true; clearTimeout(timer); queuedResolutions.clear();
+            const a = auth; auth = null; engine = null;
+            await a?.disconnect().catch(() => {});
+        },
+        pendingCount: async () => (engine || createSyncEngine({ local, remote: null, deviceId: app.deviceId(), tables: SYNC_TABLES })).pending(),
         schedule, runSync, openModal, status: () => status,
     };
 };

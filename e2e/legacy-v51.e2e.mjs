@@ -114,17 +114,21 @@ const writeTemp = async (data) => {
     return p;
 };
 
-test('IndexedDB v1 created by v5.1 upgrades in place to v2 without losing data', async () => {
-    const { setup } = await import('./helpers.mjs');
+test('legacy v5.1 IndexedDB (no account) is never auto-assigned; teacher previews, backs up, imports, numbers match; undo works; legacy copy untouched', async () => {
+    const { setup, wireFakeGoogle, signIn, TEST_CLIENT_ID } = await import('./helpers.mjs');
     const { url, browser } = await setup();
-    const context = await browser.newContext({ timezoneId: 'Asia/Taipei' });
+    const context = await browser.newContext({ timezoneId: 'Asia/Taipei', acceptDownloads: true });
     await context.route(/^https?:\/\/(?!127\.0\.0\.1)/, r => r.abort());
+    await wireFakeGoogle(context);
+    await context.addInitScript((cid) => { try { localStorage.setItem('fhes_google_client_id', cid); } catch { /* ignore */ } }, TEST_CLIENT_ID);
     const page = await context.newPage();
     const errors = [];
     page.on('pageerror', e => errors.push(e.message));
     page.on('dialog', d => d.accept());
+    const downloads = [];
+    page.on('download', d => downloads.push(d.suggestedFilename()));
     try {
-        // 先在同一個 origin（任一靜態檔）用 v5.1 的 schema（version 1）寫入資料
+        // 先在同一個 origin（任一靜態檔）用 v5.1 的 schema（version 1）寫入資料：模擬升級前的老師電腦
         await page.goto(url + 'tests/fixtures/backup-v5.1.json');
         const fx = fixture('backup-v5.1.json');
         await page.evaluate(async (fx) => {
@@ -150,18 +154,78 @@ test('IndexedDB v1 created by v5.1 upgrades in place to v2 without losing data',
             db.close();
         }, fx);
         await page.goto(url);
-        await page.waitForFunction(() => document.getElementById('class-dashboard')?.classList.contains('active'));
+        // 未登入：看不到任何班級
+        await page.waitForSelector('#auth-gate');
+        assert.equal(await page.locator('.class-card').count(), 0, 'nothing rendered before sign-in');
+        await signIn(page);
+        // 登入後：舊資料「沒有」被自動指定給這個帳號，只出現提示
+        assert.equal(await page.locator('.class-card:has(h3:text-is("測試五一班"))').count(), 0, 'legacy class is not auto-assigned');
+        await page.waitForSelector('#legacy-banner:not([hidden])');
+        await page.click('#legacy-open');
+        await page.waitForSelector('#legacy-modal.visible');
+        assert.match(await page.textContent('#legacy-modal'), /測試五一班/);
+        await shot(page, 'auth-legacy-preview');
+        // 沒勾選不能匯入
+        await page.click('#legacy-import');
+        assert.equal(await page.locator('.class-card:has(h3:text-is("測試五一班"))').count(), 0);
+        // 勾選 → 先下載舊資料備份 → 匯入
+        await page.check('#legacy-modal input[data-legacy-class]');
+        const dl = page.waitForEvent('download');
+        await page.click('#legacy-import');
+        await dl;
+        assert.ok(downloads.some(n => /舊資料備份/.test(n)), `legacy backup downloaded first: ${downloads}`);
+        await page.keyboard.press('Escape');
         await page.click('.class-card:has(h3:text-is("測試五一班"))');
         assert.equal(await waitVal(page, 1, 'score', 6), 6);
         assert.equal(await waitVal(page, 2, 'heart', 1), 1);
         assert.match(await page.textContent('#pending-btn'), /\(1\)/);
-        const ver = await page.evaluate(() => new Promise(ok => { const r = indexedDB.open('classroomPowerhouseV5'); r.onsuccess = () => { const d = r.result; ok({ v: d.version, stores: [...d.objectStoreNames].sort() }); d.close(); }; }));
-        assert.equal(ver.v, 2);
-        for (const s of ['hwAssignments', 'hwEvents', 'xpEvents', 'specialItems', 'grants', 'syncState']) assert.ok(ver.stores.includes(s), s);
         await page.click('.nav-tab[data-tab="homework"]');
         await page.waitForSelector('#homework-tab .hw-banner');
+        // 帳號資料庫是新的 v2；舊資料庫仍是 v1、內容不變
+        const dbs = await page.evaluate(async () => {
+            const open = (n) => new Promise(ok => { const r = indexedDB.open(n); r.onsuccess = () => { const d = r.result; const out = { v: d.version, stores: [...d.objectStoreNames].sort() }; d.close(); ok(out); }; });
+            const names = (await indexedDB.databases()).map(d => d.name);
+            const acct = names.find(n => n.startsWith('fhes-acct-'));
+            return { names, acct: await open(acct), legacy: await open('classroomPowerhouseV5') };
+        });
+        assert.equal(dbs.legacy.v, 1, 'legacy database is not upgraded or modified');
+        assert.equal(dbs.acct.v, 2);
+        for (const s of ['hwAssignments', 'hwEvents', 'xpEvents', 'specialItems', 'grants', 'syncState']) assert.ok(dbs.acct.stores.includes(s), s);
+        // 復原這次匯入
+        await page.click('#back-to-dashboard-btn');
+        await page.click('#legacy-open');
+        await page.click('#legacy-undo');
+        await page.waitForFunction(() => !document.querySelector('.class-card[data-id]'));
+        assert.equal(await page.locator('.class-card:has(h3:text-is("測試五一班"))').count(), 0, 'undo removed the imported class');
+        // 重新整理 → 必須再登入；舊資料仍在，提示仍在
+        await page.reload();
+        await page.waitForSelector('#auth-gate');
+        await signIn(page);
+        await page.waitForSelector('#legacy-banner:not([hidden])');
         assert.deepEqual(errors, []);
     } finally { await context.close(); }
+});
+
+test('legacy v4 localStorage cache is no longer auto-migrated into whoever signs in; it is offered for explicit import', async () => {
+    const { openApp: open, signIn: login, TEACHER_B } = await import('./helpers.mjs');
+    const app = await open({ signIn: false });
+    const { page } = app;
+    try {
+        await page.evaluate((arr) => localStorage.setItem('classroomPowerhouse_cache_v4', JSON.stringify(arr)), fixture('backup-v4.json').data);
+        await page.reload();
+        await login(page, TEACHER_B);
+        assert.equal(await page.locator('.class-card:has(h3:text-is("測試四年級"))').count(), 0, 'v4 cache is not assigned automatically');
+        await page.waitForSelector('#legacy-banner:not([hidden])');
+        await page.click('#legacy-open');
+        assert.match(await page.textContent('#legacy-modal'), /v4 快取/);
+        await page.check('#legacy-modal input[data-legacy-class]');
+        await page.click('#legacy-import');
+        await page.keyboard.press('Escape');
+        await page.click('.class-card:has(h3:text-is("測試四年級"))');
+        assert.equal(await waitVal(page, 1, 'score', 5), 5);
+        assert.ok(await page.evaluate(() => !!localStorage.getItem('classroomPowerhouse_cache_v4')), 'the v4 cache itself is kept');
+        assert.deepEqual(app.errors, []);
+    } finally { await app.close(); }
 });
 
 test('rollback export: "v5.1 相容備份" downloads a version-5.1 file with every score event', async () => {

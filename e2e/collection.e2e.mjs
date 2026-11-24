@@ -2,6 +2,7 @@
 import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
 import { openApp, teardown, createClass, shot, setup } from './helpers.mjs';
+import { reloadAndSignIn } from './helpers.mjs';
 import { strayNullTexts } from './helpers.mjs';
 
 after(teardown);
@@ -55,8 +56,7 @@ test('group XP is not multiplied by members; unlock spends energy; sequential re
         assert.equal(await page.locator('.col-card[data-item="land-01"].owned').count(), 1);
         assert.equal(Number(await page.textContent('#col-energy')), energy0 - 10, 'negative score does not reduce XP');
         // 重新整理後仍在
-        await page.reload();
-        await page.waitForFunction(() => document.getElementById('class-dashboard')?.classList.contains('active'));
+        await reloadAndSignIn(page);
         await page.click('.class-card:has(h3:text-is("圖鑑測試班"))');
         await openCollection(page);
         await page.click('.col-owner[data-owner="1"]');

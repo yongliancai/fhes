@@ -29,3 +29,41 @@ Each synced row stores a content hash. Per entity: compare local hash, remote ha
 
 ## ADR-010 — OAuth scope `drive.file`
 The app requests only `https://www.googleapis.com/auth/drive.file` (files the app creates or the user opens with it). Access tokens are kept in memory only, never in localStorage/IndexedDB. The OAuth Client ID is a public identifier the teacher enters in settings; it is not committed.
+
+> ADR-010 amended by ADR-013 (2026-11-25): the token request now also includes `openid`, only so the granted account's `sub` can be compared with the signed-in account. No new data access.
+
+## ADR-011 — Required Google sign-in (方案 A), verified in the browser, no backend (2026-11-25)
+**Decision.** The teacher must sign in with Google before anything opens. Sign-in uses Google Identity Services "Sign in with Google" (ID token). The ID token is verified in the browser by `src/auth/id-token.js`: RS256 signature against Google's JWKS (`kid`), `iss`, `aud`/`azp` = our Client ID, `exp`/`iat`/`nbf` with 60 s skew, a one-time `nonce`, and a non-empty `sub`. Decoding without these checks is banned by a guardrail. The account key is `sub`, never email. The session lives only in memory, lasts at most 12 hours, and ends on sign-out, account switch, expiry, sign-out in another tab of the same account, or reload. Nothing about the token is stored.
+
+**Backend evaluated and not added.** A minimal backend (verify the ID token server-side, issue an httpOnly session cookie) was considered:
+- The data does not live on a server. Class data is in the browser's IndexedDB on the teacher's device, and the cloud copy is in the teacher's own Google Sheet. A backend session would not protect either: IndexedDB is readable by anyone who can open DevTools in that browser profile, and Sheets access is authorised by Google with the user's own OAuth token.
+- A backend would add hosting, secrets, uptime and a privacy surface (student data or tokens passing through a server) that the school would need to approve. Creating hosting needs separate user approval anyway.
+- Google already enforces the cloud authorisation boundary server-side (Sheets ACL plus the `drive.file` scope).
+
+**What this design does NOT guarantee (stated in the UI and in `docs/AUTH-SECURITY.md`):**
+- The login gate is a client-side gate. Someone with the device, the same browser profile and DevTools can read IndexedDB without signing in. Local data is **not encrypted**.
+- Browser-side token verification blocks forged, expired, replayed and wrong-audience tokens from unlocking the UI. It does not stop someone who modifies the page's code on their own machine.
+- No server-side audit log of sign-ins exists.
+
+**Encryption evaluated and not added.** No stable secret is available to the page after a Google sign-in (the ID token changes every time, and `sub` is not secret), so the data cannot be encrypted with a key tied to the Google login without a backend or a separate passphrase. A passphrase would add a second credential that teachers can lose, which would lock them out of student records. Instead, shared computers get an explicit "sign out and remove this account's data from this computer" action (backup first). Separate OS accounts or browser profiles per teacher are also recommended.
+
+**Rollback.** Revert the commit. The legacy database is never modified, so v6.0 or v5.1 still open it.
+
+## ADR-012 — Local data partitioned per Google account; legacy data claimed explicitly (2026-11-25)
+- Each account gets its own IndexedDB: `fhes-acct-<first 32 hex of SHA-256("https://accounts.google.com|" + sub)>`. The name contains neither the sub nor the email. Spreadsheet ID, sync state, outbox (pending hashes), conflicts and device ID all live inside that database, so they are partitioned automatically.
+- The pre-login database `classroomPowerhouseV5` (v5.1 or early v6) and the v4 localStorage cache belong to no account:
+  - They are **never** opened by the app's normal path, upgraded or assigned automatically.
+  - After sign-in, a banner offers a preview showing class names and counts.
+  - The teacher ticks classes. The app first downloads a full legacy backup (and a backup of the account if it already has classes), then **copies** the selection into the account. Classes the account already has are skipped, never overwritten. The record is kept in `meta.legacyImport` so the teacher can "復原這次匯入".
+  - "這不是我的資料" hides the banner for that account only.
+  - Removing the legacy data is a separate action with two confirmations, done after a backup.
+- This replaces the old automatic `migrateFromV4IfNeeded()`.
+
+## ADR-013 — Sheets authorization bound to the signed-in account (2026-11-25)
+- The token client is created with `hint`/`login_hint` = the signed-in account and scope `openid drive.file`.
+- After the token arrives:
+  - `drive.file` must be granted.
+  - `GET https://openidconnect.googleapis.com/v1/userinfo` is called with the token in the `Authorization` header, never in the URL, and its `sub` must equal the signed-in `sub`.
+  - Otherwise the token is revoked and refused.
+- On sign-out or account switch, `SYNC.stop()` cancels timers, drops queued conflict choices, revokes the in-memory token and refuses further runs, before the page reloads. A's queue therefore can never be sent with B's token.
+- "使用這份" first probes the spreadsheet with a read-only metadata GET. A 403 or 404 refuses it, nothing is saved, and no other spreadsheet is substituted.

@@ -3,6 +3,7 @@ import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { openApp, teardown, importFile, fixturePath, shot } from './helpers.mjs';
+import { reloadAndSignIn } from './helpers.mjs';
 import { strayNullTexts } from './helpers.mjs';
 
 after(teardown);
@@ -76,8 +77,7 @@ test('homework flow: batch, unchecked≠missing, correction, follow-up, privacy,
         await page.click('#hw-undo-batch');
         await page.waitForFunction(() => /0 \/ 3/.test(document.querySelector('.hw-card .hw-stat.big .hw-stat-v')?.textContent || ''));
         // 持久化：重新整理
-        await page.reload();
-        await page.waitForFunction(() => document.getElementById('class-dashboard')?.classList.contains('active'));
+        await reloadAndSignIn(page);
         await page.click('.class-card:has(h3:text-is("測試五一班"))');
         await page.click('.nav-tab[data-tab="homework"]');
         await teacher(page);

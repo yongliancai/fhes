@@ -13,5 +13,6 @@ Short entry point for any AI agent (Claude Code, Codex, ChatGPT, …). This file
 - Create or change real Google Cloud / OAuth / Sheets resources, or the user's production spreadsheet.
 - Commit secrets, OAuth client secrets, access tokens or real student names.
 
-## Current authorization (2026-11-24)
+## Current authorization (2026-11-24, extended 2026-11-25)
 The user authorized P2–P6 on the isolated branch `chore/code-factory-p0-p2` (Draft PR #1): engineering guardrails, homework, six-world collection/XP, replacing the front-end Firebase sync with Google Sheets, art/responsive work, and full testing — with synthetic data only. Stop at the Draft PR.
+On 2026-11-25 the user also authorized required Google sign-in with per-account data isolation on the same branch/PR (simulated Google only; no real Google Cloud resources, hosting, merge or deployment). Security boundaries: `docs/AUTH-SECURITY.md`.

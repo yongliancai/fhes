@@ -13,6 +13,11 @@ export const FIREBASE_SDK = /gstatic\.com\/firebasejs|firebase-(?:app|firestore|
 const CREDENTIAL = /AIza[0-9A-Za-z_-]{30,}|ghp_[0-9A-Za-z]{30,}|github_pat_[0-9A-Za-z_]{40,}|GOCSPX-[0-9A-Za-z_-]{20,}|\bya29\.[0-9A-Za-z_-]{20,}|-----BEGIN (?:RSA )?PRIVATE KEY-----/;
 const HTML_SINK = /\.(?:innerHTML|outerHTML)\s*=(?!=)|\binsertAdjacentHTML\s*\(|\bdocument\.write\s*\(/;
 const BROWSER_GLOBAL = /\b(?:document|window|indexedDB|localStorage|navigator)\s*\./;
+/** 登入憑證不可寫入瀏覽器永久儲存空間或印到主控台（ADR-011） */
+const TOKEN_PERSIST = /\b(?:localStorage|sessionStorage)\s*\.\s*setItem\s*\([^)]*(?:token|credential|jwt|id_?token|access_?token)/i;
+const TOKEN_IDB = /\b(?:put|add|setMeta|dbWrite)\s*\([^)]*\b(?:credential|idToken|id_token|accessToken|access_token)\b/;
+const TOKEN_LOG = /\bconsole\s*\.\s*\w+\s*\([^)]*\b(?:credential|idToken|id_token|accessToken|access_token|token)\b/i;
+const JWT_DECODE_ONLY = /\batob\s*\([^)]*\.split\(\s*['"]\.['"]\s*\)\s*\[\s*1\s*\]/;
 const IMPORT_FROM = /\bimport\s+(?:[^'"]*?\s+from\s+)?['"]([^'"]+)['"]/g;
 
 /** P5 起：任何出貨程式（index.html、src/）都不可再載入 Firebase SDK；此清單必須維持空白（tests/guardrails.test.mjs 檢查） */
@@ -44,6 +49,14 @@ export const checkFile = (path, text) => {
             if (/\/(?:ui|sync|art)\//.test(m[1]) || /^\.\.\/(?:ui|sync|art)\b/.test(m[1])) errors.push(`${path} imports ${m[1]}: core/data may not depend on ui/sync/art.`);
         }
     }
+    const shipped = path.startsWith('src/') || path === 'index.html';
+    if (shipped && (TOKEN_PERSIST.test(text) || TOKEN_IDB.test(text))) errors.push(`${path} writes a login/OAuth credential to persistent browser storage; tokens must stay in memory only (ADR-011).`);
+    if (shipped && TOKEN_LOG.test(text)) errors.push(`${path} logs something that looks like a credential to the console.`);
+    if (shipped && path !== 'src/auth/id-token.js' && JWT_DECODE_ONLY.test(text)) errors.push(`${path} decodes a JWT payload directly; use verifyGoogleIdToken() from src/auth/id-token.js (decoding is not verification).`);
+    if (path.startsWith('src/auth/')) {
+        for (const m of text.matchAll(IMPORT_FROM)) if (/\/(?:ui|sync)\//.test(m[1]) || /^\.\.\/(?:ui|sync)\b/.test(m[1])) errors.push(`${path} imports ${m[1]}: auth may not depend on ui/sync.`);
+    }
+    if (path === 'src/auth/id-token.js' && BROWSER_GLOBAL.test(text)) errors.push(`${path} must stay pure (no document/window/indexedDB/localStorage/navigator).`);
     if (path.startsWith('src/sync/')) {
         for (const m of text.matchAll(IMPORT_FROM)) if (/\/ui\//.test(m[1]) || /^\.\.\/ui\b/.test(m[1])) errors.push(`${path} imports ${m[1]}: sync may not depend on ui.`);
     }
