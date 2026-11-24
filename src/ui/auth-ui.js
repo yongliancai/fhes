@@ -85,7 +85,10 @@ export const waitForSignIn = ({ $ }) => new Promise((resolve) => {
 });
 
 /** 整頁重新載入到乾淨狀態（清掉網址上的參數與 hash）；notice：重新載入後的提示代碼 */
+let reloading = false;
 export const hardReload = (notice) => {
+    if (reloading) return;           // 只重新載入一次（例如離線登出後，瀏覽器與程式可能各送一次 online 事件）
+    reloading = true;
     if (notice) ssSet(SS_NOTICE, notice);
     window.location.replace(window.location.pathname);
 };
