@@ -34,6 +34,10 @@ Status words follow the Code Factory guide strictly: **PASS** = actually execute
 | 2026-11-25 | v6.1 final | `npm run verify` | Windows 11, Node 22.23.1 | PASS — syntax + imports, guardrails, ESLint, 113/113 unit (94 + 19 auth), exit 0 |
 | 2026-11-25 | v6.1 final | `npm run test:e2e` | Edge | PASS 39/39, exit 0 |
 | 2026-11-25 | v6.1 final | `E2E_CHANNEL=chrome npm run test:e2e` | Chrome | PASS 39/39, exit 0 (independent second run) |
+| 2026-11-25 | v6.1 final (after BUG-011) | `npm run verify` / `npm run test:e2e` / `E2E_CHANNEL=chrome npm run test:e2e` | Windows 11 / Edge / Chrome | PASS — 113/113, 39/39, 39/39 |
+| 2026-11-25 | v6.1 | CI `e2e` (ubuntu, Chrome) on 0cb99a8, fa73339, 4ba484a, 21f1027, 861b151, 756d314 | GitHub Actions | PASS 39/39 every run |
+| 2026-11-25 | v6.1 | CI `e2e-compat (firefox)` — 5 runs | playwright Firefox build, ubuntu-24.04 | **FAIL 38/39** on the last 3 runs. Earlier failures were fixed: font-CORS wording, axe during fade-in, BUG-011. One remains: test `A offline queue…` asserts no console errors, but Firefox logs `InvalidStateError: Navigated away from page` (no source location) at the step where the offline-locked page reloads after the network returns. Every functional assertion in that test passes. Root cause not found (no local Firefox to debug). Not filtered out: left visible on purpose. |
+| 2026-11-25 | v6.1 | CI `e2e-compat (webkit)` — 5 runs | playwright WebKit build, ubuntu-24.04 | **FAIL 36–38/39**: in every run 1–3 different tests end with "Target page … closed" / "Page crashed" (renderer crash). Two test races that WebKit exposed were fixed. No assertion failure attributable to the app was seen. Real Safari/iPad: NOT_VERIFIED. |
 | CI | every push | GitHub Actions `Quality (no deployment)`: `verify` + `e2e` (ubuntu, Chrome) | ubuntu-latest, Node 22 | green for P2 (feff057), P3 (4b6bb42), P4 (853a880); later runs are listed in Draft PR #1 |
 
 ## Acceptance matrix
@@ -69,7 +73,7 @@ Status words follow the Code Factory guide strictly: **PASS** = actually execute
 | A-28 | Legacy v4 / v5.1 / early-v6 data not lost and never auto-assigned | `e2e/legacy-v51` (v5.1 IndexedDB claim + undo, v4 cache claim), unit `planLegacyImport/Undo` | PASS |
 | A-29 | No credential in localStorage, sessionStorage, IndexedDB, cookies, URL, console, backup or sheet | `e2e/auth › no credential ever lands…` + guardrails (persist/log/decode-only) with negative tests | PASS (emulated tokens) |
 | A-30 | Login screen + account dialog: 4 viewports, axe critical/serious = 0, keyboard sign-in | `e2e/auth` (4 viewport tests + keyboard) | PASS |
-| A-31 | Firefox / WebKit (Safari engine) | CI job `e2e-compat` (playwright builds) — see evidence log | see evidence log |
+| A-31 | Firefox / WebKit (Safari engine) | CI job `e2e-compat` (playwright builds) — see evidence log | **FAIL** (Firefox 38/39: one unexplained console error; WebKit: random renderer crashes). Real Safari/Firefox on devices: NOT_VERIFIED |
 | A-32 | Real Google sign-in + Sheets with a real account | needs a real OAuth Client ID and approval | **BLOCKED** |
 | — | v5.1 daily settlement + CSV | `e2e/legacy-v51 › daily settlement snapshot and day CSV` | PASS |
 | — | Visual regression (pixel baseline comparison) | screenshots are produced (CI artifact `e2e-screenshots`) for human review; no automatic pixel diff | NOT_CONFIGURED |

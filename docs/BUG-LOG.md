@@ -95,6 +95,8 @@ Each entry names the regression test that fails on the buggy version and passes 
 - (v6.1) Firefox axe measured `color-contrast` on collection cards during the screen fade-in (12 nodes). Like the overflow test, the axe test now waits 650 ms for the fade to finish; the real colours are about 9:1.
 - (v6.1) The first WebKit CI run had 3 tests whose page closed mid-test ("Target page … has been closed"). It did not recur on the next run, so it is recorded as an unexplained WebKit-on-Linux instability. Pages now record `crash` events to catch it if it returns.
 - (v6.1) `ubuntu-latest` became Ubuntu 26.04, which playwright 1.56 has no Firefox/WebKit builds for. The compat job is pinned to `ubuntu-24.04`.
+- (v6.1, OPEN) Firefox CI: `InvalidStateError: Navigated away from page` (no location) during the reload of an offline-locked page. Step markers in `e2e/auth › A offline queue…` narrowed it to the "network back → reload → next sign-in" step. Making the reload idempotent did not remove it. Not filtered; still FAIL.
+- (v6.1, OPEN) WebKit CI: renderer crashes in 1–3 random tests per run ("Page crashed" / "Target page closed"), never the same tests twice. Not reproduced locally (no matching WebKit build). Still FAIL.
 - Never edit source files while a background E2E run is in progress; a mid-edit syntax error made one Chrome run report a false failure (recorded in VERIFICATION, re-run afterwards).
 
 ## Design issue found while writing the rollback guide — no v5.1-readable export
