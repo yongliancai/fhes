@@ -42,7 +42,8 @@ jobs:
           retention-days: 14
   e2e-compat:
     # Firefox / WebKit（Safari 引擎）相容性：安裝 playwright 官方瀏覽器建置，只在 CI 執行
-    runs-on: ubuntu-latest
+    # playwright 1.56 沒有 ubuntu 26.04 的 Firefox/WebKit 建置 → 固定 24.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     needs: verify
     strategy:
