@@ -414,6 +414,7 @@
         <button class="fs-btn fs-l" data-fs="xl" title="字體：特大">A</button>
         <span class="sep"></span>
         <button id="mute-btn" title="音效開關">🔊</button>
+        <button id="motion-btn" title="減少動態效果" aria-pressed="false">🐢</button>
     </div>
     <div class="version-tag" id="version-tag">v5.1</div>
 
@@ -451,6 +452,7 @@
                 <button class="nav-tab" data-tab="groups">小隊模式</button>
                 <button class="nav-tab" data-tab="leaderboard">排行榜</button>
                 <button class="nav-tab" data-tab="homework">作業</button>
+                <button class="nav-tab" data-tab="collection">圖鑑</button>
                 <button class="nav-tab" data-tab="history">歷史</button>
             </div>
             <div id="students-tab" class="tab-content active card">
@@ -489,6 +491,7 @@
                 <div id="leaderboard-list"></div>
             </div>
             <div id="homework-tab" class="tab-content card"></div>
+            <div id="collection-tab" class="tab-content card"></div>
             <div id="history-tab" class="tab-content card">
                 <div class="history-controls">
                     <div class="field"><label for="history-date">日期</label><input type="date" id="history-date"></div>
@@ -727,12 +730,16 @@
         import { isV4Data, convertV4 as coreConvertV4, parseBackup as coreParseBackup, buildBackup as coreBuildBackup, BACKUP_TABLES } from './src/core/backup.js';
         import { registerClassDefaults } from './src/core/classes.js';
         import { fillHomeworkDefaults } from './src/core/homework.js';
+        import { fillCollectionDefaults } from './src/core/collection.js';
+        import { xpLedger, xpOf, groupKey, XP_VERSION } from './src/core/xp.js';
+        import { initCollectionUI } from './src/ui/collection-ui.js';
         import { $, h } from './src/ui/dom.js';
         import { initHomeworkUI } from './src/ui/homework-ui.js';
 
         const APP_VERSION = 'v6.0';
         const DATA_VERSION = 6;
         registerClassDefaults(fillHomeworkDefaults);
+        registerClassDefaults(fillCollectionDefaults);
 
         // ---------- 小工具 ----------
 
@@ -838,6 +845,8 @@
             id: uid(), classId, ts: Date.now(), date: localDate(), targetType, targetId: String(targetId), kind,
             delta, reason: reason || '', undone: false, undoOf, batchId,
             session: session || currentSession(classById(classId)), status, recordedBy, reviewNote: '', redeem: !!redeem,
+            // v6 XP：只有帶 xpv 的事件才產生 XP；記下「當時所屬小隊」，換組後歷史歸屬不變
+            xpv: XP_VERSION, xpGroup: targetType === 'student' ? (studentById(String(targetId))?.group ?? null) : null,
         });
         /** 寫入一批 events（同一交易），回傳寫入的 events */
         const addEvents = async (list, extraPuts = []) => {
@@ -1057,7 +1066,7 @@
         };
         const renderCurrentTab = () => {
             const c = getCurrentClass(); if (!c) return;
-            ({ students: renderStudentsTab, groups: renderGroupsTab, leaderboard: renderLeaderboardTab, history: renderHistoryTab, homework: (cc) => HW.render(cc) }[currentTab] || (() => {}))(c);
+            ({ students: renderStudentsTab, groups: renderGroupsTab, leaderboard: renderLeaderboardTab, history: renderHistoryTab, homework: (cc) => HW.render(cc), collection: (cc) => COL.render(cc) }[currentTab] || (() => {}))(c);
         };
 
         const buildStudentCard = (s) => {
@@ -1106,6 +1115,7 @@
 
         const createStudentChip = (s) => h('div', { class: 'student-chip', draggable: 'true', dataset: { studentId: s.id }, text: s.name });
         const renderGroupsTab = (c) => {
+            const groupLedger = xpLedger(S.events, S.xpEvents);
             $('group-count-input').value = c.groupCount || 4;
             const students = studentsOf(c.id);
             $('unassigned-students').replaceChildren(...students.filter(s => s.group == null || s.group > c.groupCount).map(createStudentChip));
@@ -1115,6 +1125,7 @@
                     h('div', { class: 'group-header' },
                         h('h3', { text: `⬡ 第 ${i} 小隊` }),
                         h('div', { class: 'group-score', text: getGroupTotal(c.id, i) }),
+                        h('div', { class: 'group-xp', title: '小隊 XP（圖鑑用，不乘人數）', text: `XP ${xpOf(groupLedger, 'group', groupKey(c.id, i))}` }),
                         h('div', { class: 'score-controls' },
                             h('button', { class: 'btn btn-danger score-btn', dataset: { group: i, amount: -1 }, text: '−' }),
                             h('button', { class: 'btn btn-success score-btn', dataset: { group: i, amount: 1 }, text: '+' }))),
@@ -1187,6 +1198,7 @@
         };
         const CONFETTI_EMOJI = ['🎉', '⭐', '✨', '🚀', '🏆', '💫'];
         const spawnConfetti = (emojis = CONFETTI_EMOJI, n = 36) => {
+            if (reducedMotion()) return;
             for (let i = 0; i < n; i++) {
                 const piece = h('span', { class: 'confetti-piece', text: emojis[Math.floor(Math.random() * emojis.length)] });
                 piece.style.left = Math.random() * 100 + 'vw';
@@ -1249,6 +1261,18 @@
         };
         const refreshMuteBtn = () => { $('mute-btn').textContent = Sound.muted ? '🔇' : '🔊'; $('mute-btn').title = Sound.muted ? '音效已關閉（點一下開啟）' : '音效開啟中（點一下靜音）'; $('mute-btn').classList.toggle('on', !Sound.muted); };
         $('mute-btn').addEventListener('click', () => { Sound.muted = !Sound.muted; lsSet(LS_MUTE_KEY, Sound.muted ? '1' : '0'); refreshMuteBtn(); if (!Sound.muted) Sound.play('badge'); });
+
+        // ---------- 減少動態效果（另外也尊重系統的 prefers-reduced-motion） ----------
+        const LS_MOTION_KEY = 'classroomPowerhouse_reduceMotion';
+        const reducedMotion = () => document.documentElement.classList.contains('reduce-motion') || window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+        const applyReduceMotion = (on) => {
+            document.documentElement.classList.toggle('reduce-motion', on);
+            $('motion-btn').setAttribute('aria-pressed', on ? 'true' : 'false');
+            $('motion-btn').classList.toggle('on', on);
+            $('motion-btn').title = on ? '已減少動態效果（點一下恢復）' : '減少動態效果';
+            lsSet(LS_MOTION_KEY, on ? '1' : '0');
+        };
+        $('motion-btn').addEventListener('click', () => applyReduceMotion(!document.documentElement.classList.contains('reduce-motion')));
 
         // ---------- 字體大小切換：標準／大／特大 ----------
         const applyFontSize = (fs) => {
@@ -1706,7 +1730,7 @@
             const c = getCurrentClass(); if (!c) return;
             await addEvents([makeEvent({ classId: c.id, targetType: 'group', targetId: g, kind: 'score', delta, reason })]);
             const col = document.querySelector(`.group-column[data-group-id="${g}"]`);
-            if (col) { col.querySelector('.group-score').textContent = getGroupTotal(c.id, g); showScoreFeedback(col, delta); }
+            if (col) { col.querySelector('.group-score').textContent = getGroupTotal(c.id, g); col.querySelector('.group-xp').textContent = `XP ${xpOf(xpLedger(S.events, S.xpEvents), 'group', groupKey(c.id, g))}`; showScoreFeedback(col, delta); }
             if (delta > 0) {
                 flashScreen('plus'); registerCombo(delta); Sound.play('plus', comboCount); showMascotSpeech();
                 if (col) Fx.burst(col.querySelector('.group-score'), ['⭐', '✨', '🌟', '🚀'], 16, 140);
@@ -2240,8 +2264,10 @@
         const app = {
             S, getCurrentClass, studentsOf, studentById, seatName, dbWrite, notify, uid, localDate, localTime, mdLabel, addDays, stampForFile,
             deviceId: () => S.meta.deviceId || 'dev-unknown', saveClass, afterDataChange, downloadCSV,
+            playSound: (n) => Sound.play(n), confetti: (emojis, n) => spawnConfetti(emojis, n), reducedMotion,
         };
         const HW = initHomeworkUI(app);
+        const COL = initCollectionUI(app);
 
         // ---------- 初始化 ----------
         const loadAll = async () => {
@@ -2253,7 +2279,7 @@
         const ensureDeviceId = async () => { if (!S.meta.deviceId) await setMeta('deviceId', `dev-${uid()}`); };
         (async () => {
             $('version-tag').textContent = APP_VERSION;
-            applyFontSize(lsGet(LS_FS_KEY) || 'm'); refreshMuteBtn(); applyHideHearts(lsGet(LS_HIDE_HEARTS_KEY) === '1');
+            applyFontSize(lsGet(LS_FS_KEY) || 'm'); refreshMuteBtn(); applyHideHearts(lsGet(LS_HIDE_HEARTS_KEY) === '1'); applyReduceMotion(lsGet(LS_MOTION_KEY) === '1');
             resizeCanvas(); initParticles(); animateParticles();
             try { idb = await openDB(); }
             catch (err) { console.error(err); alert('無法開啟瀏覽器資料庫（IndexedDB）。請勿使用無痕視窗，或改用 Chrome / Edge。'); return; }

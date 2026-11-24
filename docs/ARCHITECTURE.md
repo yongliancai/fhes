@@ -13,6 +13,12 @@
 | `src/core/classes.js` | core | class defaults/back-fill (`ensureClassDefaults`, extensible fillers), sessions |
 | `src/core/backup.js` | core | backup parse/build for v4/v5/v5.1/v6, v4 conversion |
 | `src/core/homework.js` | core | homework types, assignments, event projection (DAG heads → conflicts), batch/undo, statistics, follow-up lists |
+| `src/core/xp.js` | core | XP ledger derived from score events (`xpv`, `xpGroup`) + `xpEvents`; class milestones |
+| `src/core/collection.js` | core | unlock rules (sequential/free, energy), deterministic grants, revoke, growth stages, special items, tags |
+| `src/data/catalog.js` | data | 6 worlds × 12 base items (stable ids `land-01`…), rarities, confirmation status, fact cards, art specs |
+| `src/art/creatures.js` | art | original parametric SVG characters (placeholder art), silhouettes, growth-size |
+| `src/art/scenes.js` | art | six habitat scenes, class-milestone decorations, actor slots |
+| `src/ui/collection-ui.js` | ui | 圖鑑 tab: owners (groups/class), world tabs, habitat, cards, detail, unlock/grant/revoke, special items, tags, settings |
 | `src/ui/dom.js` | ui | `h()`/`s()` DOM builders (textContent only), dynamic modals |
 | `src/ui/homework-ui.js` | ui | homework tab: projection-safe stats, teacher matrix, batch, follow-up, history, settings, reward rule |
 | `src/ui/features.css` | ui | styles for v6 features |
@@ -32,6 +38,13 @@ IndexedDB `classroomPowerhouseV5`:
 - Current state = `projectRecords(hwEvents)`; never stored. Projection view shows aggregates only; teacher view must be toggled explicitly and resets when leaving the tab.
 
 In-memory `S` mirrors the stores; totals are recomputed from events.
+
+## Collection / XP data
+- Score events created from v6 carry `xpv: 1` and `xpGroup` (the student's group at event time). XP is derived, never stored: student +N → `xpGroup` +N and class +N; group +N → that group +N once and class +N; penalties, negative scores, redemptions, pending/rejected and undone/revoked events give 0.
+- `xpEvents`: `{ id, classId, scope: class|group, scopeId, delta, reason, source: manual|hw-bonus, sourceId, ts, voided }`.
+- `grants`: `{ id: g|classId|ownerType|ownerId|itemId, ownerType: group|class, itemId, special, source: xp|teacher|special, cost, note, acquiredAt, revoked, revokeNote }`.
+- `specialItems`: `{ id: sp-…, classId, name, rarity, tagIds[≤2], baseItemId, note }`.
+- Class settings: `collection { mode, costs, periodStart }`, `groupWorlds { [group]: worldId }`, `collectionTags [{ id, name, builtin, active }]`.
 
 ## Tests
 - `tests/*.test.mjs` — Node built-in runner, imports production modules directly; synthetic fixtures in `tests/fixtures/` (v4/v5/v5.1 backups with hand-checked expected totals).

@@ -23,4 +23,6 @@ Each entry names the regression test that fails on the buggy version and passes 
 ## TEST-HARNESS notes (not product bugs, recorded so they are not repeated)
 - `page.waitForSelector('#import-modal:not(.visible)')` waits for *visible* by default → use `{ state: 'hidden' }`.
 - Reading a card number immediately after a click races the async IndexedDB write → `waitVal()` polls until the expected value or timeout and then lets the assertion show the real value.
+- An element with an infinite idle animation is never "stable" for Playwright → `click({ force: true })` for scene actors.
+- Async UI actions that re-render (tag delete: two confirms + save + re-render) must be awaited with `waitFor({ state: 'detached' })`, not an immediate `count()` (caught as a 1-in-2 flake; fixed and re-run 3×).
 - `node --test tests/` treats the directory as a file on Node 22 → use plain `node --test` (auto-discovery) or a quoted glob.
