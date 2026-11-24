@@ -68,6 +68,12 @@ Each entry names the regression test that fails on the buggy version and passes 
 - **FIX**: `useSheet()` first calls `adapter.probe()`, a read-only metadata GET. A 403 or 404 refuses the sheet, saves nothing and writes nothing, and no other spreadsheet is substituted.
 - **PROVE**: E2E `a spreadsheet the signed-in account cannot access is refused (no fallback to another sheet)`. With the old code, `#sync-sheet-link` would exist and the assertion fails.
 
+## BUG-011 — the dying page kept a working-looking sign-in button during sign-out (found on Firefox/WebKit CI)
+- **DETECT**: CI `e2e-compat` (Firefox and WebKit), `e2e/auth › A offline queue…`. Clicking the sign-in button right after "登出" ran on the page that was about to be replaced, and the click was lost ("execution context was destroyed"). Chromium reloads fast enough to hide this.
+- **ROOT_CAUSE**: `lock()` showed the locked login screen in place but left the previous page's GIS button in it until the reload finished. A teacher who clicked quickly would see their click ignored.
+- **FIX**: `lock()` empties the button container before reloading and shows "正在登出…". The only usable button is the fresh page's.
+- **PROVE**: the same E2E, which waits for the button, now always gets the fresh page's button. Re-run on Firefox and WebKit in CI (see VERIFICATION).
+
 ## TEST-GAP-001 — no test proved the Sheets token is revoked on sign-out (found by mutation testing, v6.1)
 - **DETECT**: mutant M7 (`SYNC.stop()` made a no-op, so sync is not stopped and the token is not revoked) survived every E2E. The page reload hid the missing revocation.
 - **FIX (tests)**: the fake GIS now calls Google's revoke endpoint over the network, as the real library does (token in the POST body). `wireFakeGoogle()` records the calls. `e2e/auth › no credential ever lands…` asserts that signing out revokes exactly the Sheets access token.
@@ -85,6 +91,10 @@ Each entry names the regression test that fails on the buggy version and passes 
 - (v6.1) `page.clock.fastForward()` sometimes did not advance `Date` at all (3 of 4 isolated runs failed). The test now uses `clock.setSystemTime()` plus `clock.runFor(31 s)`, which was stable in 6 of 6 runs and in the full suites.
 - (v6.1) After `context.setOffline(false)` the browser fires its own `online` event, and the app reloads. A test `page.evaluate()` racing that reload must tolerate "execution context destroyed".
 - (v6.1) A Python heredoc turned `` in a JavaScript regex into a literal backspace character, so new guardrail rules silently never matched. The negative unit test caught it. The rules are now written with real ``, and the repo was scanned for U+0008.
+- (v6.1) Firefox reports the deliberately blocked Google Fonts request as "Cross-Origin Request Blocked … fonts.googleapis.com", not Chromium's "net::ERR_FAILED". The console filter now accepts both, and console errors include their source location.
+- (v6.1) Firefox axe measured `color-contrast` on collection cards during the screen fade-in (12 nodes). Like the overflow test, the axe test now waits 650 ms for the fade to finish; the real colours are about 9:1.
+- (v6.1) The first WebKit CI run had 3 tests whose page closed mid-test ("Target page … has been closed"). It did not recur on the next run, so it is recorded as an unexplained WebKit-on-Linux instability. Pages now record `crash` events to catch it if it returns.
+- (v6.1) `ubuntu-latest` became Ubuntu 26.04, which playwright 1.56 has no Firefox/WebKit builds for. The compat job is pinned to `ubuntu-24.04`.
 - Never edit source files while a background E2E run is in progress; a mid-edit syntax error made one Chrome run report a false failure (recorded in VERIFICATION, re-run afterwards).
 
 ## Design issue found while writing the rollback guide — no v5.1-readable export

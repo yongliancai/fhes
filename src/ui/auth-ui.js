@@ -110,9 +110,10 @@ export const initAccountUI = ({ $, identity, signIn, hooks }) => {
         document.querySelectorAll('.app-screen, .modal, #record-overlay').forEach(e => e.remove());
         document.body.classList.add('locked');
         const status = document.getElementById('auth-status');
-        if (navigator.onLine) { hardReload(notice); return; }
-        // 離線：無法重新載入（也無法再登入）；保持鎖定，恢復網路後自動重新載入到乾淨的登入畫面
+        // 舊頁面的登入按鈕不能再用（它屬於即將被丟掉的頁面）：先移除，等新頁面載入後才出現新的按鈕
         const box = document.getElementById('gsi-button'); if (box) fill(box);
+        if (navigator.onLine) { if (status) { status.textContent = '正在登出…'; status.dataset.kind = 'info'; } hardReload(notice); return; }
+        // 離線：無法重新載入（也無法再登入）；保持鎖定，恢復網路後自動重新載入到乾淨的登入畫面
         if (status) { status.textContent = `${NOTICES[notice] || ''} 目前離線，恢復網路後即可重新登入。`; status.dataset.kind = 'warn'; }
         window.addEventListener('online', () => hardReload(notice), { once: true });
     };
