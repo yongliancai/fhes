@@ -14,6 +14,12 @@ Each entry names the regression test that fails on the buggy version and passes 
 - **ROOT_CAUSE**: v5.1 replaced `kindLabel` with `actionLabel`; the old helper stayed.
 - **FIX**: removed. **PREVENT**: `npm run lint` now lints the extracted inline module on every verify/CI run.
 
+## BUG-003 — homework "undo last batch" disappeared after switching tabs
+- **DETECT**: `e2e/homework.e2e.mjs` (first run): after leaving and re-entering the homework tab, `#hw-undo-batch` stayed disabled.
+- **ROOT_CAUSE**: the undoable batch was kept only in a UI variable that `reset()` cleared on tab change (and a reload would lose it too).
+- **FIX**: `lastUndoableBatch(hwEvents, today)` derives it from stored events (today's latest batch with no `undoOfBatch` compensation).
+- **PREVENT/PROVE**: unit test `last undoable batch is derived from stored events (survives reloads), today only, once`; the E2E flow switches tabs and reloads before undoing.
+
 ## TEST-HARNESS notes (not product bugs, recorded so they are not repeated)
 - `page.waitForSelector('#import-modal:not(.visible)')` waits for *visible* by default → use `{ state: 'hidden' }`.
 - Reading a card number immediately after a click races the async IndexedDB write → `waitVal()` polls until the expected value or timeout and then lets the assertion show the real value.

@@ -15,7 +15,7 @@ export const registerClassDefaults = (fn) => { if (!extraFillers.includes(fn)) e
 /** 補上班級設定；回傳是否有補 */
 export function ensureClassDefaults(c) {
     let changed = false;
-    const fill = (k, v) => { if (!c[k]) { c[k] = v; changed = true; } };
+    const fill = (k, v) => { if (c[k]) return false; c[k] = v; changed = true; return true; };
     fill('penaltyReasons', [...DEFAULT_PENALTY_REASONS]);
     fill('clearReasons', [...DEFAULT_CLEAR_REASONS]);
     fill('redeemItems', DEFAULT_REDEEM_ITEMS.map(x => ({ ...x })));

@@ -382,6 +382,7 @@
     .row-btn { min-height: 40px !important; padding: 4px 12px !important; font-size: 0.85em !important; }
     .version-tag { position: fixed; left: 10px; bottom: 6px; z-index: 45; font-family: 'Share Tech Mono', monospace; font-size: 12px; color: var(--text-secondary); opacity: 0.8; pointer-events: none; }
 </style>
+<link rel="stylesheet" href="src/ui/features.css">
 </head>
 <body>
     <canvas id="particle-canvas"></canvas>
@@ -449,6 +450,7 @@
                 <button class="nav-tab active" data-tab="students">個人模式</button>
                 <button class="nav-tab" data-tab="groups">小隊模式</button>
                 <button class="nav-tab" data-tab="leaderboard">排行榜</button>
+                <button class="nav-tab" data-tab="homework">作業</button>
                 <button class="nav-tab" data-tab="history">歷史</button>
             </div>
             <div id="students-tab" class="tab-content active card">
@@ -486,6 +488,7 @@
                 </div>
                 <div id="leaderboard-list"></div>
             </div>
+            <div id="homework-tab" class="tab-content card"></div>
             <div id="history-tab" class="tab-content card">
                 <div class="history-controls">
                     <div class="field"><label for="history-date">日期</label><input type="date" id="history-date"></div>
@@ -721,29 +724,18 @@
         import { uid } from './src/core/ids.js';
         import { isCounted, effDate, byEffTs, applyTo, applyEventToTotals, normalizeEvent } from './src/core/score.js';
         import { SESSIONS, DEFAULT_SESSION_TIMES, ensureClassDefaults, newClassObj as coreNewClassObj, sessionAt } from './src/core/classes.js';
-        import { isV4Data, convertV4 as coreConvertV4, parseBackup as coreParseBackup, buildBackup as coreBuildBackup } from './src/core/backup.js';
+        import { isV4Data, convertV4 as coreConvertV4, parseBackup as coreParseBackup, buildBackup as coreBuildBackup, BACKUP_TABLES } from './src/core/backup.js';
+        import { registerClassDefaults } from './src/core/classes.js';
+        import { fillHomeworkDefaults } from './src/core/homework.js';
+        import { $, h } from './src/ui/dom.js';
+        import { initHomeworkUI } from './src/ui/homework-ui.js';
 
-        const APP_VERSION = 'v5.1';
-        const DATA_VERSION = 5.1;
+        const APP_VERSION = 'v6.0';
+        const DATA_VERSION = 6;
+        registerClassDefaults(fillHomeworkDefaults);
 
         // ---------- 小工具 ----------
-        const $ = (id) => document.getElementById(id);
 
-        /** 元素建構器：所有文字一律以 textNode 寫入，避免 innerHTML 破版 */
-        const h = (tag, props, ...kids) => {
-            const el = document.createElement(tag);
-            for (const [k, v] of Object.entries(props || {})) {
-                if (v == null || v === false) continue;
-                if (k === 'class') el.className = v;
-                else if (k === 'text') el.textContent = v;
-                else if (k === 'dataset') Object.assign(el.dataset, v);
-                else if (k === 'style') el.style.cssText = v;
-                else if (k.startsWith('on') && typeof v === 'function') el.addEventListener(k.slice(2), v);
-                else el.setAttribute(k, v === true ? '' : v);
-            }
-            kids.flat(Infinity).forEach(c => { if (c == null || c === false) return; el.append(c instanceof Node ? c : String(c)); });
-            return el;
-        };
 
         const downloadFile = (filename, content, mime = 'application/json') => {
             const blob = content instanceof Blob ? content : new Blob([content], { type: mime });
@@ -761,19 +753,31 @@
 
         // ---------- IndexedDB ----------
         const DB_NAME = 'classroomPowerhouseV5';
-        const STORES = ['classes', 'students', 'events', 'dailySnapshots', 'meta'];
+        // v1（v5/v5.1）：classes, students, events, dailySnapshots, meta
+        // v2（v6）：作業 hwAssignments / hwEvents、XP xpEvents、圖鑑 specialItems / grants、同步狀態 syncState
+        const DB_VERSION = 2;
+        const STORES = ['classes', 'students', 'events', 'dailySnapshots', 'meta', 'hwAssignments', 'hwEvents', 'xpEvents', 'specialItems', 'grants'];
+        /** 資料表 → 記憶體 S 的鍵（dailySnapshots 在 S 叫 snapshots） */
+        const S_KEY = (t) => t === 'dailySnapshots' ? 'snapshots' : t;
         let idb = null;
         const openDB = () => new Promise((resolve, reject) => {
-            const r = indexedDB.open(DB_NAME, 1);
-            r.onupgradeneeded = () => {
-                const d = r.result;
-                d.createObjectStore('classes', { keyPath: 'id' });
-                d.createObjectStore('students', { keyPath: 'id' }).createIndex('classId', 'classId');
-                const ev = d.createObjectStore('events', { keyPath: 'id' });
-                ev.createIndex('classId', 'classId'); ev.createIndex('date', 'date');
-                d.createObjectStore('dailySnapshots', { keyPath: 'id' }).createIndex('classId', 'classId');
-                d.createObjectStore('meta', { keyPath: 'key' });
+            const r = indexedDB.open(DB_NAME, DB_VERSION);
+            r.onupgradeneeded = (ev) => {
+                const d = r.result; const old = ev.oldVersion;
+                if (old < 1) {
+                    d.createObjectStore('classes', { keyPath: 'id' });
+                    d.createObjectStore('students', { keyPath: 'id' }).createIndex('classId', 'classId');
+                    const evs = d.createObjectStore('events', { keyPath: 'id' });
+                    evs.createIndex('classId', 'classId'); evs.createIndex('date', 'date');
+                    d.createObjectStore('dailySnapshots', { keyPath: 'id' }).createIndex('classId', 'classId');
+                    d.createObjectStore('meta', { keyPath: 'key' });
+                }
+                if (old < 2) {
+                    for (const name of ['hwAssignments', 'hwEvents', 'xpEvents', 'specialItems', 'grants']) d.createObjectStore(name, { keyPath: 'id' }).createIndex('classId', 'classId');
+                    d.createObjectStore('syncState', { keyPath: 'key' });
+                }
             };
+            r.onblocked = () => alert('請先關閉其他開著「班級動力站」的分頁，再重新整理，才能完成資料庫升級。');
             r.onsuccess = () => resolve(r.result);
             r.onerror = () => reject(r.error);
         });
@@ -792,7 +796,7 @@
         };
 
         // ---------- 記憶體狀態 ----------
-        const S = { classes: [], students: [], events: [], snapshots: [], meta: {} };
+        const S = { classes: [], students: [], events: [], snapshots: [], meta: {}, hwAssignments: [], hwEvents: [], xpEvents: [], specialItems: [], grants: [] };
         const eventById = new Map();
         const totals = new Map();       // studentId -> { score:可用加分, earned:累計獲得, heart }
         const groupTotals = new Map();  // `${classId}|${group}` -> score
@@ -1022,6 +1026,7 @@
         const getCurrentClass = () => classById(currentClassId);
         const switchScreen = (name) => { Object.values(screens).forEach(s => s.classList.remove('active')); screens[name].classList.add('active'); };
         const switchTab = (tab) => {
+            if (tab !== currentTab && currentTab === 'homework') HW.reset();   // 離開作業分頁 → 回到投影安全模式
             currentTab = tab;
             document.querySelectorAll('.nav-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === tab));
             document.querySelectorAll('.tab-content').forEach(c => c.classList.toggle('active', c.id === `${tab}-tab`));
@@ -1052,7 +1057,7 @@
         };
         const renderCurrentTab = () => {
             const c = getCurrentClass(); if (!c) return;
-            ({ students: renderStudentsTab, groups: renderGroupsTab, leaderboard: renderLeaderboardTab, history: renderHistoryTab }[currentTab] || (() => {}))(c);
+            ({ students: renderStudentsTab, groups: renderGroupsTab, leaderboard: renderLeaderboardTab, history: renderHistoryTab, homework: (cc) => HW.render(cc) }[currentTab] || (() => {}))(c);
         };
 
         const buildStudentCard = (s) => {
@@ -2039,7 +2044,7 @@
         // =====================================================================
         const buildBackup = () => { const now = Date.now(); return coreBuildBackup({ ...S, dailySnapshots: S.snapshots }, {
             dataVersion: DATA_VERSION, appVersion: APP_VERSION, now, exportedAtLocal: localDateTime(now), meta: { lastSettledDate: S.meta.lastSettledDate || {} } }); };
-        const exportBackup = async (prefix = '班級動力站_v5.1備份') => {
+        const exportBackup = async (prefix = '班級動力站_v6備份') => {
             downloadFile(`${prefix}_${stampForFile()}.json`, JSON.stringify(buildBackup()));
             await setMeta('lastBackupAt', Date.now());
         };
@@ -2160,25 +2165,19 @@
             if (mode === 'one' && !cid) { alert('請選擇班級。'); return; }
             hideModal('import-modal'); pendingImport = null;
             await exportBackup('班級動力站_導入前自動備份');
+            const TABLES = BACKUP_TABLES;
             if (mode === 'all') {
-                await dbWrite({ classes: p.classes, students: p.students, events: p.events, dailySnapshots: p.dailySnapshots }, {}, ['classes', 'students', 'events', 'dailySnapshots']);
-                Object.assign(S, { classes: [...p.classes], students: [...p.students], events: [...p.events], snapshots: [...p.dailySnapshots] });
+                await dbWrite(Object.fromEntries(TABLES.map(t => [t, p[t]])), {}, TABLES);
+                TABLES.forEach(t => { S[S_KEY(t)] = [...p[t]]; });
                 if (p.meta.lastSettledDate) await setMeta('lastSettledDate', p.meta.lastSettledDate);
             } else {
-                const pick = (arr) => arr.filter(x => (x.classId ?? x.id) === cid);
-                const cls = p.classes.filter(c => c.id === cid);
-                const imp = { classes: cls.map(c => ({ ...c, deleted: false })), students: pick(p.students), events: pick(p.events), dailySnapshots: pick(p.dailySnapshots) };
-                const dels = {
-                    students: S.students.filter(s => s.classId === cid).map(s => s.id),
-                    events: S.events.filter(e => e.classId === cid).map(e => e.id),
-                    dailySnapshots: S.snapshots.filter(s => s.classId === cid).map(s => s.id),
-                };
+                const owner = (t, x) => t === 'classes' ? x.id : x.classId;
+                const imp = Object.fromEntries(TABLES.map(t => [t, p[t].filter(x => owner(t, x) === cid)]));
+                imp.classes = imp.classes.map(c => ({ ...c, deleted: false }));
+                const dels = Object.fromEntries(TABLES.filter(t => t !== 'classes').map(t => [t, S[S_KEY(t)].filter(x => owner(t, x) === cid).map(x => x.id)]));
                 await dbWrite({}, dels);
                 await dbWrite(imp);
-                S.classes = S.classes.filter(c => c.id !== cid).concat(imp.classes);
-                S.students = S.students.filter(s => s.classId !== cid).concat(imp.students);
-                S.events = S.events.filter(e => e.classId !== cid).concat(imp.events);
-                S.snapshots = S.snapshots.filter(s => s.classId !== cid).concat(imp.dailySnapshots);
+                TABLES.forEach(t => { S[S_KEY(t)] = S[S_KEY(t)].filter(x => owner(t, x) !== cid).concat(imp[t]); });
             }
             await upgradeData();
             recomputeTotals();
@@ -2236,12 +2235,22 @@
         const animateParticles = () => { ctx.clearRect(0, 0, canvas.width, canvas.height); particles.forEach(p => { p.update(); p.draw(); }); requestAnimationFrame(animateParticles); };
         window.addEventListener('resize', () => { resizeCanvas(); initParticles(); });
 
+        // ---------- 新模組（作業、圖鑑、同步）共用的應用程式介面 ----------
+        const afterDataChange = () => { /* P5：排程雲端同步 */ };
+        const app = {
+            S, getCurrentClass, studentsOf, studentById, seatName, dbWrite, notify, uid, localDate, localTime, mdLabel, addDays, stampForFile,
+            deviceId: () => S.meta.deviceId || 'dev-unknown', saveClass, afterDataChange, downloadCSV,
+        };
+        const HW = initHomeworkUI(app);
+
         // ---------- 初始化 ----------
         const loadAll = async () => {
-            const [classes, students, events, snapshots, meta] = await Promise.all(STORES.map(dbGetAll));
-            Object.assign(S, { classes, students, events, snapshots, meta: Object.fromEntries(meta.map(m => [m.key, m.value])) });
+            const all = await Promise.all(STORES.map(dbGetAll));
+            STORES.forEach((t, i) => { S[S_KEY(t)] = t === 'meta' ? Object.fromEntries(all[i].map(m => [m.key, m.value])) : all[i]; });
             recomputeTotals();
         };
+        /** 這台裝置的代號（作業事件、同步紀錄用；不含個資） */
+        const ensureDeviceId = async () => { if (!S.meta.deviceId) await setMeta('deviceId', `dev-${uid()}`); };
         (async () => {
             $('version-tag').textContent = APP_VERSION;
             applyFontSize(lsGet(LS_FS_KEY) || 'm'); refreshMuteBtn(); applyHideHearts(lsGet(LS_HIDE_HEARTS_KEY) === '1');
@@ -2249,6 +2258,7 @@
             try { idb = await openDB(); }
             catch (err) { console.error(err); alert('無法開啟瀏覽器資料庫（IndexedDB）。請勿使用無痕視窗，或改用 Chrome / Edge。'); return; }
             await loadAll();
+            await ensureDeviceId();
             await migrateFromV4IfNeeded();
             await upgradeData();
             recomputeTotals();

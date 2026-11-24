@@ -113,3 +113,53 @@ const writeTemp = async (data) => {
     writeFileSync(p, JSON.stringify(data));
     return p;
 };
+
+test('IndexedDB v1 created by v5.1 upgrades in place to v2 without losing data', async () => {
+    const { setup } = await import('./helpers.mjs');
+    const { url, browser } = await setup();
+    const context = await browser.newContext({ timezoneId: 'Asia/Taipei' });
+    await context.route(/^https?:\/\/(?!127\.0\.0\.1)/, r => r.abort());
+    const page = await context.newPage();
+    const errors = [];
+    page.on('pageerror', e => errors.push(e.message));
+    page.on('dialog', d => d.accept());
+    try {
+        // 先在同一個 origin（任一靜態檔）用 v5.1 的 schema（version 1）寫入資料
+        await page.goto(url + 'tests/fixtures/backup-v5.1.json');
+        const fx = fixture('backup-v5.1.json');
+        await page.evaluate(async (fx) => {
+            const db = await new Promise((ok, no) => {
+                const r = indexedDB.open('classroomPowerhouseV5', 1);
+                r.onupgradeneeded = () => {
+                    const d = r.result;
+                    d.createObjectStore('classes', { keyPath: 'id' });
+                    d.createObjectStore('students', { keyPath: 'id' }).createIndex('classId', 'classId');
+                    const ev = d.createObjectStore('events', { keyPath: 'id' }); ev.createIndex('classId', 'classId'); ev.createIndex('date', 'date');
+                    d.createObjectStore('dailySnapshots', { keyPath: 'id' }).createIndex('classId', 'classId');
+                    d.createObjectStore('meta', { keyPath: 'key' });
+                };
+                r.onsuccess = () => ok(r.result); r.onerror = () => no(r.error);
+            });
+            const tx = db.transaction(['classes', 'students', 'events', 'dailySnapshots', 'meta'], 'readwrite');
+            fx.classes.forEach(x => tx.objectStore('classes').put(x));
+            fx.students.forEach(x => tx.objectStore('students').put(x));
+            fx.events.forEach(x => tx.objectStore('events').put(x));
+            fx.dailySnapshots.forEach(x => tx.objectStore('dailySnapshots').put(x));
+            tx.objectStore('meta').put({ key: 'dataVersion', value: 5.1 });
+            await new Promise((ok) => { tx.oncomplete = ok; });
+            db.close();
+        }, fx);
+        await page.goto(url);
+        await page.waitForFunction(() => document.getElementById('class-dashboard')?.classList.contains('active'));
+        await page.click('.class-card:has(h3:text-is("測試五一班"))');
+        assert.equal(await waitVal(page, 1, 'score', 6), 6);
+        assert.equal(await waitVal(page, 2, 'heart', 1), 1);
+        assert.match(await page.textContent('#pending-btn'), /\(1\)/);
+        const ver = await page.evaluate(() => new Promise(ok => { const r = indexedDB.open('classroomPowerhouseV5'); r.onsuccess = () => { const d = r.result; ok({ v: d.version, stores: [...d.objectStoreNames].sort() }); d.close(); }; }));
+        assert.equal(ver.v, 2);
+        for (const s of ['hwAssignments', 'hwEvents', 'xpEvents', 'specialItems', 'grants', 'syncState']) assert.ok(ver.stores.includes(s), s);
+        await page.click('.nav-tab[data-tab="homework"]');
+        await page.waitForSelector('#homework-tab .hw-banner');
+        assert.deepEqual(errors, []);
+    } finally { await context.close(); }
+});

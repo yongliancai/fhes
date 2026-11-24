@@ -12,12 +12,24 @@
 | `src/core/score.js` | core | v5.1 scoring rules: `isCounted`, `applyTo`, totals, `normalizeEvent` |
 | `src/core/classes.js` | core | class defaults/back-fill (`ensureClassDefaults`, extensible fillers), sessions |
 | `src/core/backup.js` | core | backup parse/build for v4/v5/v5.1/v6, v4 conversion |
+| `src/core/homework.js` | core | homework types, assignments, event projection (DAG heads → conflicts), batch/undo, statistics, follow-up lists |
+| `src/ui/dom.js` | ui | `h()`/`s()` DOM builders (textContent only), dynamic modals |
+| `src/ui/homework-ui.js` | ui | homework tab: projection-safe stats, teacher matrix, batch, follow-up, history, settings, reward rule |
+| `src/ui/features.css` | ui | styles for v6 features |
 
 Dependency direction: `ui → sync → core/data`. `core`/`data` are pure (no browser globals). Enforced by `scripts/guardrails.mjs`.
 
 ## Browser storage
 IndexedDB `classroomPowerhouseV5`:
-- v1 stores: `classes`, `students`, `events`, `dailySnapshots`, `meta`.
+- v1 stores (v5/v5.1): `classes`, `students`, `events`, `dailySnapshots`, `meta`.
+- v2 stores (v6): `hwAssignments`, `hwEvents`, `xpEvents`, `specialItems`, `grants` (all indexed by `classId`), `syncState` (key → last synced hash/row).
+- Upgrade is additive (`onupgradeneeded` checks `oldVersion`); verified by `e2e/legacy-v51.e2e.mjs › IndexedDB v1 … upgrades in place`.
+
+## Homework data
+- `class.hwTypes` (11 defaults `hwt-01…hwt-11`, custom `hwt-<uid>`), `class.hwReward` (`{ enabled:false, xp:5 }` by default).
+- `hwAssignments`: `{ id, classId, typeId, title, note, assignedDate, dueDate, archived, createdAt, updatedAt }`.
+- `hwEvents` (immutable): `{ id, classId, assignmentId, studentId, field: submission|correction, value, prev, prevIds[], ts, date, batchId, deviceId, reason, undoOfBatch? }`.
+- Current state = `projectRecords(hwEvents)`; never stored. Projection view shows aggregates only; teacher view must be toggled explicitly and resets when leaving the tab.
 
 In-memory `S` mirrors the stores; totals are recomputed from events.
 

@@ -16,6 +16,8 @@ npm run test:e2e    # real-browser tests; screenshots → test-results/
 | 2026-11-24 | P2 | `npm run verify` | Windows 11, Node 22.23.1 | PASS — syntax, guardrails, ESLint, 30/30 unit |
 | 2026-11-24 | P2 | `node --test e2e/legacy-v51.e2e.mjs` | Edge (playwright-core 1.56.1) | PASS 7/7 |
 | 2026-11-24 | P2 | mutation: `isCounted = () => true` | same | unit 3 FAIL + E2E order-recording FAIL (guards effective); restored → PASS |
+| 2026-11-24 | P3 | `npm run verify` | Windows 11, Node 22.23.1 | PASS — 51/51 unit (18 homework) |
+| 2026-11-24 | P3 | `npm run test:e2e` | Edge | PASS 10/10 (homework flow, settings/reward/backup, v1→v2 DB upgrade, v5.1 regression) |
 
 ## Negative/positive checks
 - Guardrails: Firebase SDK import, OAuth secret/token, innerHTML sink, impure core, ui import from core/sync, unmarked fixture → rejected; Sheets URL, plain word "Firebase", textContent, public client-ID text → accepted (`tests/guardrails.test.mjs`).
