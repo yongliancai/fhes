@@ -2,8 +2,8 @@
 // 未登入時：不開啟任何帳號資料庫、不渲染任何班級／學生／成績／作業／圖鑑資料（ADR-011）。
 // 登出／切換帳號／工作階段到期：停止同步、撤銷記憶體中的 token、整頁重新載入 → 記憶體中所有前一位老師的狀態都清空。
 import { h, makeModal, fill } from './dom.js';
-import { createGoogleSignIn, isValidClientId, SESSION_MAX_MS } from '../auth/google-signin.js';
-import { GOOGLE_CLIENT_ID } from '../config.js';
+import { createGoogleSignIn, isValidClientId, originAllowed, SESSION_MAX_MS } from '../auth/google-signin.js';
+import { GOOGLE_CLIENT_ID, GOOGLE_AUTHORIZED_ORIGINS } from '../config.js';
 
 const LS_CLIENT_ID = 'fhes_google_client_id';          // 公開識別碼（非密鑰）；只有 src/config.js 未設定時才用
 const SS_NOTICE = 'fhes_auth_notice';                  // 重新載入後要顯示的提示代碼（不含任何個資或憑證）
@@ -50,6 +50,13 @@ export const waitForSignIn = ({ $ }) => new Promise((resolve) => {
     const say = (text, kind = '') => { status.textContent = text; status.dataset.kind = kind; };
     const notice = ssTake(SS_NOTICE);
     if (notice && NOTICES[notice]) say(NOTICES[notice], 'info');
+    // 來源不在 Google 已授權清單：Google 的按鈕不會回報這種錯誤給 App，所以先在畫面上說清楚
+    const originWarn = $('auth-origin-warn');
+    if (originWarn) {
+        const ok = originAllowed(location.origin, GOOGLE_AUTHORIZED_ORIGINS);
+        originWarn.hidden = ok;
+        originWarn.textContent = ok ? '' : `目前網址的來源「${location.origin}」不在 Google 已授權的來源清單（${GOOGLE_AUTHORIZED_ORIGINS.join('、')}）。按登入可能出現「origin_mismatch」或沒有反應；請改用清單中的網址開啟，或請管理者在 Google Cloud 加入這個來源。`;
+    }
 
     let mounted = false;
     const mount = async () => {

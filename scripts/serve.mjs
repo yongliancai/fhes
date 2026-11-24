@@ -26,6 +26,8 @@ export const startServer = (port = 0) => new Promise((ok) => {
 });
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
-    const { url } = await startServer(Number(process.argv[2]) || 8765);
-    console.log(`Serving ${root} at ${url}`);
+    const { server } = await startServer(Number(process.argv[2]) || 8765);
+    // 印出 localhost（不是 127.0.0.1）：Google OAuth 的「已授權 JavaScript 來源」比對的是完整來源字串，
+    // 本專案設定的是 http://localhost:8765；用 127.0.0.1 開啟會得到 origin_mismatch。
+    console.log(`Serving ${root} at http://localhost:${server.address().port}/`);
 }

@@ -1,7 +1,7 @@
 // E2E 共用：啟動靜態伺服器 + 系統瀏覽器（playwright-core，不下載瀏覽器）
 // 本機 Windows 預設 Edge；CI（ubuntu）預設 Chrome。可用 E2E_CHANNEL 覆寫（chrome / msedge / chromium）。
 import { chromium, firefox, webkit } from 'playwright-core';
-import { mkdirSync, readFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, appendFileSync } from 'node:fs';
 import { resolve, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
@@ -19,6 +19,18 @@ export const fixture = (name) => JSON.parse(readFileSync(fixturePath(name), 'utf
 const channel = process.env.E2E_CHANNEL || (process.platform === 'win32' ? 'msedge' : 'chrome');
 /** E2E_BROWSER=firefox|webkit：用 playwright 官方建置的 Firefox / WebKit（CI 相容性工作會先安裝） */
 export const ENGINE = process.env.E2E_BROWSER || 'chromium';
+/**
+ * E2E_DIAG=1（CI 的 Firefox/WebKit 工作開啟）：蒐集失敗證據，不改變任何斷言。
+ * - 瀏覽器程序自己的 stderr（崩潰訊息）→ test-results/diag-browser-<engine>.log
+ * - 每個 context 的 trace（含快照）→ test-results/trace-<engine>-<n>.zip
+ * - 每則主控台訊息、頁面錯誤、導覽、崩潰的時間線 → test-results/diag-<engine>.log
+ * - 頁面內的 error / unhandledrejection（含 stack）：用來分辨「App 的 JS 丟出」與「瀏覽器內部訊息」
+ */
+const DIAG = process.env.E2E_DIAG === '1';
+const DIAG_LOG = join(OUT, `diag-${ENGINE}.log`);
+const diag = (line) => { if (DIAG) appendFileSync(DIAG_LOG, `${new Date().toISOString()} ${line}
+`); };
+let diagSeq = 0;
 
 let shared = null;
 /** 一個測試檔共用一個瀏覽器與伺服器；每個測試用全新 context（全新 IndexedDB） */
@@ -26,9 +38,12 @@ export const setup = async () => {
     if (shared) return shared;
     const { server, url } = await startServer(0);
     const headless = process.env.E2E_HEADED !== '1';
-    const browser = ENGINE === 'firefox' ? await firefox.launch({ headless })
-        : ENGINE === 'webkit' ? await webkit.launch({ headless })
-            : await chromium.launch({ channel: channel === 'chromium' ? undefined : channel, headless });
+    const logger = DIAG ? { isEnabled: (name) => name === 'browser', log: (name, sev, msg) => appendFileSync(join(OUT, `diag-browser-${ENGINE}.log`), `${new Date().toISOString()} [${sev}] ${msg}
+`) } : undefined;
+    const browser = ENGINE === 'firefox' ? await firefox.launch({ headless, logger })
+        : ENGINE === 'webkit' ? await webkit.launch({ headless, logger })
+            : await chromium.launch({ channel: channel === 'chromium' ? undefined : channel, headless, logger });
+    if (DIAG) browser.on('disconnected', () => diag('BROWSER DISCONNECTED'));
     shared = { server, url, browser, keys: await createTestKeys() };
     return shared;
 };
@@ -94,7 +109,26 @@ export const openApp = async (opts = {}) => {
     if (opts.emu) await wireSheets(context, opts.emu);
     const clientId = opts.clientId === undefined ? TEST_CLIENT_ID : opts.clientId;
     if (clientId) await context.addInitScript((cid) => { try { if (!localStorage.getItem('fhes_google_client_id')) localStorage.setItem('fhes_google_client_id', cid); } catch { /* ignore */ } }, clientId);
+    const seq = ++diagSeq;
+    if (DIAG) {
+        await context.tracing.start({ screenshots: true, snapshots: true });
+        // 頁面自己的 JS 丟出的錯誤一定會經過這兩個事件；主控台錯誤若沒有對應的這兩個事件，代表不是 App 的程式碼丟出
+        await context.addInitScript(() => {
+            const out = (kind, e) => console.debug(`[diag-page] ${kind}: ${e?.name || ''} ${e?.message || e} | stack=${(e?.stack || '').replace(/\s+/g, ' ').slice(0, 600)}`);
+            addEventListener('error', ev => out('error', ev.error || ev.message));
+            addEventListener('unhandledrejection', ev => out('unhandledrejection', ev.reason));
+        });
+    }
     const page = await context.newPage();
+    if (DIAG) {
+        diag(`--- context #${seq} opened (${ENGINE})`);
+        page.on('framenavigated', f => { if (f === page.mainFrame()) diag(`#${seq} navigated ${f.url().replace(/^https?:\/\/[^/]+/, '')}`); });
+        page.on('console', m => diag(`#${seq} console.${m.type()} ${JSON.stringify(m.text()).slice(0, 800)} loc=${JSON.stringify(m.location())}`));
+        page.on('pageerror', e => diag(`#${seq} pageerror ${e.name}: ${e.message} stack=${JSON.stringify((e.stack || '').slice(0, 600))}`));
+        page.on('crash', () => diag(`#${seq} PAGE CRASH url=${page.url()}`));
+        page.on('close', () => diag(`#${seq} page closed`));
+        page.on('requestfailed', r => diag(`#${seq} requestfailed ${r.method()} ${r.url().slice(0, 120)} ${r.failure()?.errorText}`));
+    }
     const errors = [];
     const prompts = [];
     const consoleAll = [];
@@ -114,7 +148,14 @@ export const openApp = async (opts = {}) => {
         try { await signIn(page, opts.account || TEACHER_A); }
         catch { throw new Error(`App did not start: ${errors.join(' | ') || 'no page error captured'}`); }
     } else await page.waitForSelector('#auth-gate', { timeout: 10000 });
-    return { page, context, errors, prompts, consoleAll, dialogs, url, revoked, close: () => context.close() };
+    const close = async () => {
+        if (DIAG) {
+            diag(`#${seq} closing; collected errors=${JSON.stringify(errors)}`);
+            await context.tracing.stop({ path: join(OUT, `trace-${ENGINE}-${seq}.zip`) }).catch(e => diag(`#${seq} trace stop failed: ${e.message}`));
+        }
+        await context.close();
+    };
+    return { page, context, errors, prompts, consoleAll, dialogs, url, revoked, close };
 };
 
 export const shot = (page, name) => page.screenshot({ path: join(OUT, `${name}.png`), fullPage: false });

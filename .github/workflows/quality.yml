@@ -61,6 +61,8 @@ jobs:
       - run: npm run test:e2e
         env:
           E2E_BROWSER: ${{ matrix.browser }}
+          # 只蒐集證據（trace、主控台時間線、瀏覽器 stderr），不改變任何斷言或門檻
+          E2E_DIAG: '1'
       - uses: actions/upload-artifact@v4
         if: always()
         with:

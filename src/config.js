@@ -4,3 +4,9 @@
 //   - 正式部署前由管理者填入（需使用者另外核准；見 docs/GOOGLE-SHEETS-SETUP.md）。
 // 絕對不要在這裡放 client secret、token 或任何密碼。
 export const GOOGLE_CLIENT_ID = '';
+
+// GOOGLE_AUTHORIZED_ORIGINS：與 Google Cloud「已授權的 JavaScript 來源」保持一致（公開資訊）。
+//   Google 比對的是完整來源字串：http://localhost:8765 與 http://127.0.0.1:8765 是不同的來源。
+//   目前網址不在清單內時，登入畫面會先提醒（否則老師按下登入只會看到 Google 的 origin_mismatch 或沒有反應）。
+//   修改 Google Cloud 設定時要同步更新這裡；清單為空 = 不檢查。
+export const GOOGLE_AUTHORIZED_ORIGINS = ['http://localhost:8765', 'https://yongliancai.github.io'];

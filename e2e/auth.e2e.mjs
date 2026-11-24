@@ -37,6 +37,9 @@ test('not signed in: login screen only, no account database is opened, nothing i
         await assertLocked(page, 'fresh visit is locked');
         assert.deepEqual((await dbNames(page)).filter(n => n.startsWith('fhes-acct-')), [], 'no account DB before sign-in');
         assert.match(await page.textContent('#auth-gate'), /班級經營動力站/);
+        // 測試伺服器在 127.0.0.1:<隨機埠>，不在 Google 已授權來源清單 → 登入前先說清楚（Google 的按鈕不會把 origin_mismatch 告訴 App）
+        assert.ok(await page.isVisible('#auth-origin-warn'), 'origin warning shown for an unlisted origin');
+        assert.match(await page.textContent('#auth-origin-warn'), /127\.0\.0\.1:\d+.*不在 Google 已授權的來源清單.*origin_mismatch/);
         // 鍵盤：Tab 可以到登入按鈕，Enter 可登入
         await page.waitForSelector('#fake-gsi-btn');
         let focused = '';

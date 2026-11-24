@@ -199,3 +199,18 @@ test('negative: persisting a credential or logging it is rejected by the guardra
 test('positive: storing the public client id and non-secret notices is allowed', () => {
     assert.deepEqual(checkFile('src/ui/auth-ui.js', "localStorage.setItem('fhes_google_client_id', v); sessionStorage.setItem('fhes_auth_notice', 'switch');"), []);
 });
+
+test('authorized origins: exact origin string match like Google (localhost ≠ 127.0.0.1, port matters); empty list = no check', async () => {
+    const { originAllowed } = await import('../src/auth/google-signin.js');
+    const { GOOGLE_AUTHORIZED_ORIGINS } = await import('../src/config.js');
+    const list = ['http://localhost:8765', 'https://yongliancai.github.io'];
+    assert.equal(originAllowed('http://localhost:8765', list), true);
+    assert.equal(originAllowed('https://yongliancai.github.io', list), true);
+    assert.equal(originAllowed('http://127.0.0.1:8765', list), false, '127.0.0.1 is a different origin');
+    assert.equal(originAllowed('http://localhost:8766', list), false, 'port must match');
+    assert.equal(originAllowed('https://localhost:8765', list), false, 'scheme must match');
+    assert.equal(originAllowed('https://yongliancai.github.io.evil.test', list), false);
+    assert.equal(originAllowed('http://anything', []), true);
+    // 設定檔與 Google Cloud 上的設定一致（使用者 2026-11-25 提供）
+    assert.deepEqual([...GOOGLE_AUTHORIZED_ORIGINS].sort(), [...list].sort());
+});

@@ -14,6 +14,9 @@ export const GOOGLE_JWKS_URL = 'https://www.googleapis.com/oauth2/v3/certs';
 export const SESSION_MAX_MS = 12 * 60 * 60 * 1000;
 export const isValidClientId = (id) => /^[0-9]+-[a-z0-9]+\.apps\.googleusercontent\.com$/.test(String(id || '').trim());
 
+/** 目前網址的來源是否在已授權清單內（清單為空 = 不檢查）。只比對完整來源字串，與 Google 的規則相同。 */
+export const originAllowed = (origin, list) => !Array.isArray(list) || list.length === 0 || list.includes(String(origin));
+
 let gisPromise = null;
 /** 載入 Google Identity Services 程式庫（登入與試算表授權共用同一支） */
 export const loadGis = () => gisPromise || (gisPromise = new Promise((ok, no) => {
