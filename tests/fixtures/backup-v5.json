@@ -1,0 +1,184 @@
+{
+  "_synthetic": true,
+  "_note": "合成測試資料：姓名皆為虛構代號，不含任何真實學生資料。",
+  "format": "classroom-powerhouse",
+  "version": 5,
+  "appVersion": "v5",
+  "exportedAt": 1795248000000,
+  "exportedAtLocal": "2026-11-21 16:00",
+  "classes": [
+    {
+      "id": "c5",
+      "name": "測試五班",
+      "groupCount": 2,
+      "scoreReasons": [],
+      "createdAt": 1794960000000,
+      "updatedAt": 1795222800000,
+      "deleted": false
+    }
+  ],
+  "students": [
+    {
+      "id": "s51",
+      "classId": "c5",
+      "seat": 1,
+      "name": "虛構一號",
+      "group": 1,
+      "removed": false
+    },
+    {
+      "id": "s52",
+      "classId": "c5",
+      "seat": 2,
+      "name": "虛構二號",
+      "group": 2,
+      "removed": false
+    },
+    {
+      "id": "s53",
+      "classId": "c5",
+      "seat": 3,
+      "name": "虛構三號",
+      "group": null,
+      "removed": false
+    }
+  ],
+  "events": [
+    {
+      "classId": "c5",
+      "targetType": "student",
+      "undone": false,
+      "undoOf": null,
+      "batchId": null,
+      "reason": "上課專心",
+      "id": "e1",
+      "ts": 1795132800000,
+      "date": "2026-11-20",
+      "targetId": "s51",
+      "kind": "score",
+      "delta": 3
+    },
+    {
+      "classId": "c5",
+      "targetType": "student",
+      "undone": false,
+      "undoOf": null,
+      "batchId": null,
+      "reason": "",
+      "id": "e2",
+      "ts": 1795136400000,
+      "date": "2026-11-20",
+      "targetId": "s51",
+      "kind": "score",
+      "delta": 2
+    },
+    {
+      "classId": "c5",
+      "targetType": "student",
+      "undone": false,
+      "undoOf": null,
+      "batchId": null,
+      "reason": "",
+      "id": "e3",
+      "ts": 1795140000000,
+      "date": "2026-11-20",
+      "targetId": "s52",
+      "kind": "heart",
+      "delta": -1
+    },
+    {
+      "classId": "c5",
+      "targetType": "student",
+      "undone": false,
+      "undoOf": null,
+      "batchId": null,
+      "reason": "",
+      "id": "e4",
+      "ts": 1795219200000,
+      "date": "2026-11-21",
+      "targetId": "s52",
+      "kind": "heart",
+      "delta": 2
+    },
+    {
+      "classId": "c5",
+      "targetType": "group",
+      "undone": false,
+      "undoOf": null,
+      "batchId": null,
+      "reason": "",
+      "id": "e5",
+      "ts": 1795222800000,
+      "date": "2026-11-21",
+      "targetId": "1",
+      "kind": "score",
+      "delta": 4
+    },
+    {
+      "classId": "c5",
+      "targetType": "student",
+      "undone": true,
+      "undoOf": null,
+      "batchId": null,
+      "reason": "",
+      "id": "e6",
+      "ts": 1795226400000,
+      "date": "2026-11-21",
+      "targetId": "s53",
+      "kind": "score",
+      "delta": 1,
+      "updatedAt": 1795226700000
+    },
+    {
+      "classId": "c5",
+      "targetType": "student",
+      "undone": false,
+      "undoOf": "e6",
+      "batchId": null,
+      "reason": "復原：加分",
+      "id": "e7",
+      "ts": 1795226700000,
+      "date": "2026-11-21",
+      "targetId": "s53",
+      "kind": "score",
+      "delta": -1
+    }
+  ],
+  "dailySnapshots": [
+    {
+      "id": "c5|2026-11-20",
+      "classId": "c5",
+      "date": "2026-11-20",
+      "settledAt": 1795215600000,
+      "students": {},
+      "groups": {}
+    }
+  ],
+  "meta": {
+    "lastSettledDate": {
+      "c5": "2026-11-20"
+    }
+  },
+  "_expected": {
+    "totals": {
+      "s51": {
+        "score": 5,
+        "earned": 5,
+        "heart": 0
+      },
+      "s52": {
+        "score": 0,
+        "earned": 0,
+        "heart": 2
+      },
+      "s53": {
+        "score": 0,
+        "earned": 0,
+        "heart": 0
+      }
+    },
+    "groups": {
+      "c5|1": 4
+    }
+  }
+}

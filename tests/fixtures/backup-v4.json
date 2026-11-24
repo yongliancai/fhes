@@ -1,0 +1,30 @@
+{
+  "_synthetic": true,
+  "_note": "合成測試資料：姓名皆為虛構代號，不含任何真實學生資料。",
+  "data": [
+    {
+      "id": "c4",
+      "name": "測試四年級",
+      "groupCount": 2,
+      "students": [
+        {
+          "id": "s41",
+          "name": "測試甲",
+          "score": 5,
+          "group": 1
+        },
+        {
+          "id": "s42",
+          "name": "測試乙",
+          "score": 0,
+          "group": 2
+        },
+        {
+          "id": "s43",
+          "name": "測試丙",
+          "score": -2
+        }
+      ]
+    }
+  ]
+}

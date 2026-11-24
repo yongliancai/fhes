@@ -717,14 +717,17 @@
         //  資料層：IndexedDB（classes / students / events / dailySnapshots / meta）
         //  所有累計分數一律由 events 加總而來。
         // =====================================================================
+        import { localDate, localTime, localDateTime, addDays, mdLabel, stampForFile } from './src/core/dates.js';
+        import { uid } from './src/core/ids.js';
+        import { isCounted, effDate, byEffTs, applyTo, applyEventToTotals, normalizeEvent } from './src/core/score.js';
+        import { SESSIONS, DEFAULT_SESSION_TIMES, ensureClassDefaults, newClassObj as coreNewClassObj, sessionAt } from './src/core/classes.js';
+        import { isV4Data, convertV4 as coreConvertV4, parseBackup as coreParseBackup, buildBackup as coreBuildBackup } from './src/core/backup.js';
+
         const APP_VERSION = 'v5.1';
         const DATA_VERSION = 5.1;
-        const TZ = 'Asia/Taipei';
 
         // ---------- 小工具 ----------
         const $ = (id) => document.getElementById(id);
-        const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
-        const pad2 = (n) => String(n).padStart(2, '0');
 
         /** 元素建構器：所有文字一律以 textNode 寫入，避免 innerHTML 破版 */
         const h = (tag, props, ...kids) => {
@@ -741,20 +744,6 @@
             kids.flat(Infinity).forEach(c => { if (c == null || c === false) return; el.append(c instanceof Node ? c : String(c)); });
             return el;
         };
-
-        // ---------- 本地日期（Asia/Taipei），不使用 toISOString ----------
-        const dateParts = new Intl.DateTimeFormat('en-US', { timeZone: TZ, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' });
-        const partsOf = (t) => Object.fromEntries(dateParts.formatToParts(new Date(t)).map(p => [p.type, p.value]));
-        const localDate = (t = Date.now()) => { const p = partsOf(t); return `${p.year}-${p.month}-${p.day}`; };
-        const localTime = (t) => { const p = partsOf(t); return `${p.hour}:${p.minute}`; };
-        const localDateTime = (t) => `${localDate(t)} ${localTime(t)}`;
-        const addDays = (ds, n) => {
-            const [y, m, d] = ds.split('-').map(Number);
-            const t = new Date(Date.UTC(y, m - 1, d + n));
-            return `${t.getUTCFullYear()}-${pad2(t.getUTCMonth() + 1)}-${pad2(t.getUTCDate())}`;
-        };
-        const mdLabel = (ds) => { const [, m, d] = ds.split('-').map(Number); return `${m} 月 ${d} 日`; };
-        const stampForFile = () => { const p = partsOf(Date.now()); return `${p.year}${p.month}${p.day}_${p.hour}${p.minute}`; };
 
         const downloadFile = (filename, content, mime = 'application/json') => {
             const blob = content instanceof Blob ? content : new Blob([content], { type: mime });
@@ -808,27 +797,8 @@
         const totals = new Map();       // studentId -> { score:可用加分, earned:累計獲得, heart }
         const groupTotals = new Map();  // `${classId}|${group}` -> score
 
-        // v5.1：只有「已確認」的紀錄才計入；待確認、駁回都不算
-        const isCounted = (e) => (e.status || 'confirmed') === 'confirmed';
-        const effTs = (e) => e.confirmedAt || e.ts;            // 生效時間（隔天確認 → 確認當下）
-        const effDate = (e) => e.confirmedDate || e.date;      // 生效日（計入哪一天的結算）
-        /** 套用一筆紀錄：愛心依時間逐筆累加、每一步最少 0；累計獲得排除兌換 */
-        const applyTo = (t, e) => {
-            if (e.kind === 'heart') t.heart = Math.max(0, t.heart + e.delta);
-            else { t.score += e.delta; if (!e.redeem) t.earned += e.delta; }
-        };
-        const applyToTotals = (e) => {
-            if (!isCounted(e)) return;
-            if (e.targetType === 'student') {
-                const t = totals.get(e.targetId) || { score: 0, heart: 0, earned: 0 };
-                applyTo(t, e);
-                totals.set(e.targetId, t);
-            } else if (e.targetType === 'group') {
-                const k = `${e.classId}|${e.targetId}`;
-                groupTotals.set(k, (groupTotals.get(k) || 0) + e.delta);
-            }
-        };
-        const byEffTs = (a, b) => effTs(a) - effTs(b);
+        // v5.1 計分規則在 src/core/score.js（只有「已確認」才計入、愛心最少 0、兌換不減累計獲得）
+        const applyToTotals = (e) => applyEventToTotals(totals, groupTotals, e);
         const recomputeTotals = () => {
             totals.clear(); groupTotals.clear(); eventById.clear();
             S.events.sort((a, b) => a.ts - b.ts);
@@ -846,33 +816,10 @@
             .sort((a, b) => (a.seat || 999) - (b.seat || 999) || a.name.localeCompare(b.name, 'zh-Hant'));
         const eventsOf = (classId) => S.events.filter(e => e.classId === classId);
 
-        const DEFAULT_PENALTY_REASONS = ['講話', '走動', '傳紙條', '吵鬧', '作業', '其他'];
-        const DEFAULT_CLEAR_REASONS = ['表現改善', '主動幫忙', '老師另訂'];
-        const DEFAULT_REDEEM_ITEMS = [{ name: '小文具', cost: 10 }, { name: '自選座位一天', cost: 20 }, { name: '當一天小老師', cost: 15 }, { name: '優先選打掃工作', cost: 10 }];
-        const DEFAULT_SCORE_REASONS = [];
-        const SESSIONS = ['早自修', '午休', '其他'];
-        const DEFAULT_SESSION_TIMES = { '早自修': ['07:30', '08:40'], '午休': ['12:20', '13:30'] };
-        const newClassObj = (name, groupCount = 4) => {
-            const c = { id: uid(), name, groupCount, scoreReasons: [...DEFAULT_SCORE_REASONS], createdAt: Date.now(), updatedAt: Date.now(), deleted: false };
-            ensureClassDefaults(c); return c;
-        };
-        /** 補上 v5.1 的班級設定（扣分原因、消除原因、兌換清單、時段時間）；回傳是否有補 */
-        function ensureClassDefaults(c) {
-            let changed = false;
-            const fill = (k, v) => { if (!c[k]) { c[k] = v; changed = true; } };
-            fill('penaltyReasons', [...DEFAULT_PENALTY_REASONS]);
-            fill('clearReasons', [...DEFAULT_CLEAR_REASONS]);
-            fill('redeemItems', DEFAULT_REDEEM_ITEMS.map(x => ({ ...x })));
-            fill('sessionTimes', JSON.parse(JSON.stringify(DEFAULT_SESSION_TIMES)));
-            fill('scoreReasons', []);
-            return changed;
-        }
+        // 班級預設值與補值在 src/core/classes.js
+        const newClassObj = (name, groupCount = 4) => coreNewClassObj(name, groupCount, { id: uid() });
         /** 目前時段：依班級設定的早自修、午休時間；秩序記錄模式中以記錄時段為準 */
-        const currentSession = (c, t = Date.now()) => {
-            const hm = localTime(t); const st = c?.sessionTimes || DEFAULT_SESSION_TIMES;
-            for (const k of ['早自修', '午休']) { const [a, b] = st[k] || []; if (a && b && hm >= a && hm < b) return k; }
-            return '其他';
-        };
+        const currentSession = (c, t = Date.now()) => sessionAt(c, localTime(t));
         const newStudentObj = (classId, seat, name) => ({ id: uid(), classId, seat, name, group: null, removed: false });
 
         /** 名單或班級設定變動：更新 updatedAt 並存檔 */
@@ -897,14 +844,7 @@
             return list;
         };
 
-        /** v5.1 資料升級：班級補上扣分原因、消除原因、兌換清單、時段時間 */
-        /** 舊紀錄補欄位：時段＝其他、狀態＝已確認、記錄人＝老師、備註＝空白、非兌換 */
-        const EVENT_DEFAULTS = { session: '其他', status: 'confirmed', recordedBy: 'teacher', reviewNote: '', redeem: false };
-        const normalizeEvent = (e) => {
-            let changed = false;
-            for (const [k, v] of Object.entries(EVENT_DEFAULTS)) if (e[k] === undefined || e[k] === null) { e[k] = v; changed = true; }
-            return changed;
-        };
+        /** 資料升級：班級補設定；舊紀錄補欄位（EVENT_DEFAULTS：時段＝其他、狀態＝已確認、記錄人＝老師、備註＝空白、非兌換） */
         const upgradeData = async () => {
             const cls = S.classes.filter(ensureClassDefaults);
             const evs = S.events.filter(normalizeEvent);
@@ -917,24 +857,8 @@
 
         // ---------- v4 轉換 ----------
         const LS_V4_KEY = 'classroomPowerhouse_cache_v4';
-        /** v4 的 allClasses 陣列 → v5 { classes, students, events } */
-        const convertV4 = (arr) => {
-            const out = { classes: [], students: [], events: [] };
-            const now = Date.now(), today = localDate(now);
-            arr.forEach((c, ci) => {
-                if (!c || !Array.isArray(c.students)) return;
-                const cls = { ...newClassObj(String(c.name || `班級 ${ci + 1}`), Number(c.groupCount) || 4), id: String(c.id ?? uid()), createdAt: now + ci };
-                out.classes.push(cls);
-                c.students.forEach((s, si) => {
-                    const st = { id: String(s.id ?? uid()), classId: cls.id, seat: si + 1, name: String(s.name ?? `${si + 1}號`), group: Number.isInteger(s.group) ? s.group : null, removed: false };
-                    out.students.push(st);
-                    const score = Number(s.score) || 0;
-                    if (score !== 0) out.events.push({ id: uid(), classId: cls.id, ts: now, date: today, targetType: 'student', targetId: st.id, kind: 'score', delta: score, reason: '期初結轉', undone: false, undoOf: null, batchId: 'migrate-v4' });
-                });
-            });
-            return out;
-        };
-        const isV4Data = (d) => Array.isArray(d) && d.every(c => c && Array.isArray(c.students));
+        /** v4 的 allClasses 陣列 → v5 { classes, students, events }（規則在 src/core/backup.js） */
+        const convertV4 = (arr) => { const now = Date.now(); return coreConvertV4(arr, { uid, now, today: localDate(now), newClassObj: coreNewClassObj }); };
 
         /** 第一次開啟 v5：從 localStorage 的 v4 快取升級 */
         const migrateFromV4IfNeeded = async () => {
@@ -1498,7 +1422,6 @@
             return null;
         };
         const targetName = (e) => e.targetType === 'group' ? `第 ${e.targetId} 小隊` : (studentById(e.targetId)?.name ?? '（已移除）');
-        const kindLabel = (k) => k === 'heart' ? '❤️ 愛心' : '⭐ 加分';
         /** 依語意顯示：❤️ 扣分／✨ 消除／🎁 兌換／⭐ 加分 */
         const actionLabel = (e) => e.undoOf ? ((e.reason || '').startsWith('撤銷') ? '↩ 撤銷' : '↶ 復原') : e.kind === 'heart' ? (e.delta > 0 ? '❤️ 扣分' : '✨ 消除') : (e.redeem ? '🎁 兌換' : '⭐ 加分');
         const signed = (n) => (n > 0 ? `+${n}` : `${n}`);
@@ -2114,11 +2037,8 @@
         // =====================================================================
         //  備份與導入
         // =====================================================================
-        const buildBackup = () => ({
-            format: 'classroom-powerhouse', version: DATA_VERSION, appVersion: APP_VERSION, exportedAt: Date.now(), exportedAtLocal: localDateTime(Date.now()),
-            classes: S.classes, students: S.students, events: S.events, dailySnapshots: S.snapshots,
-            meta: { lastSettledDate: S.meta.lastSettledDate || {} },
-        });
+        const buildBackup = () => { const now = Date.now(); return coreBuildBackup({ ...S, dailySnapshots: S.snapshots }, {
+            dataVersion: DATA_VERSION, appVersion: APP_VERSION, now, exportedAtLocal: localDateTime(now), meta: { lastSettledDate: S.meta.lastSettledDate || {} } }); };
         const exportBackup = async (prefix = '班級動力站_v5.1備份') => {
             downloadFile(`${prefix}_${stampForFile()}.json`, JSON.stringify(buildBackup()));
             await setMeta('lastBackupAt', Date.now());
@@ -2217,15 +2137,7 @@
             reader.readAsText(file);
         });
         /** 讀取備份檔：v5 或 v4（班級陣列）→ 統一成 v5 payload */
-        const parseBackup = (data) => {
-            if (isV4Data(data)) return { kind: 'v4', classes: [], students: [], events: [], dailySnapshots: [], meta: {}, ...convertV4(data) };
-            if (data && data.format === 'classroom-powerhouse' && Array.isArray(data.classes)) {
-                if ((data.version || 0) > DATA_VERSION) throw new Error('這個備份來自較新版本，請先更新程式。');
-                const arr = (k) => Array.isArray(data[k]) ? data[k] : [];
-                return { kind: `v${data.version}`, classes: arr('classes'), students: arr('students'), events: arr('events'), dailySnapshots: arr('dailySnapshots'), meta: data.meta || {}, exportedAtLocal: data.exportedAtLocal };
-            }
-            throw new Error('檔案格式錯誤，不是班級動力站的備份。');
-        };
+        const parseBackup = (data) => coreParseBackup(data, { dataVersion: DATA_VERSION, convertV4 });
         let pendingImport = null;
         const handleImport = (data) => {
             let p; try { p = parseBackup(data); } catch (err) { alert(err.message); return; }

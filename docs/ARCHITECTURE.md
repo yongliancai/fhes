@@ -1,25 +1,27 @@
-# FHES code map (observed v5.1 at 44879bb)
-## Current
-- `index.html`: standalone HTML/CSS/JavaScript entry, cosmic-style UI.
-- Browser IndexedDB `classroomPowerhouseV5`: `classes`, `students`, `events`, `dailySnapshots`, `meta`.
-- Local-memory `S`: classes, students, events, snapshots and meta.
-- Derived maps: `totals` (score/earned/heart), `groupTotals` for group event totals.
-- User workflows: student and group scoring, order-recording review and reversal, daily settlement, roster updates, backup import/export.
-- Optional legacy `Cloud`: Firebase dynamic imports + Firestore `classroomPowerhouseV5/{docId}` collections, local-first push/pull.
-- No Google Sign-In or Sheets client in current source.
-## Existing logic to protect
-- `isCounted` gates pending/rejected records.
-- `applyTo` tracks heart floor, spendable score, lifetime earned (redemption excluded).
-- `applyToTotals` handles independent student vs group event totals.
-- `dbWrite` is a multi-store IndexedDB transaction.
-- `buildBackup` / `parseBackup` / import approval paths preserve historical backup compatibility.
-## Known limitations
-- One large application file; existing Firebase cloud update/merge behavior needs stronger conflict tests.
-- Baseline tests added to branch use narrow production-code extraction rather than a public module interface.
-- No reliable runtime UI or OAuth verification established yet.
-## Proposed P2 modular boundary (not yet implemented)
-core/ids-and-schema → core/score-projection → core/backup-version → data/local-indexeddb → sync/provider-adapter → ui/controllers.
-Separate read projections from mutation commands. Keep storage provider implementation behind a narrow adapter.
-Never remove the old `Cloud` or alter formal data migration until isolated tests and export checks prove preservation.
-## Future P3–P6 (design only)
-Homework records; collection identity & rarity 5/4/2/1, six worlds, independent special collectible IDs; Google Sheets OAuth replacing optional Firestore only following additional authorization and data confirmation.
+# FHES code map
+
+## Entry
+- `index.html` — page markup, CSS, and the main inline `<script type="module">` (UI controllers for the v5.1 screens). Imports `src/**`.
+- Must be served over http(s) (ADR-005). Local: `npm run serve` → http://127.0.0.1:8765/
+
+## Modules (`src/`)
+| Path | Layer | Purpose |
+|---|---|---|
+| `src/core/dates.js` | core | Asia/Taipei local date/time helpers |
+| `src/core/ids.js` | core | `uid`, `stableStringify`, content hash |
+| `src/core/score.js` | core | v5.1 scoring rules: `isCounted`, `applyTo`, totals, `normalizeEvent` |
+| `src/core/classes.js` | core | class defaults/back-fill (`ensureClassDefaults`, extensible fillers), sessions |
+| `src/core/backup.js` | core | backup parse/build for v4/v5/v5.1/v6, v4 conversion |
+
+Dependency direction: `ui → sync → core/data`. `core`/`data` are pure (no browser globals). Enforced by `scripts/guardrails.mjs`.
+
+## Browser storage
+IndexedDB `classroomPowerhouseV5`:
+- v1 stores: `classes`, `students`, `events`, `dailySnapshots`, `meta`.
+
+In-memory `S` mirrors the stores; totals are recomputed from events.
+
+## Tests
+- `tests/*.test.mjs` — Node built-in runner, imports production modules directly; synthetic fixtures in `tests/fixtures/` (v4/v5/v5.1 backups with hand-checked expected totals).
+- `e2e/*.e2e.mjs` — playwright-core + system browser against `scripts/serve.mjs`.
+- `scripts/guardrails.mjs`, `scripts/lint.mjs`, `scripts/check-inline-js.mjs` — deterministic checks.

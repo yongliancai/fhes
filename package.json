@@ -3,12 +3,25 @@
   "private": true,
   "version": "5.1.0",
   "type": "module",
-  "description": "AI Code Factory P0-P2 safety and regression checks for the existing static app",
+  "description": "班級經營動力站：靜態單頁應用（無建置步驟）＋ 品質檢查與測試",
   "scripts": {
+    "serve": "node scripts/serve.mjs 8765",
     "check:syntax": "node scripts/check-inline-js.mjs",
     "check:guardrails": "node scripts/guardrails.mjs",
+    "lint": "node scripts/lint.mjs",
     "test": "node --test",
-    "verify": "npm run check:syntax && npm run check:guardrails && npm test"
+    "test:e2e": "node --test --test-concurrency=1 \"e2e/*.e2e.mjs\"",
+    "verify": "npm run check:syntax && npm run check:guardrails && npm run lint && npm test",
+    "verify:all": "npm run verify && npm run test:e2e"
   },
-  "engines": { "node": ">=20" }
+  "engines": {
+    "node": ">=20"
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "axe-core": "4.11.0",
+    "eslint": "10.15.0",
+    "globals": "16.5.0",
+    "playwright-core": "1.56.1"
+  }
 }
