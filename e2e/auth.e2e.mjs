@@ -16,13 +16,22 @@ const dbNames = (page) => page.evaluate(async () => (await indexedDB.databases()
 /** 鎖定狀態：登入畫面可見、主程式畫面不可見、頁面上沒有任何班級／學生卡片 */
 const assertLocked = async (page, why) => {
     await page.waitForSelector('#auth-gate', { state: 'visible' });
-    const st = await page.evaluate(() => ({
+    // 登出／切換會「先原地鎖定、再重新載入」：兩個狀態都必須是鎖定的。檢查剛好碰上重新載入時（WebKit CI 遇過），
+    // 等新頁面載入後再檢查一次；斷言內容不變。
+    const read = () => page.evaluate(() => ({
         locked: document.body.classList.contains('locked'),
         visibleScreens: [...document.querySelectorAll('.app-screen')].filter(e => e.getBoundingClientRect().height > 0).map(e => e.id),
         classCards: document.querySelectorAll('.class-card[data-id]').length,
         studentCards: document.querySelectorAll('.student-card').length,
         account: document.getElementById('account-slot')?.textContent || '',
     }));
+    let st;
+    try { st = await read(); }
+    catch (e) {
+        if (!/Execution context was destroyed|navigation/i.test(e.message)) throw e;
+        await page.waitForLoadState('load'); await page.waitForSelector('#auth-gate', { state: 'visible' });
+        st = await read();
+    }
     assert.deepEqual(st, { locked: true, visibleScreens: [], classCards: 0, studentCards: 0, account: '' }, why);
 };
 const openAccount = async (page) => { await page.click('#account-btn'); await page.waitForSelector('#account-modal.visible'); };
