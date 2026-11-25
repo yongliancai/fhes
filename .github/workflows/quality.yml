@@ -1,0 +1,74 @@
+name: Quality (no deployment)
+on:
+  push:
+    branches: [chore/code-factory-p0-p2]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npm run verify
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: verify
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: google-chrome --version
+      - run: npm run test:e2e
+        env:
+          E2E_CHANNEL: chrome
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: e2e-screenshots
+          path: test-results/
+          retention-days: 14
+  e2e-compat:
+    # Firefox / WebKit（Safari 引擎）相容性：安裝 playwright 官方瀏覽器建置，只在 CI 執行
+    # playwright 1.56 沒有 ubuntu 26.04 的 Firefox/WebKit 建置 → 固定 24.04
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    needs: verify
+    strategy:
+      fail-fast: false
+      matrix:
+        browser: [firefox, webkit]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npx playwright-core install --with-deps ${{ matrix.browser }}
+      - run: npm run test:e2e
+        env:
+          E2E_BROWSER: ${{ matrix.browser }}
+          # 只蒐集證據（trace、主控台時間線、瀏覽器 stderr），不改變任何斷言或門檻
+          E2E_DIAG: '1'
+          # 瀏覽器程序的 stderr（WebKit 頁面崩潰的原因）印到這個步驟的紀錄裡
+          DEBUG: pw:browser
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: e2e-screenshots-${{ matrix.browser }}
+          path: test-results/
+          retention-days: 14
+# 本 workflow 刻意不含任何部署步驟；PASS 不代表可以合併或發布（需使用者另行批准）。

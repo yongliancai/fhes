@@ -1,0 +1,314 @@
+{
+  "_synthetic": true,
+  "_note": "合成測試資料：姓名皆為虛構代號，不含任何真實學生資料。",
+  "format": "classroom-powerhouse",
+  "version": 5.1,
+  "appVersion": "v5.1",
+  "exportedAt": 1795424400000,
+  "exportedAtLocal": "2026-11-23 17:00",
+  "classes": [
+    {
+      "id": "c51",
+      "name": "測試五一班",
+      "groupCount": 3,
+      "scoreReasons": [],
+      "createdAt": 1794960000000,
+      "updatedAt": 1795395600000,
+      "deleted": false,
+      "penaltyReasons": [
+        "講話",
+        "走動",
+        "傳紙條",
+        "吵鬧",
+        "作業",
+        "其他"
+      ],
+      "clearReasons": [
+        "表現改善",
+        "主動幫忙",
+        "老師另訂"
+      ],
+      "redeemItems": [
+        {
+          "name": "小文具",
+          "cost": 10
+        }
+      ],
+      "sessionTimes": {
+        "早自修": [
+          "07:30",
+          "08:40"
+        ],
+        "午休": [
+          "12:20",
+          "13:30"
+        ]
+      }
+    }
+  ],
+  "students": [
+    {
+      "id": "s1",
+      "classId": "c51",
+      "seat": 1,
+      "name": "代號甲",
+      "group": 1,
+      "removed": false
+    },
+    {
+      "id": "s2",
+      "classId": "c51",
+      "seat": 2,
+      "name": "代號乙",
+      "group": 2,
+      "removed": false
+    },
+    {
+      "id": "s3",
+      "classId": "c51",
+      "seat": 3,
+      "name": "代號丙",
+      "group": 2,
+      "removed": false
+    }
+  ],
+  "events": [
+    {
+      "classId": "c51",
+      "targetType": "student",
+      "undone": false,
+      "undoOf": null,
+      "batchId": null,
+      "reason": "小組合作",
+      "session": "其他",
+      "status": "confirmed",
+      "recordedBy": "teacher",
+      "reviewNote": "",
+      "redeem": false,
+      "id": "a1",
+      "ts": 1795309200000,
+      "date": "2026-11-22",
+      "targetId": "s1",
+      "kind": "score",
+      "delta": 10
+    },
+    {
+      "classId": "c51",
+      "targetType": "student",
+      "undone": false,
+      "undoOf": null,
+      "batchId": null,
+      "reason": "兌換：小文具",
+      "session": "其他",
+      "status": "confirmed",
+      "recordedBy": "teacher",
+      "reviewNote": "",
+      "redeem": true,
+      "id": "a2",
+      "ts": 1795312800000,
+      "date": "2026-11-22",
+      "targetId": "s1",
+      "kind": "score",
+      "delta": -4
+    },
+    {
+      "classId": "c51",
+      "targetType": "student",
+      "undone": false,
+      "undoOf": null,
+      "batchId": null,
+      "reason": "講話",
+      "session": "早自修",
+      "status": "pending",
+      "recordedBy": "s3",
+      "reviewNote": "",
+      "redeem": false,
+      "id": "a3",
+      "ts": 1795304400000,
+      "date": "2026-11-22",
+      "targetId": "s2",
+      "kind": "heart",
+      "delta": 1
+    },
+    {
+      "classId": "c51",
+      "targetType": "student",
+      "undone": false,
+      "undoOf": null,
+      "batchId": null,
+      "reason": "走動",
+      "session": "早自修",
+      "status": "rejected",
+      "recordedBy": "s3",
+      "reviewNote": "誤記",
+      "redeem": false,
+      "id": "a4",
+      "ts": 1795304700000,
+      "date": "2026-11-22",
+      "targetId": "s2",
+      "kind": "heart",
+      "delta": 1
+    },
+    {
+      "classId": "c51",
+      "targetType": "student",
+      "undone": false,
+      "undoOf": null,
+      "batchId": null,
+      "reason": "吵鬧",
+      "session": "午休",
+      "status": "confirmed",
+      "recordedBy": "s3",
+      "reviewNote": "",
+      "redeem": false,
+      "id": "a5",
+      "ts": 1795321800000,
+      "date": "2026-11-22",
+      "targetId": "s2",
+      "kind": "heart",
+      "delta": 1,
+      "confirmedAt": 1795392000000,
+      "confirmedDate": "2026-11-23",
+      "reviewedAt": 1795392000000
+    },
+    {
+      "classId": "c51",
+      "targetType": "student",
+      "undone": false,
+      "undoOf": null,
+      "batchId": null,
+      "reason": "講話",
+      "session": "其他",
+      "status": "confirmed",
+      "recordedBy": "teacher",
+      "reviewNote": "撤銷：申訴成立",
+      "redeem": false,
+      "id": "a6",
+      "ts": 1795395600000,
+      "date": "2026-11-23",
+      "targetId": "s2",
+      "kind": "heart",
+      "delta": 1,
+      "revoked": true,
+      "updatedAt": 1795402800000
+    },
+    {
+      "classId": "c51",
+      "targetType": "student",
+      "undone": false,
+      "undoOf": "a6",
+      "batchId": null,
+      "reason": "撤銷：申訴成立",
+      "session": "其他",
+      "status": "confirmed",
+      "recordedBy": "teacher",
+      "reviewNote": "",
+      "redeem": false,
+      "id": "a7",
+      "ts": 1795402800000,
+      "date": "2026-11-23",
+      "targetId": "s2",
+      "kind": "heart",
+      "delta": -1
+    },
+    {
+      "classId": "c51",
+      "targetType": "student",
+      "undone": false,
+      "undoOf": null,
+      "batchId": null,
+      "reason": "表現改善",
+      "session": "其他",
+      "status": "confirmed",
+      "recordedBy": "teacher",
+      "reviewNote": "",
+      "redeem": false,
+      "id": "a8",
+      "ts": 1795406400000,
+      "date": "2026-11-23",
+      "targetId": "s3",
+      "kind": "heart",
+      "delta": -1
+    },
+    {
+      "classId": "c51",
+      "targetType": "group",
+      "undone": false,
+      "undoOf": null,
+      "batchId": null,
+      "reason": "",
+      "session": "其他",
+      "status": "confirmed",
+      "recordedBy": "teacher",
+      "reviewNote": "",
+      "redeem": false,
+      "id": "a9",
+      "ts": 1795410000000,
+      "date": "2026-11-23",
+      "targetId": "2",
+      "kind": "score",
+      "delta": 3
+    },
+    {
+      "classId": "c51",
+      "targetType": "group",
+      "undone": false,
+      "undoOf": null,
+      "batchId": null,
+      "reason": "",
+      "session": "其他",
+      "status": "confirmed",
+      "recordedBy": "teacher",
+      "reviewNote": "",
+      "redeem": false,
+      "id": "a10",
+      "ts": 1795413600000,
+      "date": "2026-11-23",
+      "targetId": "2",
+      "kind": "score",
+      "delta": -1
+    }
+  ],
+  "dailySnapshots": [
+    {
+      "id": "c51|2026-11-22",
+      "classId": "c51",
+      "date": "2026-11-22",
+      "settledAt": 1795388400000,
+      "v": 5.1,
+      "students": {},
+      "groups": {},
+      "sessionTotals": {}
+    }
+  ],
+  "meta": {
+    "lastSettledDate": {
+      "c51": "2026-11-22"
+    }
+  },
+  "_expected": {
+    "totals": {
+      "s1": {
+        "score": 6,
+        "earned": 10,
+        "heart": 0
+      },
+      "s2": {
+        "score": 0,
+        "earned": 0,
+        "heart": 1
+      },
+      "s3": {
+        "score": 0,
+        "earned": 0,
+        "heart": 0
+      }
+    },
+    "groups": {
+      "c51|2": 2
+    },
+    "pending": [
+      "a3"
+    ]
+  }
+}

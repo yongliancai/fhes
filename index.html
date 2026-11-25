@@ -382,9 +382,39 @@
     .row-btn { min-height: 40px !important; padding: 4px 12px !important; font-size: 0.85em !important; }
     .version-tag { position: fixed; left: 10px; bottom: 6px; z-index: 45; font-family: 'Share Tech Mono', monospace; font-size: 12px; color: var(--text-secondary); opacity: 0.8; pointer-events: none; }
 </style>
+<link rel="stylesheet" href="src/ui/features.css">
 </head>
-<body>
+<body class="locked">
     <canvas id="particle-canvas"></canvas>
+    <!-- 登入畫面（方案 A）：驗證 Google 登入之前，不開啟任何帳號資料庫、不渲染任何班級資料 -->
+    <main id="auth-gate" class="auth-gate" aria-labelledby="auth-title">
+        <div class="auth-card">
+            <div class="auth-logo" aria-hidden="true">🚀</div>
+            <h1 id="auth-title">班級經營動力站</h1>
+            <p class="auth-sub">CLASS COMMAND CENTER</p>
+            <p class="auth-lead">請用老師的 Google 帳號登入，才能進入班級資料。</p>
+            <div id="gsi-button" class="gsi-button"></div>
+            <p id="auth-status" class="auth-status" role="status" aria-live="polite"></p>
+            <p id="auth-origin-warn" class="auth-status" data-kind="warn" role="alert" hidden></p>
+            <div id="auth-setup" class="auth-setup">
+                <label for="auth-client-id">OAuth Client ID（公開識別碼，不是密碼；由管理者提供，設定方式見說明文件）</label>
+                <div class="auth-setup-row">
+                    <input id="auth-client-id" type="text" autocomplete="off" spellcheck="false" placeholder="1234567890-xxxx.apps.googleusercontent.com">
+                    <button id="auth-client-save" class="btn btn-secondary" type="button">儲存</button>
+                </div>
+            </div>
+            <details class="auth-help">
+                <summary>登入說明與隱私</summary>
+                <ul>
+                    <li>每個 Google 帳號在這台電腦有自己的資料區，彼此看不到。</li>
+                    <li>系統只取得你的帳號識別碼、名稱與 Email，用來分開資料；不會讀取你的 Gmail 或雲端硬碟其他檔案。</li>
+                    <li>共用電腦用完請按右上角帳號 →「登出」。</li>
+                    <li>登入需要網路；登入後短暫斷線仍可繼續使用，恢復後自動同步。</li>
+                </ul>
+            </details>
+            <p class="auth-credit">設計：永濂老師</p>
+        </div>
+    </main>
     <div id="scanlines"></div>
     <div id="scan-sweep"></div>
     <div id="screen-flash" class="screen-flash"></div>
@@ -413,10 +443,11 @@
         <button class="fs-btn fs-l" data-fs="xl" title="字體：特大">A</button>
         <span class="sep"></span>
         <button id="mute-btn" title="音效開關">🔊</button>
+        <button id="motion-btn" title="減少動態效果" aria-pressed="false">🐢</button>
     </div>
     <div class="version-tag" id="version-tag">v5.1</div>
 
-    <div id="class-dashboard" class="app-screen active">
+    <div id="class-dashboard" class="app-screen">
         <div class="container">
             <div class="header">
                 <div class="title-block">
@@ -424,15 +455,18 @@
                     <div class="credit-pill">設計：永濂老師</div>
                 </div>
                 <div class="header-actions">
-                    <button id="db-status-badge" class="db-status" title="點擊設定雲端資料庫（選用）">
+                    <span id="account-slot" class="account-slot"></span>
+                    <button id="db-status-badge" class="db-status" title="雲端同步設定（Google 試算表，選用）">
                         <span class="db-dot" id="db-dot"></span>
                         <span id="db-status-text">僅存本機</span>
                     </button>
                     <button id="reload-cloud-btn" class="btn btn-secondary" title="與雲端同步">🔄 同步</button>
                     <button id="load-data-btn" class="btn btn-secondary">載入備份</button>
                     <button id="export-data-btn" class="btn btn-primary">匯出備份</button>
+                    <button id="export-v51-btn" class="btn btn-secondary" title="只在需要退回舊版 v5.1 時使用：包含加扣分、愛心、歷史；不含作業、XP、圖鑑">⬇ v5.1 相容備份</button>
                 </div>
             </div>
+            <div id="legacy-banner" class="legacy-banner" role="status" hidden></div>
             <div id="class-dashboard-grid"></div>
         </div>
     </div>
@@ -442,6 +476,7 @@
             <div class="header">
                 <h1 id="class-view-title"></h1>
                 <div class="header-actions">
+                    <button id="class-sync-badge" class="db-status" title="雲端同步狀態（點一下開啟設定）"><span class="db-dot" id="class-sync-dot"></span><span id="class-sync-text">僅存本機</span></button>
                     <button id="back-to-dashboard-btn" class="btn btn-secondary">← 返回總覽</button>
                 </div>
             </div>
@@ -449,6 +484,8 @@
                 <button class="nav-tab active" data-tab="students">個人模式</button>
                 <button class="nav-tab" data-tab="groups">小隊模式</button>
                 <button class="nav-tab" data-tab="leaderboard">排行榜</button>
+                <button class="nav-tab" data-tab="homework">作業</button>
+                <button class="nav-tab" data-tab="collection">圖鑑</button>
                 <button class="nav-tab" data-tab="history">歷史</button>
             </div>
             <div id="students-tab" class="tab-content active card">
@@ -486,6 +523,8 @@
                 </div>
                 <div id="leaderboard-list"></div>
             </div>
+            <div id="homework-tab" class="tab-content card"></div>
+            <div id="collection-tab" class="tab-content card"></div>
             <div id="history-tab" class="tab-content card">
                 <div class="history-controls">
                     <div class="field"><label for="history-date">日期</label><input type="date" id="history-date"></div>
@@ -525,29 +564,6 @@
             <div class="modal-actions">
                 <button id="cancel-edit-class" class="btn btn-secondary">取消</button>
                 <button id="confirm-edit-class" class="btn btn-primary">儲存</button>
-            </div>
-        </div>
-    </div>
-
-    <div id="firebase-config-modal" class="modal">
-        <div class="card">
-            <h2>☁️ 雲端同步設定（選用）</h2>
-            <p class="setup-note">
-                不設定也能正常使用，資料會存在這台電腦的瀏覽器。<br>
-                若要多台電腦同步，請貼上 Firebase 主控台「專案設定 → 一般 → 你的應用程式」提供的 SDK 設定值，並啟用 <code>Firestore Database</code>。
-                設定只會存在這台瀏覽器。
-            </p>
-            <div class="field"><label>API Key</label><input type="text" id="fb-apiKey" placeholder="AIzaSy..."></div>
-            <div class="field"><label>Auth Domain</label><input type="text" id="fb-authDomain" placeholder="your-project.firebaseapp.com"></div>
-            <div class="field"><label>Project ID</label><input type="text" id="fb-projectId" placeholder="your-project-id"></div>
-            <div class="field"><label>Storage Bucket</label><input type="text" id="fb-storageBucket" placeholder="your-project.appspot.com"></div>
-            <div class="field"><label>Messaging Sender ID</label><input type="text" id="fb-messagingSenderId" placeholder="123456789"></div>
-            <div class="field"><label>App ID</label><input type="text" id="fb-appId" placeholder="1:123456789:web:abcxyz"></div>
-            <div class="field"><label>資料代號（同一個 Firebase 專案放多組資料時用來區分）</label><input type="text" id="fb-docId" placeholder="預設: default"></div>
-            <div class="modal-actions">
-                <button id="cancel-firebase-config" class="btn btn-secondary">取消</button>
-                <button id="disconnect-firebase-config" class="btn btn-danger">中斷連線</button>
-                <button id="save-firebase-config" class="btn btn-primary">儲存並連線</button>
             </div>
         </div>
     </div>
@@ -717,44 +733,30 @@
         //  資料層：IndexedDB（classes / students / events / dailySnapshots / meta）
         //  所有累計分數一律由 events 加總而來。
         // =====================================================================
-        const APP_VERSION = 'v5.1';
-        const DATA_VERSION = 5.1;
-        const TZ = 'Asia/Taipei';
+        import { localDate, localTime, localDateTime, addDays, mdLabel, stampForFile } from './src/core/dates.js';
+        import { uid } from './src/core/ids.js';
+        import { isCounted, effDate, byEffTs, applyTo, applyEventToTotals, normalizeEvent } from './src/core/score.js';
+        import { SESSIONS, DEFAULT_SESSION_TIMES, ensureClassDefaults, newClassObj as coreNewClassObj, sessionAt } from './src/core/classes.js';
+        import { convertV4 as coreConvertV4, parseBackup as coreParseBackup, buildBackup as coreBuildBackup, BACKUP_TABLES, buildLegacyV51Backup } from './src/core/backup.js';
+        import { registerClassDefaults } from './src/core/classes.js';
+        import { fillHomeworkDefaults } from './src/core/homework.js';
+        import { fillCollectionDefaults } from './src/core/collection.js';
+        import { xpLedger, xpOf, groupKey, XP_VERSION } from './src/core/xp.js';
+        import { initCollectionUI } from './src/ui/collection-ui.js';
+        import { initSyncUI } from './src/ui/sync-ui.js';
+        import { $, h } from './src/ui/dom.js';
+        import { initHomeworkUI } from './src/ui/homework-ui.js';
+        import { waitForSignIn, initAccountUI } from './src/ui/auth-ui.js';
+        import { initLegacyUI } from './src/ui/legacy-ui.js';
+        import { accountKey } from './src/auth/id-token.js';
+
+        const APP_VERSION = 'v6.1';
+        const DATA_VERSION = 6;
+        registerClassDefaults(fillHomeworkDefaults);
+        registerClassDefaults(fillCollectionDefaults);
 
         // ---------- 小工具 ----------
-        const $ = (id) => document.getElementById(id);
-        const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
-        const pad2 = (n) => String(n).padStart(2, '0');
 
-        /** 元素建構器：所有文字一律以 textNode 寫入，避免 innerHTML 破版 */
-        const h = (tag, props, ...kids) => {
-            const el = document.createElement(tag);
-            for (const [k, v] of Object.entries(props || {})) {
-                if (v == null || v === false) continue;
-                if (k === 'class') el.className = v;
-                else if (k === 'text') el.textContent = v;
-                else if (k === 'dataset') Object.assign(el.dataset, v);
-                else if (k === 'style') el.style.cssText = v;
-                else if (k.startsWith('on') && typeof v === 'function') el.addEventListener(k.slice(2), v);
-                else el.setAttribute(k, v === true ? '' : v);
-            }
-            kids.flat(Infinity).forEach(c => { if (c == null || c === false) return; el.append(c instanceof Node ? c : String(c)); });
-            return el;
-        };
-
-        // ---------- 本地日期（Asia/Taipei），不使用 toISOString ----------
-        const dateParts = new Intl.DateTimeFormat('en-US', { timeZone: TZ, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' });
-        const partsOf = (t) => Object.fromEntries(dateParts.formatToParts(new Date(t)).map(p => [p.type, p.value]));
-        const localDate = (t = Date.now()) => { const p = partsOf(t); return `${p.year}-${p.month}-${p.day}`; };
-        const localTime = (t) => { const p = partsOf(t); return `${p.hour}:${p.minute}`; };
-        const localDateTime = (t) => `${localDate(t)} ${localTime(t)}`;
-        const addDays = (ds, n) => {
-            const [y, m, d] = ds.split('-').map(Number);
-            const t = new Date(Date.UTC(y, m - 1, d + n));
-            return `${t.getUTCFullYear()}-${pad2(t.getUTCMonth() + 1)}-${pad2(t.getUTCDate())}`;
-        };
-        const mdLabel = (ds) => { const [, m, d] = ds.split('-').map(Number); return `${m} 月 ${d} 日`; };
-        const stampForFile = () => { const p = partsOf(Date.now()); return `${p.year}${p.month}${p.day}_${p.hour}${p.minute}`; };
 
         const downloadFile = (filename, content, mime = 'application/json') => {
             const blob = content instanceof Blob ? content : new Blob([content], { type: mime });
@@ -771,20 +773,36 @@
         };
 
         // ---------- IndexedDB ----------
-        const DB_NAME = 'classroomPowerhouseV5';
-        const STORES = ['classes', 'students', 'events', 'dailySnapshots', 'meta'];
+        // 帳號分區（ADR-012）：每個 Google 帳號一個資料庫「fhes-acct-<SHA-256(sub) 前 32 碼>」。
+        // 舊的「classroomPowerhouseV5」不屬於任何帳號，只透過 src/ui/legacy-ui.js 的轉移流程讀取，絕不自動指定給登入帳號。
+        let DB_NAME = null;
+        const accountDbName = (key) => `fhes-acct-${key}`;
+        // v1（v5/v5.1）：classes, students, events, dailySnapshots, meta
+        // v2（v6）：作業 hwAssignments / hwEvents、XP xpEvents、圖鑑 specialItems / grants、同步狀態 syncState
+        const DB_VERSION = 2;
+        const STORES = ['classes', 'students', 'events', 'dailySnapshots', 'meta', 'hwAssignments', 'hwEvents', 'xpEvents', 'specialItems', 'grants'];
+        /** 資料表 → 記憶體 S 的鍵（dailySnapshots 在 S 叫 snapshots） */
+        const S_KEY = (t) => t === 'dailySnapshots' ? 'snapshots' : t;
         let idb = null;
         const openDB = () => new Promise((resolve, reject) => {
-            const r = indexedDB.open(DB_NAME, 1);
-            r.onupgradeneeded = () => {
-                const d = r.result;
-                d.createObjectStore('classes', { keyPath: 'id' });
-                d.createObjectStore('students', { keyPath: 'id' }).createIndex('classId', 'classId');
-                const ev = d.createObjectStore('events', { keyPath: 'id' });
-                ev.createIndex('classId', 'classId'); ev.createIndex('date', 'date');
-                d.createObjectStore('dailySnapshots', { keyPath: 'id' }).createIndex('classId', 'classId');
-                d.createObjectStore('meta', { keyPath: 'key' });
+            if (!DB_NAME) { reject(new Error('尚未登入：不開啟任何資料庫')); return; }
+            const r = indexedDB.open(DB_NAME, DB_VERSION);
+            r.onupgradeneeded = (ev) => {
+                const d = r.result; const old = ev.oldVersion;
+                if (old < 1) {
+                    d.createObjectStore('classes', { keyPath: 'id' });
+                    d.createObjectStore('students', { keyPath: 'id' }).createIndex('classId', 'classId');
+                    const evs = d.createObjectStore('events', { keyPath: 'id' });
+                    evs.createIndex('classId', 'classId'); evs.createIndex('date', 'date');
+                    d.createObjectStore('dailySnapshots', { keyPath: 'id' }).createIndex('classId', 'classId');
+                    d.createObjectStore('meta', { keyPath: 'key' });
+                }
+                if (old < 2) {
+                    for (const name of ['hwAssignments', 'hwEvents', 'xpEvents', 'specialItems', 'grants']) d.createObjectStore(name, { keyPath: 'id' }).createIndex('classId', 'classId');
+                    d.createObjectStore('syncState', { keyPath: 'key' });
+                }
             };
+            r.onblocked = () => alert('請先關閉其他開著「班級動力站」的分頁，再重新整理，才能完成資料庫升級。');
             r.onsuccess = () => resolve(r.result);
             r.onerror = () => reject(r.error);
         });
@@ -803,32 +821,16 @@
         };
 
         // ---------- 記憶體狀態 ----------
-        const S = { classes: [], students: [], events: [], snapshots: [], meta: {} };
+        const S = { classes: [], students: [], events: [], snapshots: [], meta: {}, hwAssignments: [], hwEvents: [], xpEvents: [], specialItems: [], grants: [] };
+        let SYNC = null;
+        /** 任何資料變動後呼叫：排程雲端同步（沒設定雲端就什麼都不做） */
+        const afterDataChange = () => { SYNC?.schedule(); };
         const eventById = new Map();
         const totals = new Map();       // studentId -> { score:可用加分, earned:累計獲得, heart }
         const groupTotals = new Map();  // `${classId}|${group}` -> score
 
-        // v5.1：只有「已確認」的紀錄才計入；待確認、駁回都不算
-        const isCounted = (e) => (e.status || 'confirmed') === 'confirmed';
-        const effTs = (e) => e.confirmedAt || e.ts;            // 生效時間（隔天確認 → 確認當下）
-        const effDate = (e) => e.confirmedDate || e.date;      // 生效日（計入哪一天的結算）
-        /** 套用一筆紀錄：愛心依時間逐筆累加、每一步最少 0；累計獲得排除兌換 */
-        const applyTo = (t, e) => {
-            if (e.kind === 'heart') t.heart = Math.max(0, t.heart + e.delta);
-            else { t.score += e.delta; if (!e.redeem) t.earned += e.delta; }
-        };
-        const applyToTotals = (e) => {
-            if (!isCounted(e)) return;
-            if (e.targetType === 'student') {
-                const t = totals.get(e.targetId) || { score: 0, heart: 0, earned: 0 };
-                applyTo(t, e);
-                totals.set(e.targetId, t);
-            } else if (e.targetType === 'group') {
-                const k = `${e.classId}|${e.targetId}`;
-                groupTotals.set(k, (groupTotals.get(k) || 0) + e.delta);
-            }
-        };
-        const byEffTs = (a, b) => effTs(a) - effTs(b);
+        // v5.1 計分規則在 src/core/score.js（只有「已確認」才計入、愛心最少 0、兌換不減累計獲得）
+        const applyToTotals = (e) => applyEventToTotals(totals, groupTotals, e);
         const recomputeTotals = () => {
             totals.clear(); groupTotals.clear(); eventById.clear();
             S.events.sort((a, b) => a.ts - b.ts);
@@ -846,40 +848,17 @@
             .sort((a, b) => (a.seat || 999) - (b.seat || 999) || a.name.localeCompare(b.name, 'zh-Hant'));
         const eventsOf = (classId) => S.events.filter(e => e.classId === classId);
 
-        const DEFAULT_PENALTY_REASONS = ['講話', '走動', '傳紙條', '吵鬧', '作業', '其他'];
-        const DEFAULT_CLEAR_REASONS = ['表現改善', '主動幫忙', '老師另訂'];
-        const DEFAULT_REDEEM_ITEMS = [{ name: '小文具', cost: 10 }, { name: '自選座位一天', cost: 20 }, { name: '當一天小老師', cost: 15 }, { name: '優先選打掃工作', cost: 10 }];
-        const DEFAULT_SCORE_REASONS = [];
-        const SESSIONS = ['早自修', '午休', '其他'];
-        const DEFAULT_SESSION_TIMES = { '早自修': ['07:30', '08:40'], '午休': ['12:20', '13:30'] };
-        const newClassObj = (name, groupCount = 4) => {
-            const c = { id: uid(), name, groupCount, scoreReasons: [...DEFAULT_SCORE_REASONS], createdAt: Date.now(), updatedAt: Date.now(), deleted: false };
-            ensureClassDefaults(c); return c;
-        };
-        /** 補上 v5.1 的班級設定（扣分原因、消除原因、兌換清單、時段時間）；回傳是否有補 */
-        function ensureClassDefaults(c) {
-            let changed = false;
-            const fill = (k, v) => { if (!c[k]) { c[k] = v; changed = true; } };
-            fill('penaltyReasons', [...DEFAULT_PENALTY_REASONS]);
-            fill('clearReasons', [...DEFAULT_CLEAR_REASONS]);
-            fill('redeemItems', DEFAULT_REDEEM_ITEMS.map(x => ({ ...x })));
-            fill('sessionTimes', JSON.parse(JSON.stringify(DEFAULT_SESSION_TIMES)));
-            fill('scoreReasons', []);
-            return changed;
-        }
+        // 班級預設值與補值在 src/core/classes.js
+        const newClassObj = (name, groupCount = 4) => coreNewClassObj(name, groupCount, { id: uid() });
         /** 目前時段：依班級設定的早自修、午休時間；秩序記錄模式中以記錄時段為準 */
-        const currentSession = (c, t = Date.now()) => {
-            const hm = localTime(t); const st = c?.sessionTimes || DEFAULT_SESSION_TIMES;
-            for (const k of ['早自修', '午休']) { const [a, b] = st[k] || []; if (a && b && hm >= a && hm < b) return k; }
-            return '其他';
-        };
+        const currentSession = (c, t = Date.now()) => sessionAt(c, localTime(t));
         const newStudentObj = (classId, seat, name) => ({ id: uid(), classId, seat, name, group: null, removed: false });
 
         /** 名單或班級設定變動：更新 updatedAt 並存檔 */
         const saveClass = async (c, studentsToSave = []) => {
             c.updatedAt = Date.now();
             await dbWrite({ classes: [c], ...(studentsToSave.length ? { students: studentsToSave } : {}) });
-            Cloud.markClass(c.id);
+            afterDataChange();
         };
 
         const makeEvent = ({ classId, targetType = 'student', targetId, kind, delta, reason = '', batchId = null, undoOf = null,
@@ -887,24 +866,19 @@
             id: uid(), classId, ts: Date.now(), date: localDate(), targetType, targetId: String(targetId), kind,
             delta, reason: reason || '', undone: false, undoOf, batchId,
             session: session || currentSession(classById(classId)), status, recordedBy, reviewNote: '', redeem: !!redeem,
+            // v6 XP：只有帶 xpv 的事件才產生 XP；記下「當時所屬小隊」，換組後歷史歸屬不變
+            xpv: XP_VERSION, xpGroup: targetType === 'student' ? (studentById(String(targetId))?.group ?? null) : null,
         });
         /** 寫入一批 events（同一交易），回傳寫入的 events */
         const addEvents = async (list, extraPuts = []) => {
             if (!list.length && !extraPuts.length) return list;
             list.forEach(e => { S.events.push(e); eventById.set(e.id, e); applyToTotals(e); });
             await dbWrite({ events: [...list, ...extraPuts] });
-            [...list, ...extraPuts].forEach(e => Cloud.markDay(e.classId, e.date));
+            afterDataChange();
             return list;
         };
 
-        /** v5.1 資料升級：班級補上扣分原因、消除原因、兌換清單、時段時間 */
-        /** 舊紀錄補欄位：時段＝其他、狀態＝已確認、記錄人＝老師、備註＝空白、非兌換 */
-        const EVENT_DEFAULTS = { session: '其他', status: 'confirmed', recordedBy: 'teacher', reviewNote: '', redeem: false };
-        const normalizeEvent = (e) => {
-            let changed = false;
-            for (const [k, v] of Object.entries(EVENT_DEFAULTS)) if (e[k] === undefined || e[k] === null) { e[k] = v; changed = true; }
-            return changed;
-        };
+        /** 資料升級：班級補設定；舊紀錄補欄位（EVENT_DEFAULTS：時段＝其他、狀態＝已確認、記錄人＝老師、備註＝空白、非兌換） */
         const upgradeData = async () => {
             const cls = S.classes.filter(ensureClassDefaults);
             const evs = S.events.filter(normalizeEvent);
@@ -916,169 +890,12 @@
         const setMeta = async (key, value) => { S.meta[key] = value; await dbWrite({ meta: [{ key, value }] }); };
 
         // ---------- v4 轉換 ----------
-        const LS_V4_KEY = 'classroomPowerhouse_cache_v4';
-        /** v4 的 allClasses 陣列 → v5 { classes, students, events } */
-        const convertV4 = (arr) => {
-            const out = { classes: [], students: [], events: [] };
-            const now = Date.now(), today = localDate(now);
-            arr.forEach((c, ci) => {
-                if (!c || !Array.isArray(c.students)) return;
-                const cls = { ...newClassObj(String(c.name || `班級 ${ci + 1}`), Number(c.groupCount) || 4), id: String(c.id ?? uid()), createdAt: now + ci };
-                out.classes.push(cls);
-                c.students.forEach((s, si) => {
-                    const st = { id: String(s.id ?? uid()), classId: cls.id, seat: si + 1, name: String(s.name ?? `${si + 1}號`), group: Number.isInteger(s.group) ? s.group : null, removed: false };
-                    out.students.push(st);
-                    const score = Number(s.score) || 0;
-                    if (score !== 0) out.events.push({ id: uid(), classId: cls.id, ts: now, date: today, targetType: 'student', targetId: st.id, kind: 'score', delta: score, reason: '期初結轉', undone: false, undoOf: null, batchId: 'migrate-v4' });
-                });
-            });
-            return out;
-        };
-        const isV4Data = (d) => Array.isArray(d) && d.every(c => c && Array.isArray(c.students));
+        /** v4 的 allClasses 陣列 → v5 { classes, students, events }（規則在 src/core/backup.js）。
+         *  v6.1 起不再「自動」把 v4 快取轉進資料庫：它不屬於任何帳號，改由舊資料轉移流程讓老師選擇（ADR-012）。 */
+        const convertV4 = (arr) => { const now = Date.now(); return coreConvertV4(arr, { uid, now, today: localDate(now), newClassObj: coreNewClassObj }); };
 
-        /** 第一次開啟 v5：從 localStorage 的 v4 快取升級 */
-        const migrateFromV4IfNeeded = async () => {
-            if (S.meta.dataVersion) return;
-            const raw = localStorage.getItem(LS_V4_KEY);
-            let arr = null;
-            if (raw) { try { arr = JSON.parse(raw); } catch { arr = null; } }
-            if (arr && isV4Data(arr) && arr.length) {
-                downloadFile(`班級動力站_v4原始備份_${stampForFile()}.json`, raw);
-                const conv = convertV4(arr);
-                await dbWrite({ classes: conv.classes, students: conv.students, events: conv.events });
-                S.classes.push(...conv.classes); S.students.push(...conv.students); S.events.push(...conv.events);
-                await setMeta('migratedFromV4At', Date.now());
-                setTimeout(() => notify('已從 v4 升級：舊分數已轉為「期初結轉」加分，並已下載原始備份', 5000), 600);
-            }
-            await setMeta('dataVersion', DATA_VERSION);
-        };
-
-        // =====================================================================
-        //  雲端同步（Firebase，選用）
-        //  classroomPowerhouseV5/{docId}/classes/{classId}           班級＋名單
-        //  classroomPowerhouseV5/{docId}/classes/{classId}/days/{d}  當日紀錄＋快照
-        // =====================================================================
-        const LS_CONFIG_KEY = 'classroomPowerhouse_fbConfig';
-        const LS_DOCID_KEY = 'classroomPowerhouse_fbDocId';
-        const FB_VER = '10.13.0';
-        const Cloud = {
-            fb: null, dirtyClasses: new Set(), dirtyDays: new Set(), timer: null, busy: false,
-            config() { try { return JSON.parse(localStorage.getItem(LS_CONFIG_KEY)); } catch { return null; } },
-            docId() { return localStorage.getItem(LS_DOCID_KEY) || 'default'; },
-            status(state, text) { $('db-dot').className = 'db-dot' + (state ? ' ' + state : ''); $('db-status-text').textContent = text; },
-            async connect(config) {
-                try {
-                    const [appMod, fsMod] = await Promise.all([
-                        import(`https://www.gstatic.com/firebasejs/${FB_VER}/firebase-app.js`),
-                        import(`https://www.gstatic.com/firebasejs/${FB_VER}/firebase-firestore.js`),
-                    ]);
-                    const m = { ...appMod, ...fsMod };
-                    // 修正 v4：重複 initializeApp 會失敗 → 先刪除既有 app 再建立
-                    const old = m.getApps().find(a => a.name === 'cp');
-                    if (old) await m.deleteApp(old);
-                    const app = m.initializeApp(config, 'cp');
-                    this.fb = { m, db: m.getFirestore(app) };
-                    return true;
-                } catch (err) { console.error('Firebase 連線失敗', err); this.fb = null; this.status('error', '雲端連線失敗（僅存本機）'); return false; }
-            },
-            disconnect() { this.fb = null; this.status('', '僅存本機'); },
-            root() { const { m, db } = this.fb; return m.doc(db, 'classroomPowerhouseV5', this.docId()); },
-            markClass(classId) { if (!this.fb) return; this.dirtyClasses.add(classId); this.queue(); },
-            markDay(classId, date) { if (!this.fb) return; this.dirtyDays.add(`${classId}|${date}`); this.queue(); },
-            queue() { if (!this.fb) return; this.status('syncing', '同步中…'); clearTimeout(this.timer); this.timer = setTimeout(() => this.push(), 800); },
-            async push() {
-                if (!this.fb) return;
-                if (this.busy) { this.queue(); return; }
-                this.busy = true;
-                const { m } = this.fb;
-                const classIds = [...this.dirtyClasses]; const days = [...this.dirtyDays];
-                this.dirtyClasses.clear(); this.dirtyDays.clear();
-                try {
-                    for (const cid of classIds) {
-                        const c = classById(cid); if (!c) continue;
-                        await m.setDoc(m.doc(this.root(), 'classes', cid), { cls: c, students: S.students.filter(s => s.classId === cid), updatedAt: c.updatedAt || 0 });
-                    }
-                    for (const key of days) {
-                        const [cid, date] = key.split('|');
-                        const events = S.events.filter(e => e.classId === cid && e.date === date);
-                        const snap = S.snapshots.find(s => s.id === `${cid}|${date}`) || null;
-                        await m.setDoc(m.doc(this.root(), 'classes', cid, 'days', date), { classId: cid, date, events, snapshot: snap, updatedAt: Date.now() });
-                    }
-                    this.status('connected', '已同步至雲端');
-                } catch (err) {
-                    console.error('寫入雲端失敗', err);
-                    classIds.forEach(c => this.dirtyClasses.add(c)); days.forEach(d => this.dirtyDays.add(d));
-                    this.status('error', '同步失敗（已存本機）');
-                } finally { this.busy = false; }
-            },
-            /** 下載雲端並合併：班級/名單以 updatedAt 較新者為準；紀錄依 id 合併（不會互相覆蓋） */
-            async pull() {
-                if (!this.fb) return false;
-                const { m } = this.fb;
-                this.status('syncing', '讀取雲端…');
-                try {
-                    const classSnap = await m.getDocs(m.collection(this.root(), 'classes'));
-                    if (classSnap.empty) {
-                        // 舊版 v4 雲端資料（單一文件）
-                        const legacy = await m.getDoc(m.doc(this.fb.db, 'classroomPowerhouse', this.docId()));
-                        if (legacy.exists() && isV4Data(legacy.data().allClasses) && aliveClasses().length === 0) {
-                            const arr = legacy.data().allClasses;
-                            downloadFile(`班級動力站_v4雲端原始備份_${stampForFile()}.json`, JSON.stringify(arr));
-                            const conv = convertV4(arr);
-                            await dbWrite({ classes: conv.classes, students: conv.students, events: conv.events });
-                            S.classes.push(...conv.classes); S.students.push(...conv.students); S.events.push(...conv.events);
-                            recomputeTotals();
-                            notify('已將雲端 v4 資料升級為 v5', 4000);
-                        }
-                        this.markAllDirty();
-                        await this.push();
-                        return true;
-                    }
-                    const puts = { classes: [], students: [], events: [], dailySnapshots: [] };
-                    const remoteClassIds = new Set();
-                    for (const cd of classSnap.docs) {
-                        const r = cd.data(); if (!r || !r.cls) continue;
-                        const cid = r.cls.id; remoteClassIds.add(cid);
-                        const local = classById(cid);
-                        if (!local || (r.updatedAt || 0) > (local.updatedAt || 0)) {
-                            if (local) Object.assign(local, r.cls); else S.classes.push(r.cls);
-                            S.students = S.students.filter(s => s.classId !== cid).concat(r.students || []);
-                            puts.classes.push(r.cls); puts.students.push(...(r.students || []));
-                        } else if ((local.updatedAt || 0) > (r.updatedAt || 0)) this.dirtyClasses.add(cid);
-                        const daySnap = await m.getDocs(m.collection(this.root(), 'classes', cid, 'days'));
-                        const remoteDays = new Set();
-                        daySnap.forEach(dd => {
-                            const d = dd.data(); remoteDays.add(d.date);
-                            const remoteIds = new Set();
-                            (d.events || []).forEach(re => {
-                                remoteIds.add(re.id);
-                                const le = eventById.get(re.id);
-                                if (!le) { S.events.push(re); eventById.set(re.id, re); puts.events.push(re); }
-                                else if ((re.updatedAt || 0) > (le.updatedAt || 0) || (re.undone && !le.undone && !le.updatedAt)) { Object.assign(le, re); puts.events.push(le); }
-                                else if ((le.updatedAt || 0) > (re.updatedAt || 0) || (le.undone && !re.undone)) this.dirtyDays.add(`${cid}|${d.date}`);
-                            });
-                            if (S.events.some(e => e.classId === cid && e.date === d.date && !remoteIds.has(e.id))) this.dirtyDays.add(`${cid}|${d.date}`);
-                            if (d.snapshot && !S.snapshots.find(s => s.id === d.snapshot.id)) { S.snapshots.push(d.snapshot); puts.dailySnapshots.push(d.snapshot); }
-                        });
-                        new Set(S.events.filter(e => e.classId === cid).map(e => e.date)).forEach(date => { if (!remoteDays.has(date)) this.dirtyDays.add(`${cid}|${date}`); });
-                    }
-                    S.classes.filter(c => !remoteClassIds.has(c.id)).forEach(c => {
-                        this.dirtyClasses.add(c.id);
-                        new Set(S.events.filter(e => e.classId === c.id).map(e => e.date)).forEach(d => this.dirtyDays.add(`${c.id}|${d}`));
-                    });
-                    await dbWrite(Object.fromEntries(Object.entries(puts).filter(([, v]) => v.length)));
-                    await upgradeData();
-                    recomputeTotals();
-                    this.status('connected', '已連接雲端');
-                    if (this.dirtyClasses.size || this.dirtyDays.size) await this.push();
-                    return true;
-                } catch (err) { console.error('讀取雲端失敗', err); this.status('error', '讀取雲端失敗（使用本機資料）'); return false; }
-            },
-            markAllDirty() {
-                S.classes.forEach(c => this.dirtyClasses.add(c.id));
-                S.events.forEach(e => this.dirtyDays.add(`${e.classId}|${e.date}`));
-            },
-        };
+        // 雲端同步：v6 起改用 Google 帳號＋Google 試算表（src/sync/*、src/ui/sync-ui.js）。
+        // 舊版 Firebase 程式已移除；舊的 Firebase 遠端資料不會被讀取、修改或刪除。
 
         // ---------- 遊戲化：等級 / 徽章 ----------
         const BADGE_DEFS = [
@@ -1098,6 +915,7 @@
         const getCurrentClass = () => classById(currentClassId);
         const switchScreen = (name) => { Object.values(screens).forEach(s => s.classList.remove('active')); screens[name].classList.add('active'); };
         const switchTab = (tab) => {
+            if (tab !== currentTab && currentTab === 'homework') HW.reset();   // 離開作業分頁 → 回到投影安全模式
             currentTab = tab;
             document.querySelectorAll('.nav-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === tab));
             document.querySelectorAll('.tab-content').forEach(c => c.classList.toggle('active', c.id === `${tab}-tab`));
@@ -1128,7 +946,7 @@
         };
         const renderCurrentTab = () => {
             const c = getCurrentClass(); if (!c) return;
-            ({ students: renderStudentsTab, groups: renderGroupsTab, leaderboard: renderLeaderboardTab, history: renderHistoryTab }[currentTab] || (() => {}))(c);
+            ({ students: renderStudentsTab, groups: renderGroupsTab, leaderboard: renderLeaderboardTab, history: renderHistoryTab, homework: (cc) => HW.render(cc), collection: (cc) => COL.render(cc) }[currentTab] || (() => {}))(c);
         };
 
         const buildStudentCard = (s) => {
@@ -1177,6 +995,7 @@
 
         const createStudentChip = (s) => h('div', { class: 'student-chip', draggable: 'true', dataset: { studentId: s.id }, text: s.name });
         const renderGroupsTab = (c) => {
+            const groupLedger = xpLedger(S.events, S.xpEvents);
             $('group-count-input').value = c.groupCount || 4;
             const students = studentsOf(c.id);
             $('unassigned-students').replaceChildren(...students.filter(s => s.group == null || s.group > c.groupCount).map(createStudentChip));
@@ -1186,6 +1005,7 @@
                     h('div', { class: 'group-header' },
                         h('h3', { text: `⬡ 第 ${i} 小隊` }),
                         h('div', { class: 'group-score', text: getGroupTotal(c.id, i) }),
+                        h('div', { class: 'group-xp', title: '小隊 XP（圖鑑用，不乘人數）', text: `XP ${xpOf(groupLedger, 'group', groupKey(c.id, i))}` }),
                         h('div', { class: 'score-controls' },
                             h('button', { class: 'btn btn-danger score-btn', dataset: { group: i, amount: -1 }, text: '−' }),
                             h('button', { class: 'btn btn-success score-btn', dataset: { group: i, amount: 1 }, text: '+' }))),
@@ -1258,6 +1078,7 @@
         };
         const CONFETTI_EMOJI = ['🎉', '⭐', '✨', '🚀', '🏆', '💫'];
         const spawnConfetti = (emojis = CONFETTI_EMOJI, n = 36) => {
+            if (reducedMotion()) return;
             for (let i = 0; i < n; i++) {
                 const piece = h('span', { class: 'confetti-piece', text: emojis[Math.floor(Math.random() * emojis.length)] });
                 piece.style.left = Math.random() * 100 + 'vw';
@@ -1292,7 +1113,7 @@
             ctx: null, muted: lsGet(LS_MUTE_KEY) === '1',
             ensure() {
                 if (!this.ctx) { const AC = window.AudioContext || window.webkitAudioContext; if (!AC) return null; this.ctx = new AC(); }
-                if (this.ctx.state === 'suspended') this.ctx.resume();
+                if (this.ctx.state === 'suspended') this.ctx.resume().catch(() => { /* BUG-016：頁面重新載入時 Firefox 會拒絕尚未完成的 resume()（InvalidStateError: Navigated away from page）；音效不是必要功能 */ });
                 return this.ctx;
             },
             tone(freq, start, dur, type = 'sine', vol = 0.12, slideTo = null) {
@@ -1320,6 +1141,18 @@
         };
         const refreshMuteBtn = () => { $('mute-btn').textContent = Sound.muted ? '🔇' : '🔊'; $('mute-btn').title = Sound.muted ? '音效已關閉（點一下開啟）' : '音效開啟中（點一下靜音）'; $('mute-btn').classList.toggle('on', !Sound.muted); };
         $('mute-btn').addEventListener('click', () => { Sound.muted = !Sound.muted; lsSet(LS_MUTE_KEY, Sound.muted ? '1' : '0'); refreshMuteBtn(); if (!Sound.muted) Sound.play('badge'); });
+
+        // ---------- 減少動態效果（另外也尊重系統的 prefers-reduced-motion） ----------
+        const LS_MOTION_KEY = 'classroomPowerhouse_reduceMotion';
+        const reducedMotion = () => document.documentElement.classList.contains('reduce-motion') || window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+        const applyReduceMotion = (on) => {
+            document.documentElement.classList.toggle('reduce-motion', on);
+            $('motion-btn').setAttribute('aria-pressed', on ? 'true' : 'false');
+            $('motion-btn').classList.toggle('on', on);
+            $('motion-btn').title = on ? '已減少動態效果（點一下恢復）' : '減少動態效果';
+            lsSet(LS_MOTION_KEY, on ? '1' : '0');
+        };
+        $('motion-btn').addEventListener('click', () => applyReduceMotion(!document.documentElement.classList.contains('reduce-motion')));
 
         // ---------- 字體大小切換：標準／大／特大 ----------
         const applyFontSize = (fs) => {
@@ -1498,7 +1331,6 @@
             return null;
         };
         const targetName = (e) => e.targetType === 'group' ? `第 ${e.targetId} 小隊` : (studentById(e.targetId)?.name ?? '（已移除）');
-        const kindLabel = (k) => k === 'heart' ? '❤️ 愛心' : '⭐ 加分';
         /** 依語意顯示：❤️ 扣分／✨ 消除／🎁 兌換／⭐ 加分 */
         const actionLabel = (e) => e.undoOf ? ((e.reason || '').startsWith('撤銷') ? '↩ 撤銷' : '↶ 復原') : e.kind === 'heart' ? (e.delta > 0 ? '❤️ 扣分' : '✨ 消除') : (e.redeem ? '🎁 兌換' : '⭐ 加分');
         const signed = (n) => (n > 0 ? `+${n}` : `${n}`);
@@ -1644,7 +1476,7 @@
             const e = recLastEvent(); if (!e) return;
             if (!confirm('復原剛才那一筆？')) return;
             e.undone = true; e.reviewNote = '記錄同學自行復原'; e.updatedAt = Date.now();
-            await dbWrite({ events: [e] }); Cloud.markDay(e.classId, e.date);
+            await dbWrite({ events: [e] }); afterDataChange();
             rec.lastId = null; rec.count = Math.max(0, rec.count - 1);
             await setMeta('recordMode', rec);
             refreshRecordUndo();
@@ -1674,7 +1506,7 @@
             const now = Date.now();
             list.forEach(e => { e.updatedAt = now; });
             await dbWrite({ events: list });
-            list.forEach(e => { Cloud.markDay(e.classId, e.date); if (e.confirmedDate) Cloud.markDay(e.classId, e.confirmedDate); });
+            afterDataChange();
             recomputeTotals();
         };
         const afterReview = () => {
@@ -1778,7 +1610,7 @@
             const c = getCurrentClass(); if (!c) return;
             await addEvents([makeEvent({ classId: c.id, targetType: 'group', targetId: g, kind: 'score', delta, reason })]);
             const col = document.querySelector(`.group-column[data-group-id="${g}"]`);
-            if (col) { col.querySelector('.group-score').textContent = getGroupTotal(c.id, g); showScoreFeedback(col, delta); }
+            if (col) { col.querySelector('.group-score').textContent = getGroupTotal(c.id, g); col.querySelector('.group-xp').textContent = `XP ${xpOf(xpLedger(S.events, S.xpEvents), 'group', groupKey(c.id, g))}`; showScoreFeedback(col, delta); }
             if (delta > 0) {
                 flashScreen('plus'); registerCombo(delta); Sound.play('plus', comboCount); showMascotSpeech();
                 if (col) Fx.burst(col.querySelector('.group-score'), ['⭐', '✨', '🌟', '🚀'], 16, 140);
@@ -1834,7 +1666,8 @@
         };
         const saveSnapshots = async (list) => {
             if (!list.length) return;
-            list.forEach(sn => { S.snapshots = S.snapshots.filter(x => x.id !== sn.id); S.snapshots.push(sn); Cloud.markDay(sn.classId, sn.date); });
+            list.forEach(sn => { S.snapshots = S.snapshots.filter(x => x.id !== sn.id); S.snapshots.push(sn); });
+            afterDataChange();
             await dbWrite({ dailySnapshots: list });
         };
 
@@ -2114,12 +1947,9 @@
         // =====================================================================
         //  備份與導入
         // =====================================================================
-        const buildBackup = () => ({
-            format: 'classroom-powerhouse', version: DATA_VERSION, appVersion: APP_VERSION, exportedAt: Date.now(), exportedAtLocal: localDateTime(Date.now()),
-            classes: S.classes, students: S.students, events: S.events, dailySnapshots: S.snapshots,
-            meta: { lastSettledDate: S.meta.lastSettledDate || {} },
-        });
-        const exportBackup = async (prefix = '班級動力站_v5.1備份') => {
+        const buildBackup = () => { const now = Date.now(); return coreBuildBackup({ ...S, dailySnapshots: S.snapshots }, {
+            dataVersion: DATA_VERSION, appVersion: APP_VERSION, now, exportedAtLocal: localDateTime(now), meta: { lastSettledDate: S.meta.lastSettledDate || {} } }); };
+        const exportBackup = async (prefix = '班級動力站_v6備份') => {
             downloadFile(`${prefix}_${stampForFile()}.json`, JSON.stringify(buildBackup()));
             await setMeta('lastBackupAt', Date.now());
         };
@@ -2208,6 +2038,11 @@
         });
 
         $('export-data-btn').addEventListener('click', () => exportBackup());
+        $('export-v51-btn').addEventListener('click', () => {
+            if (!confirm('匯出「v5.1 相容備份」？\n只在需要退回舊版 v5.1 時使用。\n包含：班級、學生、加扣分、愛心、每日結算。\n不包含：作業、XP、圖鑑（請另外保留一般的「匯出備份」）。')) return;
+            const now = Date.now();
+            downloadFile(`班級動力站_v5.1相容備份_${stampForFile()}.json`, JSON.stringify(buildLegacyV51Backup({ ...S, dailySnapshots: S.snapshots }, { now, exportedAtLocal: localDateTime(now), meta: { lastSettledDate: S.meta.lastSettledDate || {} } })));
+        });
         $('load-data-btn').addEventListener('click', () => $('file-input').click());
         $('file-input').addEventListener('change', (e) => {
             const file = e.target.files[0]; e.target.value = '';
@@ -2217,15 +2052,7 @@
             reader.readAsText(file);
         });
         /** 讀取備份檔：v5 或 v4（班級陣列）→ 統一成 v5 payload */
-        const parseBackup = (data) => {
-            if (isV4Data(data)) return { kind: 'v4', classes: [], students: [], events: [], dailySnapshots: [], meta: {}, ...convertV4(data) };
-            if (data && data.format === 'classroom-powerhouse' && Array.isArray(data.classes)) {
-                if ((data.version || 0) > DATA_VERSION) throw new Error('這個備份來自較新版本，請先更新程式。');
-                const arr = (k) => Array.isArray(data[k]) ? data[k] : [];
-                return { kind: `v${data.version}`, classes: arr('classes'), students: arr('students'), events: arr('events'), dailySnapshots: arr('dailySnapshots'), meta: data.meta || {}, exportedAtLocal: data.exportedAtLocal };
-            }
-            throw new Error('檔案格式錯誤，不是班級動力站的備份。');
-        };
+        const parseBackup = (data) => coreParseBackup(data, { dataVersion: DATA_VERSION, convertV4 });
         let pendingImport = null;
         const handleImport = (data) => {
             let p; try { p = parseBackup(data); } catch (err) { alert(err.message); return; }
@@ -2248,66 +2075,28 @@
             if (mode === 'one' && !cid) { alert('請選擇班級。'); return; }
             hideModal('import-modal'); pendingImport = null;
             await exportBackup('班級動力站_導入前自動備份');
+            const TABLES = BACKUP_TABLES;
             if (mode === 'all') {
-                await dbWrite({ classes: p.classes, students: p.students, events: p.events, dailySnapshots: p.dailySnapshots }, {}, ['classes', 'students', 'events', 'dailySnapshots']);
-                Object.assign(S, { classes: [...p.classes], students: [...p.students], events: [...p.events], snapshots: [...p.dailySnapshots] });
+                await dbWrite(Object.fromEntries(TABLES.map(t => [t, p[t]])), {}, TABLES);
+                TABLES.forEach(t => { S[S_KEY(t)] = [...p[t]]; });
                 if (p.meta.lastSettledDate) await setMeta('lastSettledDate', p.meta.lastSettledDate);
             } else {
-                const pick = (arr) => arr.filter(x => (x.classId ?? x.id) === cid);
-                const cls = p.classes.filter(c => c.id === cid);
-                const imp = { classes: cls.map(c => ({ ...c, deleted: false })), students: pick(p.students), events: pick(p.events), dailySnapshots: pick(p.dailySnapshots) };
-                const dels = {
-                    students: S.students.filter(s => s.classId === cid).map(s => s.id),
-                    events: S.events.filter(e => e.classId === cid).map(e => e.id),
-                    dailySnapshots: S.snapshots.filter(s => s.classId === cid).map(s => s.id),
-                };
+                const owner = (t, x) => t === 'classes' ? x.id : x.classId;
+                const imp = Object.fromEntries(TABLES.map(t => [t, p[t].filter(x => owner(t, x) === cid)]));
+                imp.classes = imp.classes.map(c => ({ ...c, deleted: false }));
+                const dels = Object.fromEntries(TABLES.filter(t => t !== 'classes').map(t => [t, S[S_KEY(t)].filter(x => owner(t, x) === cid).map(x => x.id)]));
                 await dbWrite({}, dels);
                 await dbWrite(imp);
-                S.classes = S.classes.filter(c => c.id !== cid).concat(imp.classes);
-                S.students = S.students.filter(s => s.classId !== cid).concat(imp.students);
-                S.events = S.events.filter(e => e.classId !== cid).concat(imp.events);
-                S.snapshots = S.snapshots.filter(s => s.classId !== cid).concat(imp.dailySnapshots);
+                TABLES.forEach(t => { S[S_KEY(t)] = S[S_KEY(t)].filter(x => owner(t, x) !== cid).concat(imp[t]); });
             }
             await upgradeData();
             recomputeTotals();
-            Cloud.markAllDirty(); Cloud.queue();
+            afterDataChange();
             await autoSettle();
             currentClassId = null; renderDashboard(); switchScreen('dashboard');
             notify('導入完成！');
         });
 
-        // ---------- 雲端設定 Modal ----------
-        const fbFields = ['apiKey', 'authDomain', 'projectId', 'storageBucket', 'messagingSenderId', 'appId'];
-        const openFirebaseConfigModal = () => {
-            const saved = Cloud.config() || {};
-            fbFields.forEach(f => { $('fb-' + f).value = saved[f] || ''; });
-            $('fb-docId').value = Cloud.docId() === 'default' ? '' : Cloud.docId();
-            showModal('firebase-config-modal');
-        };
-        $('db-status-badge').addEventListener('click', openFirebaseConfigModal);
-        $('cancel-firebase-config').addEventListener('click', () => hideModal('firebase-config-modal'));
-        $('save-firebase-config').addEventListener('click', async () => {
-            const config = {}; fbFields.forEach(f => { config[f] = $('fb-' + f).value.trim(); });
-            if (!config.apiKey || !config.projectId || !config.appId) { alert('請至少填寫 API Key、Project ID、App ID。'); return; }
-            localStorage.setItem(LS_CONFIG_KEY, JSON.stringify(config));
-            localStorage.setItem(LS_DOCID_KEY, $('fb-docId').value.trim() || 'default');
-            hideModal('firebase-config-modal');
-            Cloud.status('syncing', '連線中…');
-            if (!(await Cloud.connect(config))) { alert('連線設定有誤，請確認後再試一次。'); return; }
-            await Cloud.pull();
-            renderDashboard(); if (currentClassId) renderClassView();
-        });
-        $('disconnect-firebase-config').addEventListener('click', () => {
-            if (!confirm('確定要中斷雲端同步嗎？之後只存在這台電腦。')) return;
-            localStorage.removeItem(LS_CONFIG_KEY); localStorage.removeItem(LS_DOCID_KEY);
-            Cloud.disconnect(); hideModal('firebase-config-modal');
-        });
-        $('reload-cloud-btn').addEventListener('click', async () => {
-            if (!Cloud.fb) { openFirebaseConfigModal(); return; }
-            await Cloud.pull();
-            renderDashboard(); if (currentClassId) renderClassView();
-            notify('已與雲端同步（紀錄已合併）');
-        });
         document.querySelectorAll('.modal').forEach(m => m.addEventListener('click', (e) => { if (e.target === m) m.classList.remove('visible'); }));
         document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && rec) { recPickSid = null; $('record-reason').hidden = true; return; } if (e.key === 'Escape') document.querySelectorAll('.modal.visible').forEach(m => m.classList.remove('visible')); });
 
@@ -2324,33 +2113,74 @@
         const animateParticles = () => { ctx.clearRect(0, 0, canvas.width, canvas.height); particles.forEach(p => { p.update(); p.draw(); }); requestAnimationFrame(animateParticles); };
         window.addEventListener('resize', () => { resizeCanvas(); initParticles(); });
 
+        // ---------- 新模組（作業、圖鑑、同步）共用的應用程式介面 ----------
+        const app = {
+            S, getCurrentClass, studentsOf, studentById, seatName, dbWrite, notify, uid, localDate, localTime, mdLabel, addDays, stampForFile,
+            deviceId: () => S.meta.deviceId || 'dev-unknown', saveClass, afterDataChange, downloadCSV,
+            playSound: (n) => Sound.play(n), confetti: (emojis, n) => spawnConfetti(emojis, n), reducedMotion,
+        };
+        const HW = initHomeworkUI(app);
+        const COL = initCollectionUI(app);
+        SYNC = initSyncUI({
+            S, S_KEY, dbWrite, dbGetAll, setMeta, notify, $, localDateTime, appVersion: APP_VERSION, deviceId: app.deviceId,
+            onRemoteChange: async () => {
+                await upgradeData(); recomputeTotals(); renderDashboard();
+                if (currentClassId && classById(currentClassId) && !classById(currentClassId).deleted) { renderCurrentTab(); refreshPendingBtn(); }
+            },
+        });
+
         // ---------- 初始化 ----------
         const loadAll = async () => {
-            const [classes, students, events, snapshots, meta] = await Promise.all(STORES.map(dbGetAll));
-            Object.assign(S, { classes, students, events, snapshots, meta: Object.fromEntries(meta.map(m => [m.key, m.value])) });
+            if (!idb) throw new Error('尚未登入');
+            const all = await Promise.all(STORES.map(dbGetAll));
+            STORES.forEach((t, i) => { S[S_KEY(t)] = t === 'meta' ? Object.fromEntries(all[i].map(m => [m.key, m.value])) : all[i]; });
             recomputeTotals();
         };
+        /** 這台裝置的代號（作業事件、同步紀錄用；不含個資） */
+        const ensureDeviceId = async () => { if (!S.meta.deviceId) await setMeta('deviceId', `dev-${uid()}`); };
+        let LEGACY = null;
         (async () => {
             $('version-tag').textContent = APP_VERSION;
-            applyFontSize(lsGet(LS_FS_KEY) || 'm'); refreshMuteBtn(); applyHideHearts(lsGet(LS_HIDE_HEARTS_KEY) === '1');
+            applyFontSize(lsGet(LS_FS_KEY) || 'm'); refreshMuteBtn(); applyHideHearts(lsGet(LS_HIDE_HEARTS_KEY) === '1'); applyReduceMotion(lsGet(LS_MOTION_KEY) === '1');
             resizeCanvas(); initParticles(); animateParticles();
+            // 1) 登入（方案 A）：Google 登入並在瀏覽器驗證 ID token 簽章／發行者／受眾／期限／nonce 之前，什麼資料都不開
+            const { identity, signIn, clientId } = await waitForSignIn({ $ });
+            // 2) 打開「這個帳號」的資料庫
+            DB_NAME = accountDbName(await accountKey(identity.sub));
             try { idb = await openDB(); }
             catch (err) { console.error(err); alert('無法開啟瀏覽器資料庫（IndexedDB）。請勿使用無痕視窗，或改用 Chrome / Edge。'); return; }
             await loadAll();
-            await migrateFromV4IfNeeded();
+            await ensureDeviceId();
+            if (!S.meta.dataVersion) await setMeta('dataVersion', DATA_VERSION);
             await upgradeData();
             recomputeTotals();
             await autoSettle();
             renderDashboard(); switchScreen('dashboard');
-            // 重新整理時若仍在秩序記錄模式，直接回到記錄畫面（不會露出老師畫面）
+            // 3) 帳號選單、跨分頁登出、工作階段到期
+            const accountTag = DB_NAME;
+            initAccountUI({ $, identity, signIn, hooks: {
+                accountTag,
+                stopSync: () => SYNC.stop(),
+                // 登出時先清掉記憶體中的班級資料（再整頁重新載入；離線時無法重新載入也不會留下前一位老師的資料）
+                wipeMemory: () => { Object.keys(S).forEach(k => { S[k] = Array.isArray(S[k]) ? [] : {}; }); totals.clear(); groupTotals.clear(); eventById.clear(); currentClassId = null; rec = null; idb?.close(); idb = null; },
+                pendingCount: () => SYNC.pendingCount(),
+                openSync: () => SYNC.openModal(),
+                backup: () => exportBackup('班級動力站_移除本機資料前備份'),
+                wipeLocal: async () => { idb?.close(); idb = null; await new Promise((ok, no) => { const r = indexedDB.deleteDatabase(accountTag); r.onsuccess = ok; r.onerror = () => no(r.error); r.onblocked = ok; }); },
+            } });
+            // 4) 舊資料（未歸屬帳號）：只提示，由老師預覽、選擇後才複製
+            LEGACY = initLegacyUI({
+                S, $, dbWrite, setMeta, notify, downloadFile, stampForFile, convertV4, afterDataChange,
+                buildBackupOf: (p) => coreBuildBackup(p, { dataVersion: DATA_VERSION, appVersion: `${APP_VERSION}（舊資料）`, now: Date.now(), exportedAtLocal: localDateTime(Date.now()), meta: { lastSettledDate: p.meta?.lastSettledDate || {} } }),
+                exportAccountBackup: (prefix) => exportBackup(prefix),
+                refresh: async () => { await upgradeData(); recomputeTotals(); await autoSettle(); renderDashboard(); },
+            });
+            await LEGACY.detect();
+            // 重新整理時若仍在秩序記錄模式，登入後直接回到記錄畫面（不會露出老師畫面）
             const rm = S.meta.recordMode;
             if (rm && classById(rm.classId) && !classById(rm.classId).deleted) { rec = rm; currentClassId = rm.classId; currentTab = 'students'; renderClassView(); showRecordOverlay(); }
-            // 雲端（選用）：在背景連線並合併，不覆蓋本機
-            const cfg = Cloud.config();
-            if (cfg) {
-                Cloud.status('syncing', '連線中…');
-                if (await Cloud.connect(cfg) && await Cloud.pull()) { await autoSettle(); renderDashboard(); if (currentClassId) renderCurrentTab(); }
-            }
+            // 5) 雲端（選用）：Google 試算表授權必須是同一個帳號（sub 比對）；token 只放記憶體
+            await SYNC.init({ identity, clientId });
         })();
     </script>
 </body>
