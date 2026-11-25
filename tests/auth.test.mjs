@@ -214,3 +214,18 @@ test('authorized origins: exact origin string match like Google (localhost ≠ 1
     // 設定檔與 Google Cloud 上的設定一致（使用者 2026-11-25 提供）
     assert.deepEqual([...GOOGLE_AUTHORIZED_ORIGINS].sort(), [...list].sort());
 });
+
+test('BUG-013: Google error page inside the popup (403 access_denied, not a test user) reaches the app only as popup_closed → message explains it', async () => {
+    globalThis.window = { google: { accounts: {
+        id: {}, oauth2: { initTokenClient: (o) => ({ requestAccessToken: () => queueMicrotask(() => o.error_callback({ type: 'popup_closed' })) }), hasGrantedAllScopes: () => false, revoke: (_t, cb) => cb?.() },
+    } } };
+    try {
+        const { createGoogleAuth, POPUP_CLOSED_TEXT } = await import('../src/sync/google-auth.js');
+        const auth = createGoogleAuth({ clientId: TEST_CLIENT_ID, expectedSub: TEACHER_A.sub, fetchFn: async () => { throw new Error('userinfo must not be called'); } });
+        await assert.rejects(auth.connect(), (e) => e.kind === 'auth' && e.message === POPUP_CLOSED_TEXT);
+        assert.match(POPUP_CLOSED_TEXT, /已封鎖存取權/);
+        assert.match(POPUP_CLOSED_TEXT, /access_denied/);
+        assert.match(POPUP_CLOSED_TEXT, /測試使用者/);
+        assert.equal(auth.connected?.() ?? false, false);
+    } finally { delete globalThis.window; }
+});

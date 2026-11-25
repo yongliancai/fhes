@@ -271,7 +271,8 @@ export const initSyncUI = (app) => {
             const a = auth; auth = null; engine = null;
             await a?.disconnect().catch(() => {});
         },
-        pendingCount: async () => (engine || createSyncEngine({ local, remote: null, deviceId: app.deviceId(), tables: SYNC_TABLES })).pending(),
+        /** 待同步筆數；尚未指定試算表（只存本機）時回傳 null：不是「待同步」，而是根本沒有雲端（BUG-012） */
+        pendingCount: async () => !cfg().spreadsheetId ? null : (engine || createSyncEngine({ local, remote: null, deviceId: app.deviceId(), tables: SYNC_TABLES })).pending(),
         schedule, runSync, openModal, status: () => status,
     };
 };

@@ -8,6 +8,11 @@
 // - Client ID 是公開識別碼（不是密鑰）；client secret 永遠不需要也不應出現
 import { SyncError } from './engine.js';
 import { loadGis, isValidClientId } from '../auth/google-signin.js';
+/**
+ * Google 在彈出視窗內顯示錯誤頁（例如「已封鎖存取權」403 access_denied：帳號不在 OAuth 測試使用者名單）時，
+ * 不會把錯誤回傳給 App，App 只會收到 popup_closed。所以關閉訊息要把這種情況一起說清楚（BUG-013，真實 Google 驗收時發現）。
+ */
+export const POPUP_CLOSED_TEXT = '授權視窗已關閉，沒有完成授權。若 Google 視窗顯示「已封鎖存取權」或「403 access_denied」，代表這個帳號不在 OAuth 同意畫面的「測試使用者」名單，請管理者加入後再試（見設定說明）。';
 
 export { isValidClientId };
 export const DRIVE_FILE_SCOPE = 'https://www.googleapis.com/auth/drive.file';
@@ -31,7 +36,7 @@ export const createGoogleAuth = ({ clientId, expectedSub, loginHint = '', now = 
                 const client = window.google.accounts.oauth2.initTokenClient({
                     client_id: clientId, scope: SCOPE, hint: loginHint || expectedSub, include_granted_scopes: false,
                     callback: (r) => r?.error ? no(new SyncError(r.error === 'access_denied' ? 'permission' : 'auth', r.error === 'access_denied' ? '已拒絕授權。' : `授權失敗：${r.error}`)) : ok(r),
-                    error_callback: (e) => no(new SyncError('auth', e?.type === 'popup_closed' ? '授權視窗已關閉。' : '無法開啟授權視窗（請允許彈出視窗）。')),
+                    error_callback: (e) => no(new SyncError('auth', e?.type === 'popup_closed' ? POPUP_CLOSED_TEXT : '無法開啟授權視窗（請允許彈出視窗）。')),
                 });
                 client.requestAccessToken({ prompt, login_hint: loginHint || expectedSub });
             });

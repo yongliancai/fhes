@@ -90,6 +90,9 @@ test('account isolation: A signs out, B cannot see A data; switching clears the 
         assert.equal(await page.locator('.class-card:has(h3:text-is("甲老師的班"))').count(), 1);
         // 切換帳號 → B
         await openAccount(page);
+        // BUG-012：沒有設定試算表時不能說「尚未同步到雲端…下次會繼續同步」（真實 Google 驗收時發現）
+        assert.ok(await page.isVisible('#acct-local-only'), 'local-only account says so');
+        assert.equal(await page.locator('#acct-pending').count(), 0, 'no "pending upload" banner without a spreadsheet');
         await page.click('#acct-switch');
         await assertLocked(page, 'switch locks first');
         await waitStatus(page, /選擇要使用的 Google 帳號/);

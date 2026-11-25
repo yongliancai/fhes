@@ -102,7 +102,7 @@ export const hardReload = (notice) => {
 
 /**
  * 登入後：帳號按鈕與選單、跨分頁登出、工作階段到期。
- * hooks：{ stopSync(): Promise, flush(): Promise, pendingCount(): Promise<number>, wipeLocal(): Promise, openSync(), now() }
+ * hooks：{ stopSync(): Promise, flush(): Promise, pendingCount(): Promise<number|null>（null = 沒有設定試算表）, wipeLocal(): Promise, openSync(), now() }
  */
 export const initAccountUI = ({ $, identity, signIn, hooks }) => {
     const now = hooks.now || (() => Date.now());
@@ -150,7 +150,8 @@ export const initAccountUI = ({ $, identity, signIn, hooks }) => {
                 h('span', { class: 'account-avatar big', 'aria-hidden': 'true', text: chip.firstChild.textContent }),
                 h('div', {}, h('strong', { id: 'account-name', text: identity.name || '（未提供名稱）' }), h('div', { id: 'account-email', class: 'muted', text: identity.email || '' }),
                     h('div', { class: 'muted small', text: `已由 Google 驗證・本次登入有效到 ${new Date(identity.sessionExpiresAt).toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit' })}` }))),
-            pend ? h('p', { class: 'hw-banner teacher', text: `還有 ${pend} 筆資料尚未同步到雲端。登出後會保留在這台電腦（此帳號的資料區），下次用同一個帳號登入會繼續同步。` }) : null,
+            pend === null ? h('p', { class: 'muted', id: 'acct-local-only', text: '尚未設定雲端同步：這個帳號的資料只存在這台電腦。登出後會保留在這台電腦（此帳號的資料區）。' })
+                : pend ? h('p', { class: 'hw-banner teacher', id: 'acct-pending', text: `還有 ${pend} 筆資料尚未同步到雲端。登出後會保留在這台電腦（此帳號的資料區），下次用同一個帳號登入會繼續同步。` }) : null,
             h('div', { class: 'modal-actions wrap' },
                 h('button', { class: 'btn btn-primary', id: 'acct-signout', text: '登出', onclick: () => lock('signed-out') }),
                 h('button', { class: 'btn btn-secondary', id: 'acct-switch', text: '切換帳號', onclick: () => lock('switch') }),
@@ -159,7 +160,8 @@ export const initAccountUI = ({ $, identity, signIn, hooks }) => {
                 h('p', { class: 'muted', text: '適合在學校共用電腦上使用。會先下載一份備份，再刪除這台電腦上「此帳號」的班級資料。Google 試算表與其他電腦的資料不受影響。' }),
                 h('button', { class: 'btn btn-danger', id: 'acct-wipe', text: '下載備份後移除並登出', onclick: async () => {
                     const p = await hooks.pendingCount().catch(() => 0);
-                    const warn = p ? `\n\n⚠ 還有 ${p} 筆尚未同步到雲端，移除後只能從剛下載的備份找回。` : '';
+                    const warn = p === null ? '\n\n⚠ 這個帳號沒有設定雲端同步，移除後只能從剛下載的備份找回。'
+                        : p ? `\n\n⚠ 還有 ${p} 筆尚未同步到雲端，移除後只能從剛下載的備份找回。` : '';
                     if (!confirm(`確定要移除這台電腦上此帳號的所有班級資料並登出？${warn}`)) return;
                     if (!confirm('再次確認：移除後無法從這台電腦復原（備份檔會先下載）。')) return;
                     await hooks.backup();
