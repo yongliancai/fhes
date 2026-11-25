@@ -33,7 +33,10 @@ export const loadGis = () => gisPromise || (gisPromise = new Promise((ok, no) =>
  */
 export const createGoogleSignIn = ({ clientId, fetchFn = (...a) => fetch(...a), now = () => Date.now() }) => {
     let jwks = null;
-    let nonce = null;
+    // 已發出、尚未用掉的 nonce（每個只能用一次）。BUG-017：原本只接受「最新一個」，其他的回呼會被默默丟掉，
+    // 真實 Chrome 彈出視窗登入時出現過「選好帳號但 App 沒反應」。現在任何一個未用過的都可驗證，用過即刪；都不符就明確顯示錯誤。
+    const issued = [];
+    const MAX_ISSUED = 5;
     const getJwks = async (force = false) => {
         if (jwks && !force) return jwks;
         const r = await fetchFn(GOOGLE_JWKS_URL, { cache: 'no-store', credentials: 'omit' });
@@ -59,17 +62,26 @@ export const createGoogleSignIn = ({ clientId, fetchFn = (...a) => fetch(...a), 
         async mount(container, { onVerifying, onResult }) {
             const accounts = await loadGis();
             const init = () => {
-                const myNonce = nonce = makeNonce();
+                const myNonce = makeNonce();
+                issued.push(myNonce); if (issued.length > MAX_ISSUED) issued.shift();
                 accounts.id.initialize({
                     client_id: clientId, nonce: myNonce, auto_select: false, cancel_on_tap_outside: true,
-                    ux_mode: 'popup', itp_support: true, use_fedcm_for_button: true,
+                    // BUG-015（2026-11-25 真實 Chrome 驗收）：FedCM 按鈕模式在「登出後」按登入，沒有帳號選擇畫面就直接登入同一個帳號，
+                    // 「切換帳號」換不了人。改用 Google 預設的彈出視窗（每次顯示 Google 的帳號選擇畫面）；button_auto_select 保持關閉。
+                    ux_mode: 'popup', itp_support: true, use_fedcm_for_button: false, button_auto_select: false,
                     callback: async (resp) => {
-                        if (myNonce !== nonce) return;            // 舊的初始化（已被取代）不處理
-                        init();                                    // 一次性：下一次登入換新的 nonce
                         onVerifying?.();
                         try {
                             if (!resp || typeof resp.credential !== 'string') throw new IdTokenError('malformed', '沒有收到 Google 登入憑證');
-                            const identity = await verify(resp.credential, myNonce);
+                            // 依新到舊試每一個未用過的 nonce；nonce 不符才換下一個，其他錯誤（簽章、aud、過期…）立即失敗
+                            let identity = null; let lastErr = new IdTokenError('nonce', '登入憑證的 nonce 不符');
+                            for (const n of [myNonce, ...[...issued].reverse().filter(x => x !== myNonce)]) {
+                                if (!issued.includes(n)) continue;
+                                try { identity = await verify(resp.credential, n); issued.splice(issued.indexOf(n), 1); break; }
+                                catch (e) { if (e instanceof IdTokenError && e.code === 'nonce') { lastErr = e; continue; } throw e; }
+                            }
+                            init();                                // 下一次登入用新的 nonce
+                            if (!identity) throw lastErr;
                             onResult({ identity: Object.freeze({ ...identity, signedInAt: now(), sessionExpiresAt: now() + SESSION_MAX_MS }) });
                         } catch (e) {
                             onResult({ error: e instanceof IdTokenError ? e : new IdTokenError('network', '登入驗證時網路中斷，請再試一次') });

@@ -241,3 +241,11 @@ test('BUG-014: 403 SERVICE_DISABLED (Sheets API not enabled) is a setup problem,
     assert.equal(p.kind, 'permission');
     assert.equal(classifyHttp(403, '{"error":{"message":"Quota exceeded for quota metric rate"}}').kind, 'rate');
 });
+
+test('BUG-016: every AudioContext resume() promise is handled (Firefox rejects pending ones on reload: "InvalidStateError: Navigated away from page")', async () => {
+    const { readFileSync, readdirSync } = await import('node:fs');
+    const files = ['index.html', ...readdirSync('src', { recursive: true }).filter(f => /\.js$/.test(f)).map(f => `src/${f}`)];
+    const bad = [];
+    for (const f of files) for (const [i, line] of readFileSync(f, 'utf8').split('\n').entries()) if (/\.resume\(\)/.test(line) && !/\.resume\(\)\s*\.catch\(/.test(line)) bad.push(`${f}:${i + 1}`);
+    assert.deepEqual(bad, []);
+});

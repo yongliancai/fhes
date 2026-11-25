@@ -1113,7 +1113,7 @@
             ctx: null, muted: lsGet(LS_MUTE_KEY) === '1',
             ensure() {
                 if (!this.ctx) { const AC = window.AudioContext || window.webkitAudioContext; if (!AC) return null; this.ctx = new AC(); }
-                if (this.ctx.state === 'suspended') this.ctx.resume();
+                if (this.ctx.state === 'suspended') this.ctx.resume().catch(() => { /* BUG-016：頁面重新載入時 Firefox 會拒絕尚未完成的 resume()（InvalidStateError: Navigated away from page）；音效不是必要功能 */ });
                 return this.ctx;
             },
             tone(freq, start, dur, type = 'sine', vol = 0.12, slideTo = null) {

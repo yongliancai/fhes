@@ -38,6 +38,10 @@ Status words follow the Code Factory guide strictly: **PASS** = actually execute
 | 2026-11-25 | v6.1 | CI `e2e` (ubuntu, Chrome) on 0cb99a8, fa73339, 4ba484a, 21f1027, 861b151, 756d314 | GitHub Actions | PASS 39/39 every run |
 | 2026-11-25 | v6.1 | CI `e2e-compat (firefox)` — 5 runs | playwright Firefox build, ubuntu-24.04 | **FAIL 38/39** on the last 3 runs. Earlier failures were fixed: font-CORS wording, axe during fade-in, BUG-011. One remains: test `A offline queue…` asserts no console errors, but Firefox logs `InvalidStateError: Navigated away from page` (no source location) at the step where the offline-locked page reloads after the network returns. Every functional assertion in that test passes. Root cause not found (no local Firefox to debug). Not filtered out: left visible on purpose. |
 | 2026-11-25 | v6.1 | CI `e2e-compat (webkit)` — 5 runs | playwright WebKit build, ubuntu-24.04 | **FAIL 36–38/39**: in every run 1–3 different tests end with "Target page … closed" / "Page crashed" (renderer crash). Two test races that WebKit exposed were fixed. No assertion failure attributable to the app was seen. Real Safari/iPad: NOT_VERIFIED. |
+| 2026-11-25 | real-Google baseline | `npm ci` / `npm run verify` / `npm run test:e2e` (@ 1b22b7d) | Windows 11 / Edge | PASS — 113/113, 39/39 |
+| 2026-11-25 | **real Google** | sign-in, sign-out, reload, switch, cancel, Sheets create/write/update/second device/offline/conflict/dedupe/reconnect/foreign sheet/revoke, token scan — full report `docs/REAL-GOOGLE-ACCEPTANCE.md` | Chrome 158 + separate Edge 158 profile, `http://localhost:8765`, one test Gmail, test spreadsheets, synthetic data | PASS on every executed item except: popup sign-in 2/4 before BUG-017 fix (1/1 after, OPEN); second real account BLOCKED; 1-h natural expiry, physical offline, 429/5xx, `invalid_client` NOT_VERIFIED |
+| 2026-11-25 | real Google | bugs found and fixed with regression tests | — | BUG-012, 013, 014, 015, 017 (+ BUG-016 from Firefox CI) |
+| 2026-11-25 | Firefox CI investigation | E2E_DIAG timeline + harness experiment + Searchfox | CI artifacts | root cause found: BUG-016 (app bug, unhandled `AudioContext.resume()`); fix pushed, CI re-run below |
 | CI | every push | GitHub Actions `Quality (no deployment)`: `verify` + `e2e` (ubuntu, Chrome) | ubuntu-latest, Node 22 | green for P2 (feff057), P3 (4b6bb42), P4 (853a880); later runs are listed in Draft PR #1 |
 
 ## Acceptance matrix
@@ -53,8 +57,8 @@ Status words follow the Code Factory guide strictly: **PASS** = actually execute
 | A-08 | Batch, late submission, correction time, undo, archive/restore | unit + E2E | PASS |
 | A-09 | 6 × 12, rarity 5/4/2/1, special items outside the 12 | `validateCatalog()` + negative case | PASS |
 | A-10 | ≤ 2 tags; disabled builtin kept on old items, not selectable for new; custom delete with impact + double confirm | unit + E2E | PASS |
-| A-11 | Google auth: minimal scope, expiry, denial, offline | emulator unit + E2E (fake GIS script + emulated Sheets API at the network layer) | PASS (emulated) · real Google OAuth: **BLOCKED** (needs the user's OAuth Client ID and approval to use a test spreadsheet) |
-| A-12 | Two-device conflicts, retry dedupe, offline queue | `tests/sync.test.mjs` (19 scenarios + BUG-006, 3 mutants killed), `e2e/sync` | PASS (emulated) · real Sheets: **BLOCKED** |
+| A-11 | Google auth: minimal scope, expiry, denial, offline | emulator unit + E2E; **real Google 2026-11-25** (`docs/REAL-GOOGLE-ACCEPTANCE.md` S1, S12, S14, S16, L8b) | PASS (emulated + real) · 1-h natural expiry: NOT_VERIFIED |
+| A-12 | Two-device conflicts, retry dedupe, offline queue | `tests/sync.test.mjs`, `e2e/sync`; **real Sheets** Chrome + Edge (S8–S11, S15) | PASS (emulated + real) · 429/5xx retry real: NOT_VERIFIED · physical network outage: NOT_VERIFIED (browser-level offline emulation only) |
 | A-13 | No Firebase SDK/UI left; remote Firestore untouched | guardrail `LEGACY_FIREBASE_ALLOWED = []` + test; app never connects to Firebase | PASS |
 | A-14 | JSON round trip; cloud copy restores a new device; rollback path | backup round trip unit/E2E; device B pulls everything in `e2e/sync`; v5.1-compatible rollback export (unit + E2E) | PASS (emulated cloud) |
 | A-15 | Phone / tablet / laptop / projector, keyboard, reduced motion | `e2e/responsive-a11y` (no overflow at 375/768/1280/1920; axe-core critical+serious = 0; keyboard), reduced-motion E2E | PASS |
@@ -73,16 +77,17 @@ Status words follow the Code Factory guide strictly: **PASS** = actually execute
 | A-28 | Legacy v4 / v5.1 / early-v6 data not lost and never auto-assigned | `e2e/legacy-v51` (v5.1 IndexedDB claim + undo, v4 cache claim), unit `planLegacyImport/Undo` | PASS |
 | A-29 | No credential in localStorage, sessionStorage, IndexedDB, cookies, URL, console, backup or sheet | `e2e/auth › no credential ever lands…` + guardrails (persist/log/decode-only) with negative tests | PASS (emulated tokens) |
 | A-30 | Login screen + account dialog: 4 viewports, axe critical/serious = 0, keyboard sign-in | `e2e/auth` (4 viewport tests + keyboard) | PASS |
-| A-31 | Firefox / WebKit (Safari engine) | CI job `e2e-compat` (playwright builds) — see evidence log | **FAIL** (Firefox 38/39: one unexplained console error; WebKit: random renderer crashes). Real Safari/Firefox on devices: NOT_VERIFIED |
-| A-32 | Real Google sign-in + Sheets with a real account | needs a real OAuth Client ID and approval | **BLOCKED** |
+| A-31 | Firefox / WebKit (Safari engine) | CI job `e2e-compat` (playwright builds) — see evidence log | Firefox: root cause found and fixed (BUG-016) → see latest CI row. WebKit: **FAIL** (random renderer crashes, cause unknown). Real Safari/Firefox on devices: NOT_VERIFIED |
+| A-32 | Real Google sign-in + Sheets with a real account | `docs/REAL-GOOGLE-ACCEPTANCE.md` | **PASS** (one test account, two browsers) · popup reliability: OPEN (BUG-017) |
+| A-33 | Real A/B account isolation; another account cannot use this spreadsheet | needs a second test Google account | **BLOCKED** (user chose not to test now); emulated: A-24–A-26 PASS; real: foreign sheet refused by Google (S13a) PASS |
+| A-34 | Wrong origin / wrong Client ID messages | origin warning (unit + E2E + real button on `localhost:8766`); malformed ID (E2E) | PASS · non-existent Client ID (`invalid_client`, Google's own page): NOT_VERIFIED |
 | — | v5.1 daily settlement + CSV | `e2e/legacy-v51 › daily settlement snapshot and day CSV` | PASS |
 | — | Visual regression (pixel baseline comparison) | screenshots are produced (CI artifact `e2e-screenshots`) for human review; no automatic pixel diff | NOT_CONFIGURED |
 | — | Real devices (iPad, interactive whiteboard), Safari/WebKit, Firefox | emulated viewports on Chromium (Edge/Chrome) only | NOT_VERIFIED |
 | — | Final illustrated artwork | original placeholder SVGs, labelled in the UI; ledger in `docs/ASSET-LICENSES.md` | NOT_APPLICABLE for this PR |
 
 ## What a green run does NOT prove
-- Real Google OAuth / Google Sheets behaviour (quotas, consent screens, `origin_mismatch`, account policies).
-- Real "Sign in with Google": FedCM / popup behaviour, real JWKS rotation, Workspace admin policies, third-party-cookie settings per browser. All sign-in tests use a fake GIS library that signs tokens with a per-run test key.
+- Real Google behaviour is covered only by the one-off manual acceptance in `docs/REAL-GOOGLE-ACCEPTANCE.md` (one account, Chrome + Edge, 2026-11-25). Automated tests use a fake GIS library that signs tokens with a per-run test key; they cannot reproduce Chrome's FedCM/popup UI, quotas, JWKS rotation or Workspace policies.
 - That local data is protected from someone with DevTools on the same browser profile — it is not (ADR-011, `docs/AUTH-SECURITY.md`).
 - Safari/WebKit and Firefox behaviour; physical touch devices.
 - Classroom usability and teacher workload — needs a real trial with synthetic data first.

@@ -80,6 +80,43 @@ Each entry names the regression test that fails on the buggy version and passes 
 - **PROVE**: M7 re-run → KILLED.
 - **Remaining survivor**: M6 removes only the `stopped` flag. It survives because `stop()` also nulls the engine and token, so the flag is a redundant second guard. It is recorded rather than tested.
 
+## BUG-012 — account menu said "N 筆尚未同步到雲端…下次會繼續同步" for an account with no spreadsheet (real-Google acceptance, 2026-11-25)
+- **DETECT**: real Chrome, first sign-in of a new account: the menu said 2 records were waiting for the cloud, although no spreadsheet was set (they were the Settings and SyncMeta rows).
+- **ROOT_CAUSE**: `pendingCount()` counted unsynced rows even when sync was never configured.
+- **FIX**: `pendingCount()` returns `null` without a spreadsheet; the menu says "尚未設定雲端同步：資料只存在這台電腦", and the wipe confirmation warns accordingly.
+- **PROVE**: `e2e/auth › account isolation…` asserts `#acct-local-only` and no `#acct-pending` (fails on the old code: the element does not exist).
+
+## BUG-013 — Google's "已封鎖存取權 / 403 access_denied" page reached the app only as "授權視窗已關閉"
+- **DETECT**: real Chrome: Sheets authorization for an account that is not an OAuth *test user*. Google shows its own error page in the popup; GIS reports only `popup_closed`.
+- **ROOT_CAUSE**: the app cannot see Google's error page; the old message gave no hint.
+- **FIX**: `POPUP_CLOSED_TEXT` explains the access_denied / test-user case; setup doc troubleshooting row added. (The Cloud setting itself was fixed by the user.)
+- **PROVE**: unit `BUG-013: … popup_closed → message explains it`.
+
+## BUG-014 — "Sheets API not enabled" was reported as "沒有這份試算表的存取權限"
+- **DETECT**: real Chrome: "＋ 建立新的試算表" failed. Captured response: `403 PERMISSION_DENIED`, reason `SERVICE_DISABLED` ("Google Sheets API has not been used in project … or it is disabled").
+- **ROOT_CAUSE**: `classifyHttp()` mapped every non-rate 403 to `permission`.
+- **FIX**: 403 with `SERVICE_DISABLED` / `has not been used in project` / `accessNotConfigured` → kind `config` with the exact fix (enable the API). Real permission 403 and rate 403 unchanged.
+- **PROVE**: unit `BUG-014: …` with the real response shape (project number replaced). After the user enabled the API the same click created the sheet.
+
+## BUG-015 — FedCM button mode signed in again without any account chooser after sign-out; "切換帳號" could not switch
+- **DETECT**: real Chrome 158: after "登出", pressing the button signed straight back into the same account (user saw no window). `button_auto_select` was never enabled.
+- **ROOT_CAUSE**: Chrome's FedCM button flow behaviour for a returning account (Google/Chrome side; not documented for this case). The app had opted into it with `use_fedcm_for_button: true`.
+- **FIX**: `use_fedcm_for_button: false`, `button_auto_select: false` → Google's popup with its account chooser (ADR-014).
+- **PROVE**: real Chrome: popup mode showed the chooser; closing it kept the app locked; "切換帳號" showed the chooser. No automated test can reproduce Chrome's FedCM UI (fake GIS) → recorded as manual evidence in `docs/REAL-GOOGLE-ACCEPTANCE.md`.
+
+## BUG-016 — Firefox: "InvalidStateError: Navigated away from page" (the OPEN Firefox CI failure)
+- **DETECT**: CI `e2e-compat (firefox)`, `e2e/auth › A offline queue…`, every run.
+- **INVESTIGATION**: E2E_DIAG timeline: the error is logged 3 ms before the reload navigation, with no `error`/`unhandledrejection` seen by the page. Experiment: waiting for the app's own reload instead of the test dispatching `online` → still failed (so not the harness). Searchfox: the string exists only in `dom/media/webaudio/AudioContext.cpp` (`OnWindowDestroy` rejects pending AudioContext promises).
+- **ROOT_CAUSE**: the sound module called `this.ctx.resume()` without handling its promise. In headless Firefox the resume stays pending (no audio output / autoplay policy) and is rejected when the page unloads; Firefox logs it as an error.
+- **FIX**: `resume().catch(() => {})` (sound is optional).
+- **PROVE**: unit `BUG-016: every AudioContext resume() promise is handled` (static scan of index.html + src). CI Firefox re-run: see VERIFICATION.
+
+## BUG-017 — popup sign-in: account chosen in Google's popup, app stayed on the login screen (2 of 4 attempts)
+- **DETECT**: real Chrome, popup mode, both times the first sign-in on a freshly reloaded page (after sign-out, after switch). Confirmed by reading the page state, not only the user's impression.
+- **SUSPECTED ROOT CAUSE (not proven)**: the callback silently returned when the response belonged to any nonce other than the latest one (`if (myNonce !== nonce) return;`).
+- **FIX**: keep up to 5 issued, unused nonces; verify against each (each usable once, deleted on success); if none matches, show "登入憑證無效" instead of dropping it silently. Replay protection unchanged (E2E `nonce` mode still refused).
+- **PROVE**: real Chrome after the fix: 1/1 first-attempt sign-in on a reloaded page succeeded. Sample too small → **OPEN (monitoring)**.
+
 ## TEST-HARNESS notes (not product bugs, recorded so they are not repeated)
 - `page.waitForSelector('#import-modal:not(.visible)')` waits for *visible* by default → use `{ state: 'hidden' }`.
 - Reading a card number immediately after a click races the async IndexedDB write → `waitVal()` polls until the expected value or timeout and then lets the assertion show the real value.
@@ -95,8 +132,10 @@ Each entry names the regression test that fails on the buggy version and passes 
 - (v6.1) Firefox axe measured `color-contrast` on collection cards during the screen fade-in (12 nodes). Like the overflow test, the axe test now waits 650 ms for the fade to finish; the real colours are about 9:1.
 - (v6.1) The first WebKit CI run had 3 tests whose page closed mid-test ("Target page … has been closed"). It did not recur on the next run, so it is recorded as an unexplained WebKit-on-Linux instability. Pages now record `crash` events to catch it if it returns.
 - (v6.1) `ubuntu-latest` became Ubuntu 26.04, which playwright 1.56 has no Firefox/WebKit builds for. The compat job is pinned to `ubuntu-24.04`.
-- (v6.1, OPEN) Firefox CI: `InvalidStateError: Navigated away from page` (no location) during the reload of an offline-locked page. Step markers in `e2e/auth › A offline queue…` narrowed it to the "network back → reload → next sign-in" step. Making the reload idempotent did not remove it. Not filtered; still FAIL.
-- (v6.1, OPEN) WebKit CI: renderer crashes in 1–3 random tests per run ("Page crashed" / "Target page closed"), never the same tests twice. Not reproduced locally (no matching WebKit build). Still FAIL.
+- (v6.1, RESOLVED as BUG-016) Firefox CI `InvalidStateError: Navigated away from page`: it was an app bug (unhandled `AudioContext.resume()` promise), not the harness.
+- (v6.1) `E2E_DIAG=1` (CI compat jobs): per-context trace, console/navigation/crash timeline and an in-page `error`/`unhandledrejection` probe; `DEBUG=pw:browser` prints browser stderr. Evidence only, no assertion changes.
+- (v6.1) Running two Edge E2E suites at the same time (and an extra Edge window with a debugging port) closed the headless Edge mid-run: 8 tests failed with "browser has been closed". Not a product failure; never run suites in parallel.
+- (v6.1, OPEN) WebKit CI: renderer crashes in 0–2 random tests per run ("Page crashed" / "Target crashed"), different tests each time (two-device sync, shared-computer wipe, rollback export, group XP, laptop overflow); 1 of 6 runs fully green. E2E_DIAG timeline: no console error or page error precedes the crash; in the two-device test both pages were idle ~40 s before it. Browser stderr was not captured yet (playwright `logger` produced nothing) → `DEBUG=pw:browser` added. Root cause unknown; still FAIL.
 - Never edit source files while a background E2E run is in progress; a mid-edit syntax error made one Chrome run report a false failure (recorded in VERIFICATION, re-run afterwards).
 
 ## Design issue found while writing the rollback guide — no v5.1-readable export

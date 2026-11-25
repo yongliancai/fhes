@@ -18,13 +18,25 @@
   - 「已授權的 JavaScript 來源」要加入正式網址的來源（例：`https://yongliancai.github.io`）。
   - 同意畫面的範圍：`openid`、`userinfo.email`、`userinfo.profile`、`drive.file`。
   - 若選「外部」且還在「測試」狀態：要把每位老師加入「測試使用者」。
-- [ ] 決定 Client ID 的放法：在 `src/config.js` 的 `GOOGLE_CLIENT_ID` 填入（建議），或讓老師在登入畫面輸入。
+- [ ] 決定 Client ID 的放法：在 `src/config.js` 的 `GOOGLE_CLIENT_ID` 填入（建議），或讓老師在登入畫面輸入。**目前 repo 內仍是空的**（ADR-014）。
+- [ ] `src/config.js` 的 `GOOGLE_AUTHORIZED_ORIGINS` 要和 Google Cloud 的「已授權的 JavaScript 來源」一致。
+- [ ] Google Cloud 專案已啟用 **Google Sheets API**；同意畫面若在「測試」狀態，每位老師都要在「測試使用者」名單（否則登入可以、試算表授權會被 403 access_denied 擋下）。
+- [ ] 決定是否送 Google 驗證／發布同意畫面（測試使用者上限 100 人；發布需另外核准）。
+- [ ] 告訴老師：共用電腦上，登出本系統後也要登出 Google；在一台電腦登出，其他電腦要按「重新連線」。
 - [ ] 升級前提醒老師：第一次登入後，舊資料會以「黃色提示」出現，要自己勾選匯入（不會自動歸屬）。
 - [ ] 確認學校對「學生資料存放在個人／學校 Google 帳號」的規定。
 - [ ] 發布後開啟正式網址：先出現登入畫面；登入後左下角顯示 `v6.1`；F12 主控台沒有錯誤。
 - [ ] 用兩個測試帳號（合成資料）實測：A 建班 → 登出 → B 登入看不到 A 的班 → 切換回 A 仍在。
 
-## C. 真實 Google 整合驗收（BLOCKED：需要使用者提供／授權）
+## C. 真實 Google 整合驗收（2026-11-25 已用一個測試帳號完成主要項目，報告：`docs/REAL-GOOGLE-ACCEPTANCE.md`）
+- [x] OAuth Client ID、已授權來源 `http://localhost:8765`、`https://yongliancai.github.io`
+- [x] 測試使用者已加入、Google Sheets API 已啟用（驗收中發現並由使用者修正）
+- [x] 單一帳號：登入、重新整理、登出撤銷、切換帳號的選擇畫面、取消、試算表建立／寫入／修改／第二台／衝突／去重／重新連線
+- [ ] **第二個測試帳號**：A／B 隔離、別的帳號不能用這份試算表（BLOCKED）
+- [ ] 彈出視窗登入穩定性再觀察數次（BUG-017）
+- [ ] 正式網址 `https://yongliancai.github.io` 上重跑一次登入與同步（來源不同，需實測）
+
+以下是原本的項目清單：
 - [ ] 使用者提供 OAuth Client ID（公開識別碼）與允許的來源。
 - [ ] 使用者核准用**測試用試算表＋合成資料**做一次真實連線測試，項目包括：
   - **真實 Google 登入**：簽章與 JWKS、取消登入、FedCM／彈出視窗、`origin_mismatch`
@@ -45,7 +57,8 @@
 3. **舊 Firebase**：本專案從未讀取、修改或刪除 Firestore 資料；還原到 v5.1 後原本的 Firebase 同步照舊可用。
 
 ## E. 已知限制（上線前需知悉）
-- Google OAuth／Sheets 只在模擬環境驗證（真實帳號測試 BLOCKED）。
+- 真實 Google 已用一個測試帳號驗收（Chrome、Edge）；第二個帳號、Safari／iPad、Firefox 的真實登入尚未驗證。
+- 登出本系統不會登出瀏覽器的 Google 帳號（共用電腦要另外登出 Google）。
 - 瀏覽器 token 約 1 小時過期，需要老師點「重新連線」（無背景長效權杖，這是刻意的安全設計）。
 - Google 試算表無交易機制：設計給「一位老師、多台裝置」，衝突交由老師處理，不保證強一致。
 - v6 需經由網址（http/https）開啟，直接開啟本機 HTML 檔無法運作。

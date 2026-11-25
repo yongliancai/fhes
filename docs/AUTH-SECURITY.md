@@ -1,6 +1,6 @@
 # 登入與資料隔離：架構與安全邊界（v6.1）
 
-> Decisions: ADR-011, ADR-012 and ADR-013 in `docs/DECISIONS.md`. Every claim below is tested in a browser with **simulated** Google services (`e2e/auth.e2e.mjs`, `e2e/sync.e2e.mjs`) and in unit tests (`tests/auth.test.mjs`). It has **not** been run against real Google accounts; that is BLOCKED (see `docs/VERIFICATION.md`).
+> Decisions: ADR-011 to ADR-014 in `docs/DECISIONS.md`. Every claim below is tested in a browser with **simulated** Google services (`e2e/auth.e2e.mjs`, `e2e/sync.e2e.mjs`) and in unit tests (`tests/auth.test.mjs`). On 2026-11-25 the main flows were also run once against **real Google** with one test account in Chrome and Edge (`docs/REAL-GOOGLE-ACCEPTANCE.md`). A second real account (A/B isolation) is still BLOCKED.
 
 ## 1. Two separate steps
 | | Authentication (who is the teacher) | Authorization (may the app use Sheets) |
@@ -41,9 +41,11 @@ The access token is never treated as an identity token, and the ID token is neve
 ## 4. What is NOT protected (honest limits)
 - **The local data is not encrypted.** The login screen is a gate in the browser, not a server. Someone who can use this computer, this browser profile and the developer tools can read the IndexedDB data without signing in.
 - **No server-side session or audit log.** The app has no backend (see ADR-011 for why), so the sign-in check runs in the browser. It stops misuse of the normal UI, not someone who changes the page's code on their own machine.
+- **Signing out of this app does not sign the browser out of Google.** Verified with real Google: after "登出", the next person who presses "使用 Google 帳號登入" sees Google's account chooser with the previous teacher's account and can pick it **without a password**, because the browser still holds that Google session. On a shared computer the teacher must also sign out of Google (or use a separate browser profile / OS account).
+- **Signing out on one device makes the other devices reconnect.** Revoking the token revokes the app's whole grant for that account, so other devices see "需要重新連線" (pending edits are kept).
 - **Shared computers.** Sign out after use. Use "登出並移除這台電腦上此帳號的資料" if the computer is shared with people who should not have access, or give each teacher a separate OS account or browser profile.
 - **Network required to sign in.** Reopening the app offline shows the login screen with "目前沒有網路". The data stays on the device, but nothing unlocks until Google is reachable. Without a service worker, a fully offline reload may not load the page at all.
-- **Real Google behaviour is unverified:** consent screens, FedCM, popup blockers, `origin_mismatch`, Workspace admin policies, real JWKS rotation and real token lifetimes.
+- **Real Google behaviour verified once, not continuously** (`docs/REAL-GOOGLE-ACCEPTANCE.md`): sign-in, popup chooser, cancel, revoke, Sheets flows. Not verified: Workspace admin policies, real JWKS rotation, 1-hour natural expiry, Safari/iPad, Firefox sign-in. The popup flow once did not return the result in 2 of 4 tries (BUG-017, OPEN).
 
 ## 5. Data that exists before sign-in ("舊資料")
 - **Where it lives:** the v5.1 or early v6 database `classroomPowerhouseV5`, or the v4 localStorage cache. It belongs to no account.

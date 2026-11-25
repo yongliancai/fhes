@@ -59,6 +59,14 @@ The app requests only `https://www.googleapis.com/auth/drive.file` (files the ap
   - Removing the legacy data is a separate action with two confirmations, done after a backup.
 - This replaces the old automatic `migrateFromV4IfNeeded()`.
 
+## ADR-014 — Google button uses the popup, not FedCM; authorized origins are checked in the app (2026-11-25, real-Google acceptance)
+- **Popup instead of FedCM** (`use_fedcm_for_button: false`, `button_auto_select: false`): in real Chrome 158 the FedCM button signed a returning account straight back in after sign-out, with no chooser, so "切換帳號" could not switch (BUG-015). The popup shows Google's account chooser each time; cancel keeps the app locked.
+  - Trade-off: popups can be blocked; Google may migrate the button to FedCM in future. Re-test before each release.
+  - Popup sign-in once failed to reach the app in 2 of 4 tries; the callback now accepts any issued, unused nonce and never drops a response silently (BUG-017, OPEN).
+- **`GOOGLE_AUTHORIZED_ORIGINS` in `src/config.js`** mirrors the Cloud console. Google's button gives the app no signal on `origin_mismatch`, so the login screen warns first when the current origin is not listed (e.g. `127.0.0.1` vs `localhost`).
+- **The Client ID is not committed yet.** It is public by design, but writing it into `src/config.js` changes what a deployment uses, so it waits for the user's deploy decision. Testers enter it on the login screen (stored only as that identifier).
+- **Revoke on sign-out stays**, although Google revokes the whole grant, so other devices must press "重新連線" afterwards (observed, S16). Security over convenience on shared computers.
+
 ## ADR-013 — Sheets authorization bound to the signed-in account (2026-11-25)
 - The token client is created with `hint`/`login_hint` = the signed-in account and scope `openid drive.file`.
 - After the token arrives:
