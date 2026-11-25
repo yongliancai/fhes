@@ -144,6 +144,12 @@ Each entry names the regression test that fails on the buggy version and passes 
 
 Inaccurate documentation the review found (server-side nonce, "only once", 30/IP, T12 under concurrency, an Argon2 concurrency limit that did not exist, bearer "ends on reload") was corrected in the threat model, `STUDENT-SYSTEM.md` and ADR-017/018.
 
+## BUG-026 (v6.2) — encrypted backup left plaintext `-wal`/`-shm` files next to the snapshot
+- **DETECT**: `tests/server-backup.test.mjs` asserted that only encrypted files remain in the backup folder; two `.tmp-*.db-wal`/`-shm` files were left.
+- **ROOT CAUSE**: the SQLite online-backup copy keeps WAL mode; opening it for the integrity check created WAL side files, which can hold unencrypted rows.
+- **FIX**: switch the snapshot to `journal_mode = DELETE` before checking it, and delete the file with all side files (`-wal`, `-shm`, `-journal`) in every path (backup, verify, failed restore).
+- **PROVE**: the test failed before the fix and passes after it; CLI smoke test keygen → backup → verify → restore → refused second restore.
+
 ## v6.2 test-writing mistakes caught by the suite (not product bugs)
 - Test helper's default new password contained the username → the server correctly refused it as weak.
 - Idempotency keys shorter than 8 characters in a test → the server correctly answered 400.

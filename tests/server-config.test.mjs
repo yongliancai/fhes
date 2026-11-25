@@ -25,3 +25,12 @@ test('JWKS: always fetched from Google, cached by max-age, forced refresh at mos
     await j(true); await j(true); await j(true);
     assert.equal(urls.length, 2, 'unknown kid can force at most one refresh per minute (no fetch amplification)');
 });
+
+test('deploy/fhes-student.env.example: refuses to start until the salt placeholder is replaced, then the config is complete', async () => {
+    const { readFileSync } = await import('node:fs');
+    const env = Object.fromEntries(readFileSync(new URL('../deploy/fhes-student.env.example', import.meta.url), 'utf8').split(/\r?\n/)
+        .filter(l => l && !l.startsWith('#')).map(l => [l.slice(0, l.indexOf('=')), l.slice(l.indexOf('=') + 1)]));
+    assert.throws(() => configFromEnv(env), /FHES_IP_SALT/, 'placeholder salt is rejected');
+    const c = configFromEnv({ ...env, FHES_IP_SALT: 'f'.repeat(64) });
+    assert.deepEqual([c.trustProxy, c.host, c.port, c.teacherAllow.length > 0], [1, '127.0.0.1', 8790, true]);
+});

@@ -1,0 +1,43 @@
+# nginx 範本：只服務 FHES 學生系統的子網域，其他網站完全不動。說明：docs/STUDENT-DEPLOY-GUIDE.md 第 5 節
+# 用 CloudPanel 的話：新增一個「Reverse Proxy」網站，把下面 location 區塊的設定貼到它的 Vhost 編輯器。
+
+# 登入與照顧 API 的流量限制（每個 IP；學校共用一個 IP 時仍夠用）
+limit_req_zone $binary_remote_addr zone=fhes_login:10m rate=30r/m;
+limit_req_zone $binary_remote_addr zone=fhes_api:10m rate=300r/m;
+
+server {
+    listen 80;
+    server_name fhes.school.example.edu.tw;
+    return 301 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl http2;
+    server_name fhes.school.example.edu.tw;
+
+    ssl_certificate     /etc/letsencrypt/live/fhes.school.example.edu.tw/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/fhes.school.example.edu.tw/privkey.pem;
+
+    client_max_body_size 3m;          # 教師發布投影最大 2 MB
+    access_log /var/log/nginx/fhes-student.access.log;
+
+    location = /api/student/login {
+        limit_req zone=fhes_login burst=20 nodelay;
+        include /etc/nginx/fhes-student-proxy.conf;
+    }
+    location /api/ {
+        limit_req zone=fhes_api burst=60 nodelay;
+        include /etc/nginx/fhes-student-proxy.conf;
+    }
+    location / {
+        include /etc/nginx/fhes-student-proxy.conf;
+    }
+}
+
+# ---- /etc/nginx/fhes-student-proxy.conf（另存一個檔案）----
+# proxy_pass http://127.0.0.1:8790;
+# proxy_http_version 1.1;
+# proxy_set_header Host $host;
+# proxy_set_header X-Forwarded-For $remote_addr;     # 覆寫（不是附加），學生無法偽造 IP 繞過限流
+# proxy_set_header X-Forwarded-Proto $scheme;
+# proxy_read_timeout 30s;

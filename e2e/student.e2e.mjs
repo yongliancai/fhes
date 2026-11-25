@@ -184,3 +184,12 @@ test('student page accessibility (axe) on desktop and login screen', async () =>
     await S.context.close();
     assert.ok(OUT && join);
 });
+
+test('rollback A: with STUDENT_API_BASE empty the teacher app shows no student system (v6.1 behaviour)', async () => {
+    const t = await openApp();                        // repo config：STUDENT_API_BASE = ''
+    await createClass(t.page, '合成回滾班', 2);
+    assert.equal(await t.page.isVisible('#student-system-btn'), false);
+    assert.equal(await t.page.locator('#student-modal').count(), 0);
+    assert.deepEqual(t.errors, []);
+    await t.close();
+});
