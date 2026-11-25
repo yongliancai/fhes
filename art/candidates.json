@@ -1,0 +1,5 @@
+{
+  "_note": "機器品質檢查（scripts/art-qc.py）通過但等待人工審核的候選素材；禁止自動寫入 art/approved.json 或 src/data/art-manifest.js。",
+  "updatedAt": "2026-11-25T22:18:00+08:00",
+  "candidates": []
+}
