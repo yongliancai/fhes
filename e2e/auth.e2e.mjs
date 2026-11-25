@@ -153,9 +153,13 @@ test('A offline queue is never pushed to B spreadsheet; it syncs to A sheet when
         await assertLocked(page, 'offline sign-out locks in place');
         assert.ok(!(await page.textContent('body')).includes('佇列測試班'), 'class name gone from the page after offline sign-out');
         mark(3);
-        // 恢復網路：瀏覽器的 online 事件會自動重新載入到乾淨的登入畫面（保險起見也手動送一次，頁面可能已在重新載入）
+        // 恢復網路：App 必須靠瀏覽器自己的 online 事件重新載入到乾淨的登入畫面。
+        // 先等這次重新載入；只有 5 秒內沒有發生時才手動送 online 事件。
+        // （之前一律手動送：Firefox 上那段腳本和重新載入同時進行，Firefox 會在主控台報
+        //   「InvalidStateError: Navigated away from page」，見 BUG-LOG HARNESS-005）
+        const reloaded = page.waitForEvent('load', { timeout: 5000 }).then(() => true, () => false);
         await context.setOffline(false);
-        await page.evaluate(() => window.dispatchEvent(new Event('online'))).catch(() => {});
+        if (!(await reloaded)) { t.diagnostic('no automatic reload within 5 s; dispatching online manually'); await page.evaluate(() => window.dispatchEvent(new Event('online'))).catch(() => {}); }
         await signIn(page, TEACHER_B);
         mark(4);
         const reqsBeforeB = emu.requests.length;
