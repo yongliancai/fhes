@@ -75,3 +75,52 @@ The app requests only `https://www.googleapis.com/auth/drive.file` (files the ap
   - Otherwise the token is revoked and refused.
 - On sign-out or account switch, `SYNC.stop()` cancels timers, drops queued conflict choices, revokes the in-memory token and refuses further runs, before the page reloads. A's queue therefore can never be sent with B's token.
 - "使用這份" first probes the spreadsheet with a read-only metadata GET. A 403 or 404 refuses it, nothing is saved, and no other spreadsheet is substituted.
+
+## ADR-015 — v6.2 adds a minimal backend for students only (2026-11-25)
+**Context.** v6.2 lets students sign in and see their own data. ADR-011 rejected a backend because data lived only on the teacher's device; that reasoning does not hold for students, who must not get the teacher's data or tokens, and whose access must be checked by a server.
+**Decision.** A small Node.js API (`server/`) holds per-student projections, student accounts and group care events. The teacher app stays the source of truth for score, homework, XP and grants (IndexedDB + Google Sheets, unchanged).
+**Options compared** (no remote access to the VPS was made; based on project files and the user's statement that a VPS exists):
+| | Existing VPS + Node (chosen) | Serverless (e.g. Cloud Run / Functions + managed DB) |
+|---|---|---|
+| Security | Full control; same-origin cookie for students; must patch OS/Node ourselves | Managed patching; cross-site cookies or token storage harder; more IAM surface |
+| Cost | Already paid | New billing account and resources (needs approval) |
+| Maintenance | One process, one SQLite file, nginx reverse proxy | Cold starts, vendor config, separate DB service |
+| Domain / cookies | Student page and API on one sub-domain → `__Host-` cookie, `SameSite=Strict` | Needs custom domain mapping to get the same |
+| Backup | File copy of SQLite (daily, encrypted) | Provider snapshots |
+| Isolation | Separate system user, port bound to 127.0.0.1, own data directory; must not share the existing site's process | Strong by default |
+**Consequence.** Deployment, domain, TLS, nginx/PM2 changes are listed as approval items; nothing is done on the real VPS.
+**Rollback.** The teacher app works without the API (feature hidden when `STUDENT_API_BASE` is empty). Stopping the process removes the student system; teacher data is unaffected.
+
+## ADR-016 — Stack: Fastify 5, better-sqlite3, Argon2id (2026-11-25)
+- Fastify: maintained, schema validation, body limits, no extra plugins except `@fastify/cookie`.
+- better-sqlite3 instead of `node:sqlite` (still experimental in Node 22): mature, synchronous, real transactions; one file, easy backup. Suitable for one school (hundreds of students).
+- Argon2id (`argon2` package, OWASP parameters m=19 MiB, t=2, p=1). Node 22 has no built-in Argon2.
+- The server imports the browser's pure modules (`src/auth/id-token.js`, `src/core/student-projection.js`, `src/core/care.js`) so rules are written once.
+
+## ADR-017 — Teacher authentication on the server (2026-11-25)
+- The teacher app already receives a Google ID token at sign-in. When the student system is configured, that token (and its nonce) is sent once to `POST /api/teacher/session`, then dropped from memory.
+- The server verifies it with Google's JWKS using the same `verifyGoogleIdToken()` (signature, iss, aud/azp, exp, nonce, sub) plus `iat` no older than 10 minutes, and accepts each token only once (SHA-256 kept until expiry).
+- The server returns an opaque Bearer token (8 h, stored hashed) kept only in the teacher page's memory. CORS allows only configured teacher origins. No cookies for teachers → no CSRF.
+- A class belongs to the teacher who created its link: `(teacherId, localClassId)`. Other teachers get 404.
+- Tests use a test JWKS injected into the app factory; the production entry (`server/main.mjs`) always fetches Google's JWKS and refuses to start without a Client ID. No test flag exists in production code paths that skips verification.
+
+## ADR-018 — Student accounts and sessions (2026-11-25)
+- Teachers create accounts; usernames are random (`abc1234` style, ambiguous letters removed); initial passwords are 10 random characters from a 32-letter alphabet, shown once.
+- First sign-in must change the password (policy: ≥ 8 chars, not the username, not common, not one repeated character or a simple sequence).
+- Sessions: random 256-bit id in a `__Host-fhes_sid` cookie (HttpOnly, Secure, SameSite=Strict); server stores SHA-256 only; idle 2 h, absolute 12 h; rotated on sign-in and password change; all revoked on teacher reset/disable.
+- Every state-changing student request needs `X-FHES-CSRF` (per-session token) and an allowed `Origin`.
+- Lockout per account (5 failures → 1, 2, 4 … 15 min) and per IP (30 failures / 15 min → 429). Unknown usernames still run one Argon2 verification.
+- All ACL comes from the session: `accountId → classId, localStudentId`; the group comes from the latest projection. Student endpoints take no identity parameters.
+
+## ADR-019 — Group care is cosmetic and capped (2026-11-25)
+- Care events live only on the server. Each student has at most 3 counted care actions per Asia/Taipei day across all groups, enforced by `UNIQUE(account, localDate, slot)` with `slot ∈ 1..3`, inside a transaction; `UNIQUE(account, idempotencyKey)` makes retries safe. Extra actions return `counted:false` and only play an animation.
+- Care changes mood (calm → happy → very happy; never negative), unlocks group decorations at 10/30/60/100/160 counted actions, and gives a "team day" star when at least half of the group's members cared that day.
+- Care never creates XP, score or grants, and does not change growth stages. Projections are built from v6.1 data only.
+- No death, sickness, decay below neutral, streaks or daily-login pressure.
+
+## ADR-020 — Teacher projection publishing (2026-11-25)
+- `src/core/student-projection.js` (pure) builds per-student DTOs from v6.1 data with the existing rules (`computeTotals`, `projectRecords`, `xpLedger`, `growthStage`). Hearts are not published.
+- Publishing is manual ("發布到學生系統"), optionally automatic after changes (debounced). Each publish carries `version` (monotonic, ms) and a SHA-256 `hash` of the canonical content. Older version → 409; same version + same hash → idempotent 200; same version + different hash → 409.
+- A newer version replaces the whole class in one transaction: students or groups missing from it lose their projection (no ghost data).
+- The teacher can choose to publish seat numbers instead of names.
+- The student page shows the publish time and warns when it is older than 3 days.

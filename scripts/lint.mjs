@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const eslint = new ESLint({ cwd: root, errorOnUnmatchedPattern: false });
-const results = await eslint.lintFiles(['src/**/*.js', 'scripts/**/*.mjs', 'tests/**/*.mjs', 'e2e/**/*.mjs', 'eslint.config.js'].filter(Boolean));
+const results = await eslint.lintFiles(['src/**/*.js', 'server/**/*.mjs', 'scripts/**/*.mjs', 'tests/**/*.mjs', 'e2e/**/*.mjs', 'eslint.config.js'].filter(Boolean));
 const html = readFileSync(join(root, 'index.html'), 'utf8');
 const inline = [...html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script>/gi)].filter(m => /type\s*=\s*["']module["']/.test(m[1]));
 for (const [i, m] of inline.entries()) {
