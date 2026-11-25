@@ -2,8 +2,9 @@
 // GOOGLE_CLIENT_ID：OAuth「網頁應用程式」用戶端 ID（….apps.googleusercontent.com）。
 //   - 留空：登入畫面會讓老師在這台電腦輸入（存在 localStorage，僅此識別碼）。
 //   - 正式部署前由管理者填入（需使用者另外核准；見 docs/GOOGLE-SHEETS-SETUP.md）。
+//   - 2026-11-25 使用者核准寫入並發布（OAuth 用戶端「網頁應用程式」，已授權來源見下方清單）。
 // 絕對不要在這裡放 client secret、token 或任何密碼。
-export const GOOGLE_CLIENT_ID = '';
+export const GOOGLE_CLIENT_ID = '614456020578-m6363jtnho42k9n7u2c4b8djjs7hpagc.apps.googleusercontent.com';
 
 // GOOGLE_AUTHORIZED_ORIGINS：與 Google Cloud「已授權的 JavaScript 來源」保持一致（公開資訊）。
 //   Google 比對的是完整來源字串：http://localhost:8765 與 http://127.0.0.1:8765 是不同的來源。

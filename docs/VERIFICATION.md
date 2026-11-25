@@ -47,6 +47,7 @@ Status words follow the Code Factory guide strictly: **PASS** = actually execute
 | 2026-11-25 | earlier full run (invalid) | Edge E2E while a second Edge suite and an extra debug Edge were running | Windows 11 | 31/39 — 8 × "browser has been closed"; environment interference, discarded and re-run above |
 | 2026-11-25 | real Google, second account | A/B isolation, wrong-account authorization, cross-account spreadsheet access | Chrome 158, two test Gmail accounts, synthetic data | PASS X1–X8 (report §6) |
 | 2026-11-25 | CI on 5b91fcb | GitHub Actions | verify PASS · Chrome PASS · **Firefox PASS 39/39** (second green run in a row) · **WebKit FAIL 37/39**: both failures are "Target page, context or browser has been closed" mid-test (`auth › account isolation`, `auth › A offline queue`), different tests from the previous run; still unexplained page closures |
+| 2026-11-25 | release candidate (Client ID in `src/config.js`) | `npm run verify` / `npm run test:e2e` / `E2E_CHANNEL=chrome npm run test:e2e` | Windows 11 / Edge / Chrome | PASS — 117/117, 39/39, 39/39 |
 | CI | every push | GitHub Actions `Quality (no deployment)`: `verify` + `e2e` (ubuntu, Chrome) | ubuntu-latest, Node 22 | green for P2 (feff057), P3 (4b6bb42), P4 (853a880); later runs are listed in Draft PR #1 |
 
 ## Acceptance matrix

@@ -64,7 +64,7 @@ The app requests only `https://www.googleapis.com/auth/drive.file` (files the ap
   - Trade-off: popups can be blocked; Google may migrate the button to FedCM in future. Re-test before each release.
   - Popup sign-in once failed to reach the app in 2 of 4 tries; the callback now accepts any issued, unused nonce and never drops a response silently (BUG-017, OPEN).
 - **`GOOGLE_AUTHORIZED_ORIGINS` in `src/config.js`** mirrors the Cloud console. Google's button gives the app no signal on `origin_mismatch`, so the login screen warns first when the current origin is not listed (e.g. `127.0.0.1` vs `localhost`).
-- **The Client ID is not committed yet.** It is public by design, but writing it into `src/config.js` changes what a deployment uses, so it waits for the user's deploy decision. Testers enter it on the login screen (stored only as that identifier).
+- **The Client ID is committed in `src/config.js`** (user approval 2026-11-25, together with the merge/publish approval). It is a public identifier; no client secret exists in the app or the repo. E2E keeps testing the "no Client ID configured" screen by serving a blank `config.js` to that one context.
 - **Revoke on sign-out stays**, although Google revokes the whole grant, so other devices must press "重新連線" afterwards (observed, S16). Security over convenience on shared computers.
 
 ## ADR-013 — Sheets authorization bound to the signed-in account (2026-11-25)

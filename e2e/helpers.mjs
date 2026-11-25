@@ -108,6 +108,13 @@ export const openApp = async (opts = {}) => {
     const { revoked } = await wireFakeGoogle(context);
     if (opts.emu) await wireSheets(context, opts.emu);
     const clientId = opts.clientId === undefined ? TEST_CLIENT_ID : opts.clientId;
+    // clientId: null = 模擬「部署時沒有設定 Client ID」：這個 context 拿到的 src/config.js 是空的 Client ID（來源清單照舊）。
+    // 其他測試使用 repo 裡的 config：假 GIS 會用 App 設定的 Client ID 簽 aud，所以真正的 Client ID 不影響測試。
+    if (opts.clientId === null) {
+        const real = readFileSync(join(ROOT, 'src', 'config.js'), 'utf8');
+        const blank = real.replace(/export const GOOGLE_CLIENT_ID = '[^']*';/, "export const GOOGLE_CLIENT_ID = '';");
+        await context.route(/\/src\/config\.js$/, r => r.fulfill({ status: 200, contentType: 'text/javascript; charset=utf-8', body: blank }));
+    }
     if (clientId) await context.addInitScript((cid) => { try { if (!localStorage.getItem('fhes_google_client_id')) localStorage.setItem('fhes_google_client_id', cid); } catch { /* ignore */ } }, clientId);
     const seq = ++diagSeq;
     if (DIAG) {

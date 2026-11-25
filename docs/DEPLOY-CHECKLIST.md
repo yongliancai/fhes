@@ -18,7 +18,7 @@
   - 「已授權的 JavaScript 來源」要加入正式網址的來源（例：`https://yongliancai.github.io`）。
   - 同意畫面的範圍：`openid`、`userinfo.email`、`userinfo.profile`、`drive.file`。
   - 若選「外部」且還在「測試」狀態：要把每位老師加入「測試使用者」。
-- [ ] 決定 Client ID 的放法：在 `src/config.js` 的 `GOOGLE_CLIENT_ID` 填入（建議），或讓老師在登入畫面輸入。**目前 repo 內仍是空的**（ADR-014）。
+- [x] Client ID 已寫入 `src/config.js`（2026-11-25 使用者核准）。
 - [ ] `src/config.js` 的 `GOOGLE_AUTHORIZED_ORIGINS` 要和 Google Cloud 的「已授權的 JavaScript 來源」一致。
 - [ ] Google Cloud 專案已啟用 **Google Sheets API**；同意畫面若在「測試」狀態，每位老師都要在「測試使用者」名單（否則登入可以、試算表授權會被 403 access_denied 擋下）。
 - [ ] 決定是否送 Google 驗證／發布同意畫面（測試使用者上限 100 人；發布需另外核准）。

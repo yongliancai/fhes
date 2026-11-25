@@ -36,7 +36,7 @@
 | L9a | Client ID 格式錯誤 | PASS（模擬） | E2E／單元測試。真實環境沒有重測 |
 | L9b | 網址來源不在授權清單 | **PASS（真實按鈕）** | 在 `localhost:8766` 按真實 Google 按鈕沒有反應，主控台出現 FedCM NetworkError。App 現在會先提醒「目前網址的來源不在 Google 已授權的來源清單」（新增功能，有單元與 E2E 測試） |
 | L9c | 不存在的 Client ID（Google 顯示 `invalid_client`） | NOT_VERIFIED | 沒有實測；這是 Google 視窗內的錯誤頁，App 收不到 |
-| L10 | Token 沒有進入 Git、log、備份或瀏覽器永久儲存 | **PASS** | Edge 登入中且已授權時掃描：localStorage、sessionStorage、cookie、網址、全部 IndexedDB（34 筆），**0 命中**。試算表的 SyncMeta／Settings 也是 0 命中。Chrome 的 cookie 只有 GIS 自己的 `g_state`。Git 只有公開資訊（來源清單），沒有 Client ID |
+| L10 | Token 沒有進入 Git、log、備份或瀏覽器永久儲存 | **PASS** | Edge 登入中且已授權時掃描：localStorage、sessionStorage、cookie、網址、全部 IndexedDB（34 筆），**0 命中**。試算表的 SyncMeta／Settings 也是 0 命中。Chrome 的 cookie 只有 GIS 自己的 `g_state`。Git 只有公開資訊（來源清單；發布時經使用者核准另外寫入公開的 Client ID），沒有任何 token 或 client secret |
 
 **彈出視窗模式的穩定性（BUG-017）：**改成彈出視窗後，有 2 次「使用者已在 Google 視窗選好帳號，但 App 沒收到結果，仍停在登入畫面」：一次是登出後第一次登入，一次是切換帳號後；其他 2 次正常。兩次失敗都發生在頁面剛重新載入後的第一次登入。程式原本只接受「最新一個」nonce，其他回呼會被**默默丟掉**，這是最可能的原因，但沒有直接證據。修正後：所有已發出、還沒用掉的 nonce 都能驗證（每個仍只能用一次），都對不上時會明確顯示錯誤。修正後在重新載入的頁面第一次登入就成功（1/1，已確認頁面解鎖並收到 Google 的回應訊息）。**樣本只有 1 次，仍列為 OPEN／觀察中。**
 
