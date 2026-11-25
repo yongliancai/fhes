@@ -447,7 +447,7 @@ export const buildApp = ({ db, config, jwks, now = () => Date.now() }) => {
     // ============================================================ 學生頁面（同源靜態檔，只開放白名單）
     if (config.staticRoot) {
         const root = resolve(config.staticRoot);
-        const allowed = (p) => p === '/student.html' || /^\/src\/(core|data|art|student)\/[A-Za-z0-9_\-/]+\.(js|css)$/.test(p) || /^\/assets\/[A-Za-z0-9_\-/]+\.(webp|png|svg)$/.test(p);
+        const allowed = (p) => p === '/student.html' || p === '/src/ui/dom.js' || /^\/src\/(core|data|art|student)\/[A-Za-z0-9_\-/]+\.(js|css)$/.test(p) || /^\/assets\/[A-Za-z0-9_\-/]+\.(webp|png|svg)$/.test(p);
         app.get('/', async (req, reply) => reply.redirect('/student.html'));
         app.get('/*', async (req, reply) => {
             const path = decodeURIComponent(req.url.split('?')[0]);

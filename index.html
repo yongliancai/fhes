@@ -498,6 +498,7 @@
                     <button id="add-student-btn" class="btn btn-secondary">＋ 新增學生</button>
                     <button id="paste-roster-btn" class="btn btn-secondary">📋 貼上名單</button>
                     <button id="reason-settings-btn" class="btn btn-secondary">⚙️ 班級設定</button>
+                    <button id="student-system-btn" class="btn btn-secondary" hidden>🎓 學生系統</button>
                 </div>
                 <div id="student-grid"></div>
             </div>
@@ -749,6 +750,8 @@
         import { waitForSignIn, initAccountUI } from './src/ui/auth-ui.js';
         import { initLegacyUI } from './src/ui/legacy-ui.js';
         import { accountKey } from './src/auth/id-token.js';
+        import { initStudentAdminUI } from './src/ui/student-admin-ui.js';
+        import { STUDENT_API_BASE } from './src/config.js';
 
         const APP_VERSION = 'v6.1';
         const DATA_VERSION = 6;
@@ -823,8 +826,9 @@
         // ---------- 記憶體狀態 ----------
         const S = { classes: [], students: [], events: [], snapshots: [], meta: {}, hwAssignments: [], hwEvents: [], xpEvents: [], specialItems: [], grants: [] };
         let SYNC = null;
+        let STUDENT = null;   // v6.2 學生系統（STUDENT_API_BASE 沒設定時不出現）
         /** 任何資料變動後呼叫：排程雲端同步（沒設定雲端就什麼都不做） */
-        const afterDataChange = () => { SYNC?.schedule(); };
+        const afterDataChange = () => { SYNC?.schedule(); STUDENT?.markDirty(); };
         const eventById = new Map();
         const totals = new Map();       // studentId -> { score:可用加分, earned:累計獲得, heart }
         const groupTotals = new Map();  // `${classId}|${group}` -> score
@@ -2144,7 +2148,7 @@
             applyFontSize(lsGet(LS_FS_KEY) || 'm'); refreshMuteBtn(); applyHideHearts(lsGet(LS_HIDE_HEARTS_KEY) === '1'); applyReduceMotion(lsGet(LS_MOTION_KEY) === '1');
             resizeCanvas(); initParticles(); animateParticles();
             // 1) 登入（方案 A）：Google 登入並在瀏覽器驗證 ID token 簽章／發行者／受眾／期限／nonce 之前，什麼資料都不開
-            const { identity, signIn, clientId } = await waitForSignIn({ $ });
+            const { identity, signIn, clientId, handoff } = await waitForSignIn({ $ });
             // 2) 打開「這個帳號」的資料庫
             DB_NAME = accountDbName(await accountKey(identity.sub));
             try { idb = await openDB(); }
@@ -2160,7 +2164,7 @@
             const accountTag = DB_NAME;
             initAccountUI({ $, identity, signIn, hooks: {
                 accountTag,
-                stopSync: () => SYNC.stop(),
+                stopSync: () => { SYNC.stop(); STUDENT?.api?.disconnect(); },
                 // 登出時先清掉記憶體中的班級資料（再整頁重新載入；離線時無法重新載入也不會留下前一位老師的資料）
                 wipeMemory: () => { Object.keys(S).forEach(k => { S[k] = Array.isArray(S[k]) ? [] : {}; }); totals.clear(); groupTotals.clear(); eventById.clear(); currentClassId = null; rec = null; idb?.close(); idb = null; },
                 pendingCount: () => SYNC.pendingCount(),
@@ -2176,6 +2180,8 @@
                 refresh: async () => { await upgradeData(); recomputeTotals(); await autoSettle(); renderDashboard(); },
             });
             await LEGACY.detect();
+            // v6.2：學生系統（選用）。登入時的 ID token 只在這裡交給後端驗證一次，換成記憶體內的教師工作階段後就丟掉
+            STUDENT = initStudentAdminUI({ app, base: STUDENT_API_BASE, handoff });
             // 重新整理時若仍在秩序記錄模式，登入後直接回到記錄畫面（不會露出老師畫面）
             const rm = S.meta.recordMode;
             if (rm && classById(rm.classId) && !classById(rm.classId).deleted) { rec = rm; currentClassId = rm.classId; currentTab = 'students'; renderClassView(); showRecordOverlay(); }

@@ -118,6 +118,24 @@ Each entry names the regression test that fails on the buggy version and passes 
 - **FIX**: keep up to 5 issued, unused nonces; verify against each (each usable once, deleted on success); if none matches, show "登入憑證無效" instead of dropping it silently. Replay protection unchanged (E2E `nonce` mode still refused).
 - **PROVE**: real Chrome after the fix: 1/1 first-attempt sign-in on a reloaded page succeeded. Sample too small → **OPEN (monitoring)**.
 
+## BUG-018 (v6.2) — student initial passwords stayed in the teacher page's DOM after closing the dialog
+- **DETECT**: `e2e/student.e2e.mjs` asserted that the one-time initial password is gone after "關閉"; it was still in the hidden dialog (and in the print-only slip block). Pressing Esc (global handler in `index.html`) closed the dialog without running any clean-up at all.
+- **ROOT CAUSE**: closing only removed the `visible` class; the slips lived on in `modal.card` and `#student-slips`.
+- **FIX**: a `MutationObserver` on the dialog's class wipes the slips from memory and the DOM whenever the dialog stops being visible, whichever way it was closed (button, backdrop, Esc).
+- **PROVE**: the E2E assertion failed before the fix and passes after it.
+
+## BUG-019 (v6.2) — student zoo scene was `role="img"` while containing focusable animals
+- **DETECT**: axe `nested-interactive` (serious) on the student zoo in `e2e/student.e2e.mjs`.
+- **ROOT CAUSE**: `sceneSVG()` labels the scene as an image; assistive technology hides an image's children, so the animal buttons were unreachable for screen readers.
+- **FIX**: the student zoo sets the scene's role to `group`. Animals are also selectable with Enter/Space (the E2E selects one by keyboard).
+- **PROVE**: axe clean on login, growth and zoo screens.
+
+## v6.2 test-writing mistakes caught by the suite (not product bugs)
+- Test helper's default new password contained the username → the server correctly refused it as weak.
+- Idempotency keys shorter than 8 characters in a test → the server correctly answered 400.
+- A test advanced the clock 14 h and then reused the teacher's 8-hour token → the server correctly answered 401; the test now opens a fresh teacher session.
+- Animals bob continuously, so Playwright's "stable" check never passes for a mouse click; the E2E selects them by keyboard instead (no `force`).
+
 ## TEST-HARNESS notes (not product bugs, recorded so they are not repeated)
 - `page.waitForSelector('#import-modal:not(.visible)')` waits for *visible* by default → use `{ state: 'hidden' }`.
 - Reading a card number immediately after a click races the async IndexedDB write → `waitVal()` polls until the expected value or timeout and then lets the assertion show the real value.

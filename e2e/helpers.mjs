@@ -110,10 +110,12 @@ export const openApp = async (opts = {}) => {
     const clientId = opts.clientId === undefined ? TEST_CLIENT_ID : opts.clientId;
     // clientId: null = 模擬「部署時沒有設定 Client ID」：這個 context 拿到的 src/config.js 是空的 Client ID（來源清單照舊）。
     // 其他測試使用 repo 裡的 config：假 GIS 會用 App 設定的 Client ID 簽 aud，所以真正的 Client ID 不影響測試。
-    if (opts.clientId === null) {
-        const real = readFileSync(join(ROOT, 'src', 'config.js'), 'utf8');
-        const blank = real.replace(/export const GOOGLE_CLIENT_ID = '[^']*';/, "export const GOOGLE_CLIENT_ID = '';");
-        await context.route(/\/src\/config\.js$/, r => r.fulfill({ status: 200, contentType: 'text/javascript; charset=utf-8', body: blank }));
+    // studentApi（v6.2）：這個 context 的 src/config.js 指向測試用的學生系統 API
+    if (opts.clientId === null || opts.studentApi) {
+        let cfg = readFileSync(join(ROOT, 'src', 'config.js'), 'utf8');
+        if (opts.clientId === null) cfg = cfg.replace(/export const GOOGLE_CLIENT_ID = '[^']*';/, "export const GOOGLE_CLIENT_ID = '';");
+        if (opts.studentApi) cfg = cfg.replace(/export const STUDENT_API_BASE = '[^']*';/, `export const STUDENT_API_BASE = '${opts.studentApi}';`);
+        await context.route(/\/src\/config\.js$/, r => r.fulfill({ status: 200, contentType: 'text/javascript; charset=utf-8', body: cfg }));
     }
     if (clientId) await context.addInitScript((cid) => { try { if (!localStorage.getItem('fhes_google_client_id')) localStorage.setItem('fhes_google_client_id', cid); } catch { /* ignore */ } }, clientId);
     const seq = ++diagSeq;
