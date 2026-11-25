@@ -14,14 +14,19 @@ export const LIMITS = Object.freeze({
     studentIdleMs: 2 * 3600_000, studentAbsMs: 12 * 3600_000, teacherAbsMs: 8 * 3600_000,
     idTokenMaxAgeS: 600,
     userFailLock: 5, userLockBaseMs: 60_000, userLockMaxMs: 15 * 60_000,
-    ipWindowMs: 15 * 60_000, ipFailLimit: 30, teacherIpFailLimit: 20,
+    ipWindowMs: 15 * 60_000, ipFailLimit: 200, teacherIpFailLimit: 20,
+    classesPerTeacher: 30, accountsPerClass: 80, uncountedCarePerDay: 30,
     projectionBody: 2 * 1024 * 1024, defaultBody: 16 * 1024,
 });
 const STALE_SEEN_MS = 60_000;      // last_seen 最多每分鐘更新一次
 
 const json = (reply, code, body) => reply.code(code).type('application/json; charset=utf-8').send(body);
 const fail = (reply, code, error, message) => json(reply, code, { error, message });
-const safeEq = (a, b) => typeof a === 'string' && typeof b === 'string' && a.length === b.length && timingSafeEqual(Buffer.from(a), Buffer.from(b));
+const safeEq = (a, b) => {
+    if (typeof a !== 'string' || typeof b !== 'string') return false;
+    const x = Buffer.from(a); const y = Buffer.from(b);                 // 比較位元組長度（非 ASCII 字元不會讓 timingSafeEqual 丟例外，BUG-024）
+    return x.length === y.length && timingSafeEqual(x, y);
+};
 
 const STATIC_TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.webp': 'image/webp', '.png': 'image/png' };
 const CSP = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; font-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
@@ -61,6 +66,7 @@ export const buildApp = ({ db, config, jwks, now = () => Date.now() }) => {
         if (!r || t - r.window_start >= LIMITS.ipWindowMs) db.prepare('INSERT OR REPLACE INTO rate_limits (key, count, window_start, last_at) VALUES (?,1,?,?)').run(key, t, t);
         else db.prepare('UPDATE rate_limits SET count = count + 1, last_at = ? WHERE key = ?').run(t, key);
     };
+    const ipUndo = (key) => db.prepare('UPDATE rate_limits SET count = MAX(0, count - 1) WHERE key = ?').run(key);
     /** 帳號鎖定：連續失敗 5 次起，鎖 1、2、4… 分鐘，最多 15 分鐘（不論帳號是否存在都計） */
     const userLockedFor = (key) => {
         const r = rlGet(key); if (!r || r.count < LIMITS.userFailLock) return 0;
@@ -116,6 +122,13 @@ export const buildApp = ({ db, config, jwks, now = () => Date.now() }) => {
 
     // ------------------------------------------------------------ 教師：CORS（只允許設定的教師來源；Bearer，不用 Cookie）
     const teacherOriginOk = (o) => (config.teacherOrigins || []).includes(o);
+    // BUG-022：只有名單上的老師（完整 email 或 @網域，且 email 已驗證）可以使用；任何 Google 帳號都不能自動變成老師
+    const allow = (config.teacherAllow || []).map(x => String(x).trim().toLowerCase()).filter(Boolean);
+    const teacherAllowed = (id) => {
+        if (!id.emailVerified || !id.email) return false;
+        const email = id.email.toLowerCase();
+        return allow.some(a => a.startsWith('@') ? email.endsWith(a) : email === a);
+    };
     app.addHook('onRequest', async (req, reply) => {
         if (!req.url.startsWith('/api/teacher/')) return;
         const origin = req.headers.origin;
@@ -180,7 +193,13 @@ export const buildApp = ({ db, config, jwks, now = () => Date.now() }) => {
             audit(req, 'anonymous', null, 'teacher.session.fail', null, { code: e instanceof IdTokenError ? e.code : 'error' });
             return fail(reply, 401, 'invalid_token', '無法驗證 Google 登入，請重新登入');
         }
-        const tokenHash = sha256(credential);
+        if (!teacherAllowed(id)) {
+            ipFail(ipKey);
+            audit(req, 'anonymous', null, 'teacher.session.denied');
+            return fail(reply, 403, 'not_allowed', '這個 Google 帳號沒有使用學生系統的權限，請聯絡管理者');
+        }
+        // BUG-023 防重放：以「簽章涵蓋的內容」（header.payload）為鍵；簽章字串 base64 尾端的位元可以變化，不能當鍵
+        const tokenHash = sha256(credential.split('.').slice(0, 2).join('.'));
         db.prepare('DELETE FROM used_id_tokens WHERE expires_at < ?').run(now());
         try { db.prepare('INSERT INTO used_id_tokens (token_hash, expires_at) VALUES (?, ?)').run(tokenHash, id.exp + 120_000); }
         catch { ipFail(ipKey); return fail(reply, 401, 'replayed', '這個登入憑證已經用過，請重新登入'); }
@@ -203,6 +222,7 @@ export const buildApp = ({ db, config, jwks, now = () => Date.now() }) => {
         const { localClassId, name } = req.body;
         let c = db.prepare('SELECT * FROM classes WHERE teacher_id = ? AND local_class_id = ?').get(req.teacherId, localClassId);
         if (!c) {
+            if (db.prepare('SELECT COUNT(*) n FROM classes WHERE teacher_id = ?').get(req.teacherId).n >= LIMITS.classesPerTeacher) return fail(reply, 409, 'quota', `每位老師最多 ${LIMITS.classesPerTeacher} 個班級`);
             c = { id: `c_${newToken().slice(0, 20)}` };
             db.prepare('INSERT INTO classes (id, teacher_id, local_class_id, name, created_at) VALUES (?,?,?,?,?)').run(c.id, req.teacherId, localClassId, name, now());
             audit(req, 'teacher', req.teacherId, 'class.link', c.id);
@@ -224,6 +244,9 @@ export const buildApp = ({ db, config, jwks, now = () => Date.now() }) => {
     }, async (req, reply) => {
         const c = ownClass(req, reply); if (!c) return;
         const created = []; const existing = [];
+        const have = db.prepare('SELECT COUNT(*) n FROM student_accounts WHERE class_id = ?').get(c.id).n;
+        const fresh = new Set(req.body.students.map(x => x.localStudentId).filter(id => !db.prepare('SELECT 1 FROM student_accounts WHERE class_id = ? AND local_student_id = ?').get(c.id, id)));
+        if (have + fresh.size > LIMITS.accountsPerClass) return fail(reply, 409, 'quota', `每個班級最多 ${LIMITS.accountsPerClass} 個學生帳號`);
         for (const { localStudentId } of req.body.students) {
             if (db.prepare('SELECT 1 FROM student_accounts WHERE class_id = ? AND local_student_id = ?').get(c.id, localStudentId)) { existing.push(localStudentId); continue; }
             const initialPassword = generateInitialPassword();
@@ -269,18 +292,20 @@ export const buildApp = ({ db, config, jwks, now = () => Date.now() }) => {
         preHandler: requireTeacher, bodyLimit: LIMITS.projectionBody,
         schema: { body: { type: 'object', additionalProperties: false, required: ['version', 'hash', 'projection'], properties: { version: { type: 'integer', minimum: 1 }, hash: { type: 'string', pattern: '^[0-9a-f]{64}$' }, projection: { type: 'object' } } } },
     }, async (req, reply) => {
-        const c = ownClass(req, reply); if (!c) return;
+        if (!ownClass(req, reply)) return;
         const { version, hash, projection } = req.body;
         const errors = validateProjection(projection);
         if (errors.length) return json(reply, 400, { error: 'invalid_projection', message: '發布的資料格式不正確', details: errors.slice(0, 20) });
         if (await projectionHash(projection) !== hash) return fail(reply, 400, 'hash_mismatch', '資料雜湊不符');
-        if (version < c.projection_version) return json(reply, 409, { error: 'stale', message: '已有較新的發布版本', currentVersion: c.projection_version });
-        if (version === c.projection_version) {
-            if (hash === c.projection_hash) return json(reply, 200, { version, publishedAt: c.published_at, unchanged: true });
-            return json(reply, 409, { error: 'version_conflict', message: '同一版本的內容不同', currentVersion: c.projection_version });
-        }
         const t = now();
-        db.transaction(() => {
+        // BUG-020：版本檢查與寫入在同一個交易裡、用交易內重新讀到的班級資料（重疊的發布不能讓舊版本蓋掉新版本）
+        const outcome = db.transaction(() => {
+            const c = db.prepare('SELECT * FROM classes WHERE id = ? AND teacher_id = ?').get(req.params.classKey, req.teacherId);
+            if (version < c.projection_version) return { code: 409, body: { error: 'stale', message: '已有較新的發布版本', currentVersion: c.projection_version } };
+            if (version === c.projection_version) {
+                if (hash === c.projection_hash) return { code: 200, body: { version, publishedAt: c.published_at, unchanged: true } };
+                return { code: 409, body: { error: 'version_conflict', message: '同一版本的內容不同', currentVersion: c.projection_version } };
+            }
             const keepS = projection.students.map(s => s.studentId); const keepG = projection.groups.map(g => g.groupId);
             db.prepare(`DELETE FROM student_projections WHERE class_id = ? AND local_student_id NOT IN (SELECT value FROM json_each(?))`).run(c.id, JSON.stringify(keepS));
             db.prepare(`DELETE FROM group_projections WHERE class_id = ? AND group_id NOT IN (SELECT value FROM json_each(?))`).run(c.id, JSON.stringify(keepG));
@@ -290,9 +315,10 @@ export const buildApp = ({ db, config, jwks, now = () => Date.now() }) => {
             for (const g of projection.groups) upG.run(c.id, g.groupId, JSON.stringify(g), version);
             db.prepare('UPDATE classes SET projection_version = ?, projection_hash = ?, published_at = ?, name = ?, name_mode = ? WHERE id = ?')
                 .run(version, hash, t, projection.className, projection.nameMode, c.id);
-        })();
-        audit(req, 'teacher', req.teacherId, 'projection.publish', c.id, { version, students: projection.students.length });
-        return json(reply, 200, { version, publishedAt: t, unchanged: false, students: projection.students.length, groups: projection.groups.length });
+            return { code: 200, body: { version, publishedAt: t, unchanged: false, students: projection.students.length, groups: projection.groups.length } };
+        }).immediate();
+        if (outcome.code === 200 && !outcome.body.unchanged) audit(req, 'teacher', req.teacherId, 'projection.publish', req.params.classKey, { version, students: projection.students.length });
+        return json(reply, outcome.code, outcome.body);
     });
 
     /** 小組照顧彙總（後端計算）：members＝目前投影中屬於這組、且帳號啟用的學生數 */
@@ -321,13 +347,14 @@ export const buildApp = ({ db, config, jwks, now = () => Date.now() }) => {
         const locked = userLockedFor(userKey);
         if (locked > 0) { reply.header('Retry-After', String(Math.ceil(locked / 1000))); return fail(reply, 429, 'rate_limited', '嘗試太多次，請過幾分鐘再試'); }
         const a = db.prepare('SELECT * FROM student_accounts WHERE username = ?').get(username);
+        // BUG-021：先記一次「嘗試」再做非同步的 Argon2 驗證；否則同時送出的大量請求都會在計數增加前通過檢查
+        ipFail(ipKey); userFail(userKey);
         const ok = a ? await verifyPassword(a.password_hash, req.body.password) : await dummyVerify(req.body.password);
         if (!ok || a.status !== 'active') {
-            ipFail(ipKey); userFail(userKey);
             audit(req, 'anonymous', null, 'student.login.fail');
             return fail(reply, 401, 'invalid_credentials', '帳號或密碼錯誤');
         }
-        rlReset(userKey);
+        rlReset(userKey); ipUndo(ipKey);
         revokeSession(req.cookies?.[COOKIE]);                                    // 防 session 固定：登入一定換新的
         const s = createSession('student', a.id, a.must_change ? 'pwchange' : 'full');
         db.prepare('UPDATE student_accounts SET last_login_at = ? WHERE id = ?').run(now(), a.id);
@@ -349,7 +376,9 @@ export const buildApp = ({ db, config, jwks, now = () => Date.now() }) => {
         const { account: a } = req.student;
         const userKey = `user:${a.username}`;
         if (userLockedFor(userKey) > 0) return fail(reply, 429, 'rate_limited', '嘗試太多次，請過幾分鐘再試');
-        if (!await verifyPassword(a.password_hash, req.body.currentPassword)) { userFail(userKey); return fail(reply, 400, 'wrong_password', '目前的密碼不正確'); }
+        userFail(userKey);                                                       // 同上：先記再驗證
+        if (!await verifyPassword(a.password_hash, req.body.currentPassword)) return fail(reply, 400, 'wrong_password', '目前的密碼不正確');
+        rlReset(userKey);
         const problem = passwordProblem(req.body.newPassword, { username: a.username });
         if (problem) return fail(reply, 400, 'weak_password', problem);
         if (await verifyPassword(a.password_hash, req.body.newPassword)) return fail(reply, 400, 'weak_password', '新密碼不能和目前的一樣');
@@ -435,6 +464,11 @@ export const buildApp = ({ db, config, jwks, now = () => Date.now() }) => {
             if (!group || !group.animals.some(x => x.itemId === itemId)) return { code: 404, error: 'not_found', message: '你的小組沒有這隻動物' };
             const usedToday = db.prepare('SELECT COUNT(*) AS n FROM group_care_events WHERE account_id = ? AND local_date = ? AND slot IS NOT NULL').get(a.id, today).n;
             const slot = nextSlot(usedToday);
+            if (slot === null) {
+                // BUG-025：次數用完只回「不計入」；不計入的紀錄每天最多留 30 筆（給冪等用），不會無限新增資料列
+                const extra = db.prepare('SELECT COUNT(*) AS n FROM group_care_events WHERE account_id = ? AND local_date = ? AND slot IS NULL').get(a.id, today).n;
+                if (extra >= LIMITS.uncountedCarePerDay) return { code: 200, counted: false, replay: false, groupId: me.groupId };
+            }
             db.prepare('INSERT INTO group_care_events (id, class_id, group_id, account_id, item_id, action, local_date, slot, idempotency_key, created_at) VALUES (?,?,?,?,?,?,?,?,?,?)')
                 .run(`ce_${newToken().slice(0, 20)}`, a.class_id, me.groupId, a.id, itemId, action, today, slot, idempotencyKey, now());
             return { code: 200, counted: slot !== null, replay: false, groupId: me.groupId };

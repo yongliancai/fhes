@@ -99,7 +99,8 @@ The app requests only `https://www.googleapis.com/auth/drive.file` (files the ap
 
 ## ADR-017 — Teacher authentication on the server (2026-11-25)
 - The teacher app already receives a Google ID token at sign-in. When the student system is configured, that token (and its nonce) is sent once to `POST /api/teacher/session`, then dropped from memory.
-- The server verifies it with Google's JWKS using the same `verifyGoogleIdToken()` (signature, iss, aud/azp, exp, nonce, sub) plus `iat` no older than 10 minutes, and accepts each token only once (SHA-256 kept until expiry).
+- The server verifies it with Google's JWKS using the same `verifyGoogleIdToken()` (signature, iss, aud/azp, exp, sub) plus `iat` no older than 10 minutes. The nonce is supplied by the client and is inside the token, so on the server it is only a consistency check; replay protection is the one-time use of the signed content (SHA-256 of `header.payload`, kept until expiry), not of the raw string (BUG-023).
+- Only teachers on `FHES_TEACHER_ALLOW` (full email or `@domain`, `email_verified` required) get a session; quotas: 30 classes per teacher, 80 accounts per class (BUG-022).
 - The server returns an opaque Bearer token (8 h, stored hashed) kept only in the teacher page's memory. CORS allows only configured teacher origins. No cookies for teachers → no CSRF.
 - A class belongs to the teacher who created its link: `(teacherId, localClassId)`. Other teachers get 404.
 - Tests use a test JWKS injected into the app factory; the production entry (`server/main.mjs`) always fetches Google's JWKS and refuses to start without a Client ID. No test flag exists in production code paths that skips verification.
@@ -109,7 +110,7 @@ The app requests only `https://www.googleapis.com/auth/drive.file` (files the ap
 - First sign-in must change the password (policy: ≥ 8 chars, not the username, not common, not one repeated character or a simple sequence).
 - Sessions: random 256-bit id in a `__Host-fhes_sid` cookie (HttpOnly, Secure, SameSite=Strict); server stores SHA-256 only; idle 2 h, absolute 12 h; rotated on sign-in and password change; all revoked on teacher reset/disable.
 - Every state-changing student request needs `X-FHES-CSRF` (per-session token) and an allowed `Origin`.
-- Lockout per account (5 failures → 1, 2, 4 … 15 min) and per IP (30 failures / 15 min → 429). Unknown usernames still run one Argon2 verification.
+- Every attempt is counted before the asynchronous Argon2 check (BUG-021). Lockout per account (5 failures → 1, 2, 4 … 15 min) and per IP (200 failures / 15 min → 429, high enough that one NAT'd classroom is not locked out by typos). Unknown usernames still run one Argon2 verification. Behind nginx, `FHES_TRUST_PROXY` must be set explicitly.
 - All ACL comes from the session: `accountId → classId, localStudentId`; the group comes from the latest projection. Student endpoints take no identity parameters.
 
 ## ADR-019 — Group care is cosmetic and capped (2026-11-25)

@@ -17,7 +17,7 @@ let api = null;
 const startApi = async (teacherOrigin) => {
     if (api) return api;
     const { keys } = await setup();
-    const config = { clientId: GOOGLE_CLIENT_ID, teacherOrigins: [teacherOrigin], studentOrigins: [], ipSalt: 'e2e-salt-0123456789', cookieSecure: true, staticRoot: ROOT };
+    const config = { clientId: GOOGLE_CLIENT_ID, teacherOrigins: [teacherOrigin], teacherAllow: ['@example.test'], studentOrigins: [], ipSalt: 'e2e-salt-0123456789', cookieSecure: true, staticRoot: ROOT };
     const db = openDb(':memory:');
     const app = buildApp({ db, config, jwks: async () => keys.jwks });
     await app.listen({ host: '127.0.0.1', port: 0 });

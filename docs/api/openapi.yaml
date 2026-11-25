@@ -90,7 +90,7 @@ paths:
       responses:
         "200": { description: OK, content: { application/json: { schema: { type: object, properties: { token: { type: string }, expiresAt: { type: integer } } } } } }
         "401": { description: 簽章、iss、aud/azp、exp、iat（10 分鐘）、nonce、sub 任一不符，或重放 }
-        "403": { description: Origin 不在教師來源清單 }
+        "403": { description: "Origin 不在教師來源清單，或帳號不在 FHES_TEACHER_ALLOW（需 email 已驗證）" }
         "429": { description: 同一 IP 失敗太多次 }
   /api/teacher/logout:
     post: { security: [{ teacherBearer: [] }], summary: 登出（註銷 Bearer）, responses: { "200": { description: OK } } }
@@ -99,7 +99,7 @@ paths:
       security: [{ teacherBearer: [] }]
       summary: 建立（或取得）本機班級對應的 classKey；同一位教師同一個本機班級只會有一個
       requestBody: { required: true, content: { application/json: { schema: { type: object, additionalProperties: false, required: [localClassId, name], properties: { localClassId: { type: string, maxLength: 64 }, name: { type: string, maxLength: 60 } } } } } }
-      responses: { "200": { description: "{ classKey }" }, "401": { description: 未登入 } }
+      responses: { "200": { description: "{ classKey }" }, "401": { description: 未登入 }, "409": { description: 超過每位老師 30 個班級 } }
   /api/teacher/classes/{classKey}/accounts:
     parameters: [{ name: classKey, in: path, required: true, schema: { type: string } }]
     get:
@@ -110,7 +110,7 @@ paths:
       security: [{ teacherBearer: [] }]
       summary: 為學生建立帳號；初始密碼只在這次回應出現
       requestBody: { required: true, content: { application/json: { schema: { type: object, additionalProperties: false, required: [students], properties: { students: { type: array, maxItems: 80, items: { type: object, additionalProperties: false, required: [localStudentId], properties: { localStudentId: { type: string } } } } } } } } }
-      responses: { "200": { description: "{ created: [{accountId, localStudentId, username, initialPassword}], existing: [localStudentId] }" }, "404": { description: 不是你的班級 } }
+      responses: { "200": { description: "{ created: [{accountId, localStudentId, username, initialPassword}], existing: [localStudentId] }" }, "404": { description: 不是你的班級 }, "409": { description: 超過每班 80 個帳號 } }
   /api/teacher/classes/{classKey}/accounts/{accountId}/reset:
     post: { security: [{ teacherBearer: [] }], summary: 重設密碼（新初始密碼、須再改密碼、該生所有 Session 失效）, responses: { "200": { description: "{ accountId, username, initialPassword }" }, "404": { description: 不是你的班級或帳號 } } }
   /api/teacher/classes/{classKey}/accounts/{accountId}/disable:
@@ -134,7 +134,7 @@ paths:
         "200": { description: "{ mustChangePassword, csrf }；mustChangePassword=true 時只能改密碼" }
         "401": { description: 帳號或密碼錯誤（帳號不存在、停用也是同一個回應） }
         "403": { description: Origin 不允許 }
-        "429": { description: "帳號連續失敗 5 次（1→2→4…最多 15 分鐘）或同 IP 15 分鐘 30 次；有 Retry-After" }
+        "429": { description: "帳號連續失敗 5 次（1→2→4…最多 15 分鐘）或同 IP 15 分鐘 200 次；嘗試在密碼驗證前就計數；有 Retry-After" }
   /api/student/logout:
     post: { security: [{ studentCookie: [], csrf: [] }], summary: 登出, responses: { "200": { description: OK } } }
   /api/student/password:

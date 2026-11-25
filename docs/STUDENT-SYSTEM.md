@@ -43,12 +43,12 @@
 
 | | 教師 | 學生 |
 |---|---|---|
-| 證明身分 | Google ID token（v6.1 登入時取得），**後端**用 Google JWKS 驗簽、iss、aud、exp、iat（10 分鐘內簽發）、nonce；同一 token 只能換一次 | 教師發放的隨機帳號＋密碼（Argon2id），首次登入必須改密碼 |
+| 證明身分 | Google ID token（v6.1 登入時取得），**後端**用 Google JWKS 驗簽、iss、aud/azp、exp、iat（10 分鐘內簽發）；只接受 `FHES_TEACHER_ALLOW` 名單上、email 已驗證的帳號；同一 token（以簽章涵蓋的內容判斷）只能換一次 | 教師發放的隨機帳號＋密碼（Argon2id），首次登入必須改密碼 |
 | 帳號主鍵 | `SHA-256(iss｜sub)`，不存 email | 伺服器產生的隨機 ID；帳號名稱另外隨機產生 |
-| 工作階段 | 不透明 Bearer，8 小時，只在記憶體；登出或重新載入即失效 | 不透明 Cookie `__Host-fhes_sid`（HttpOnly、Secure、SameSite=Strict、Path=/），閒置 2 小時、最長 12 小時 |
+| 工作階段 | 不透明 Bearer，8 小時，只在記憶體；按登出會在伺服器註銷；重新載入時前端丟掉 token，伺服器端則到期才失效 | 不透明 Cookie `__Host-fhes_sid`（HttpOnly、Secure、SameSite=Strict、Path=/），閒置 2 小時、最長 12 小時 |
 | 伺服器存的 | token 的 SHA-256 | session id 的 SHA-256 與 CSRF token |
 | 註銷 | 登出；後端可列入撤銷 | 登出、改密碼、教師重設／停用 → 該生全部 Session 失效 |
-| 防猜測 | Google 負責 | 帳號 5 次失敗後鎖定（1→2→4…最多 15 分鐘）；IP 15 分鐘 30 次失敗 → 429；不存在的帳號也做一次假驗證（時間一致） |
+| 防猜測 | Google 負責；老師名單 | 每次嘗試在雜湊驗證前就計數；帳號 5 次失敗後鎖定（1→2→4…最多 15 分鐘）；同 IP 15 分鐘 200 次 → 429；不存在的帳號也做一次假驗證（時間一致） |
 
 ## 4. 權限矩陣
 

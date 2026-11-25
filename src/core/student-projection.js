@@ -132,6 +132,7 @@ export const validateProjection = (p) => {
         ids.add(s.studentId);
         if (s.seat !== null && !isInt(s.seat)) err.push(`${at}.seat`);
         if (!isStr(s.name, LIMITS.text)) err.push(`${at}.name`);
+        else if (p.nameMode === 'seat' && !/^\d*號$/.test(s.name)) err.push(`${at}.name 只顯示座號時不可以有姓名`);
         if (s.groupId !== null && !groupIds.has(s.groupId)) err.push(`${at}.groupId`);
         if (!onlyKeys(s.score, ['score', 'earned']) || !isInt(s.score.score) || !isInt(s.score.earned)) err.push(`${at}.score`);
         if (!Array.isArray(s.homework) || s.homework.length > LIMITS.homework) { err.push(`${at}.homework`); return; }

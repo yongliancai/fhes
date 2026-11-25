@@ -42,7 +42,8 @@ test('100 simultaneous submissions (different keys, two tabs) count exactly 3', 
     assert.equal(H.db.prepare('SELECT COUNT(*) n FROM group_care_events WHERE slot IS NOT NULL').get().n, 3);
     assert.deepEqual(H.db.prepare('SELECT slot FROM group_care_events WHERE slot IS NOT NULL ORDER BY slot').all().map(r => r.slot), [1, 2, 3]);
     // 同一把 key 同時送 100 次 → 只有 1 筆
-    const same = await Promise.all(Array.from({ length: 100 }, () => care(H, s, 'land-01', 'same-key-burst')));
+    const s3 = await H.activate(A.accounts.get('cls-a-s3'));            // 另一位學生（s 今天的不計入紀錄已達上限）
+    const same = await Promise.all(Array.from({ length: 100 }, () => care(H, s3, 'land-01', 'same-key-burst')));
     assert.ok(same.every(r => r.statusCode === 200));
     assert.equal(H.db.prepare("SELECT COUNT(*) n FROM group_care_events WHERE idempotency_key = 'same-key-burst'").get().n, 1);
 });
@@ -128,4 +129,12 @@ test('badges and team stars: half of the group caring on a day gives a star; tea
     const tk = await H.teacherSession();
     const sum = (await H.t(tk, 'GET', `/api/teacher/classes/${A.classKey}/care-summary`)).json();
     assert.equal(sum.groups.find(g => g.groupId === 1).care.total, 29);
+});
+
+test('BUG-025: uncounted care rows are capped per day', async () => {
+    const H = await makeHarness(); const A = await seedClass(H);
+    const s = await H.activate(A.accounts.get('cls-a-s3'));
+    for (let i = 0; i < 50; i++) await care(H, s, 'land-01', `flood-${String(i).padStart(3, '0')}-key`);
+    const n = H.db.prepare('SELECT COUNT(*) n FROM group_care_events').get().n;
+    assert.equal(n, 3 + 30, `rows stored: ${n}`);
 });

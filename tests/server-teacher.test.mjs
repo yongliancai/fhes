@@ -136,3 +136,48 @@ test('request size and shape limits', async () => {
     assert.equal(big.statusCode, 413);
     assert.equal((await H.t(token, 'GET', '/api/teacher/classes/nope/accounts?all=1')).statusCode, 400);
 });
+
+test('BUG-023: a replay with a re-encoded signature (unused base64 bits) is still a replay', async () => {
+    const H = await makeHarness();
+    const tok = await H.idToken();
+    assert.equal((await exchange(H, tok)).statusCode, 200);
+    const [h, p, sig] = tok.credential.split('.');
+    const A = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
+    const last = A.indexOf(sig.at(-1));
+    const variant = `${h}.${p}.${sig.slice(0, -1)}${A[last ^ 1]}`;
+    assert.notEqual(variant, tok.credential);
+    assert.equal((await exchange(H, { credential: variant, nonce: tok.nonce })).statusCode, 401);
+});
+
+test('BUG-022: only allow-listed, verified teacher emails get a session; quotas limit classes and accounts', async () => {
+    const H = await makeHarness();
+    const stranger = { sub: '100000000000000000009', email: 'someone@elsewhere.example', name: '路人' };
+    assert.equal((await exchange(H, await H.idToken({ account: stranger }))).statusCode, 403);
+    assert.equal((await exchange(H, await H.idToken({ mutate: p => ({ ...p, email_verified: false }) }))).statusCode, 403, 'unverified email');
+    assert.equal(H.db.prepare('SELECT COUNT(*) n FROM teachers').get().n, 0, 'no teacher row created');
+    const token = await H.teacherSession();
+    const { classKey } = (await H.t(token, 'POST', '/api/teacher/classes', { localClassId: 'q1', name: 'q' })).json();
+    const many = Array.from({ length: 80 }, (_, i) => ({ localStudentId: `s${i}` }));
+    assert.equal((await H.t(token, 'POST', `/api/teacher/classes/${classKey}/accounts`, { students: many })).statusCode, 200);
+    assert.equal((await H.t(token, 'POST', `/api/teacher/classes/${classKey}/accounts`, { students: [{ localStudentId: 'one-more' }] })).statusCode, 409);
+    for (let i = 2; i <= 30; i++) await H.t(token, 'POST', '/api/teacher/classes', { localClassId: `q${i}`, name: 'q' });
+    assert.equal((await H.t(token, 'POST', '/api/teacher/classes', { localClassId: 'q31', name: 'q' })).statusCode, 409);
+});
+
+test('BUG-020: two overlapping publishes cannot roll the class back to the older version', async () => {
+    const H = await makeHarness();
+    const A = await seedClass(H);
+    const newer = structuredClone(A.projection); newer.className = 'NEWER';
+    const older = structuredClone(A.projection); older.className = 'OLDER';
+    const [r10, r5] = await Promise.all([publish(H, A.token, A.classKey, newer, 10), publish(H, A.token, A.classKey, older, 5)]);
+    assert.equal(r10.statusCode, 200);
+    const row = H.db.prepare('SELECT projection_version v, name FROM classes WHERE id = ?').get(A.classKey);
+    assert.deepEqual([row.v, row.name], [10, 'NEWER'], `older publish answered ${r5.statusCode}`);
+});
+
+test('seat-only mode is enforced by the server, not just the teacher page', async () => {
+    const H = await makeHarness();
+    const A = await seedClass(H);
+    const p = structuredClone(A.projection); p.nameMode = 'seat';
+    assert.equal((await publish(H, A.token, A.classKey, p, 2)).statusCode, 400, 'real names with nameMode=seat');
+});

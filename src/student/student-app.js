@@ -5,7 +5,7 @@ import { h, fill } from '../ui/dom.js';
 import { SUBMISSION, CORRECTION } from '../core/homework.js';
 import { CARE_ACTIONS, MOODS, CARE_BADGES } from '../core/care.js';
 import { catalogById, worldById, rarityById } from '../data/catalog.js';
-import { creatureSVG } from '../art/creatures.js';
+import { sceneCreature } from '../art/student-art.js';
 import { sceneSVG, placeInScene } from '../art/scenes.js';
 
 const root = document.getElementById('app');
@@ -217,7 +217,7 @@ const renderZoo = async (body) => {
         drawPanel(msg(r.counted ? `${a.name}${action === 'feed' ? '吃得好開心' : '很喜歡你陪牠'}！小組照顧 +1` : `${a.name}很開心見到你！（今天的照顧次數已用完，這次不計入）`, r.counted ? 'ok' : 'info'));
     };
     g.animals.forEach((a, i) => {
-        const node = placeInScene(layer, creatureSVG(artItem(a), { stage: a.stage }), i, {
+        const node = placeInScene(layer, sceneCreature(artItem(a), { stage: a.stage, artId: a.baseItemId }), i, {
             title: `${a.name}（心情：${MOODS[z.care.animals[a.itemId]?.mood || 'calm'].label}）`,
             onClick: (n) => { selected = { animal: a, node: n }; layer.querySelectorAll('.scene-actor').forEach(x => x.classList.toggle('selected', x === n)); drawPanel(); },
         });

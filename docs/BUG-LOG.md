@@ -130,6 +130,20 @@ Each entry names the regression test that fails on the buggy version and passes 
 - **FIX**: the student zoo sets the scene's role to `group`. Animals are also selectable with Enter/Space (the E2E selects one by keyboard).
 - **PROVE**: axe clean on login, growth and zoo screens.
 
+## BUG-020…025 (v6.2) — found by the independent security review (subagent, 2026-11-25), all fixed with regression tests
+| ID | Defect (reproduced by the reviewer) | Root cause | Fix | Proof |
+|---|---|---|---|---|
+| BUG-020 | Overlapping publishes (v10 and v5 at the same time) both returned 200; the class ended on v5 | version check used the class row read **before** `await projectionHash()`, outside the transaction | re-read the class and check versions inside one `IMMEDIATE` transaction | `BUG-020` test (green after the fix; the failing run was the reviewer's script) |
+| BUG-021 | 60 parallel wrong logins: all evaluated, no 429 → lockout and IP limit bypassed | counters were incremented after the async Argon2 verify | count the attempt synchronously before verifying; reset on success | `BUG-021` test; reverting the fix → red |
+| BUG-022 | Any Google account became a teacher; created 240 accounts in 4.5 s | no teacher allow-list or quotas | `FHES_TEACHER_ALLOW` (verified email or @domain), 30 classes/teacher, 80 accounts/class; start-up refuses without the list | `BUG-022` test; reverting → red |
+| BUG-023 | An ID token with the last base64 character re-encoded was accepted again | replay key was the raw string; unused base64 bits decode identically | replay key = SHA-256 of `header.payload` | `BUG-023` test; reverting → red |
+| BUG-024 | Non-ASCII CSRF header → 500 | `timingSafeEqual` on buffers of different byte length | compare byte lengths | `BUG-024` test; reverting → red |
+| BUG-025 | 50 care posts stored 50 rows (47 uncounted) | uncounted actions were always stored | store at most 30 uncounted rows per student per day | `BUG-025` test; reverting → red |
+| (low) | `nameMode: 'seat'` was not enforced by the server | validation did not check names | names must be `N號` in seat mode | test "seat-only mode is enforced" |
+| (low) | the used ID token stayed referenced in `index.html`'s boot scope | destructured into a long-lived `const` | pass it once, then `delete` the reference | code review |
+
+Inaccurate documentation the review found (server-side nonce, "only once", 30/IP, T12 under concurrency, an Argon2 concurrency limit that did not exist, bearer "ends on reload") was corrected in the threat model, `STUDENT-SYSTEM.md` and ADR-017/018.
+
 ## v6.2 test-writing mistakes caught by the suite (not product bugs)
 - Test helper's default new password contained the username → the server correctly refused it as weak.
 - Idempotency keys shorter than 8 characters in a test → the server correctly answered 400.

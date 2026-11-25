@@ -31,6 +31,7 @@ export const configFromEnv = (env = process.env) => {
     const cfg = {
         clientId: env.FHES_GOOGLE_CLIENT_ID || GOOGLE_CLIENT_ID,
         teacherOrigins: list(env.FHES_TEACHER_ORIGINS),
+        teacherAllow: list(env.FHES_TEACHER_ALLOW),                         // 允許的老師：完整 email 或 @學校網域
         studentOrigins: list(env.FHES_STUDENT_ORIGINS),
         ipSalt: env.FHES_IP_SALT || '',
         cookieSecure: env.FHES_COOKIE_SECURE !== '0',
@@ -46,6 +47,9 @@ export const configFromEnv = (env = process.env) => {
     if (cfg.ipSalt.length < 16) missing.push('FHES_IP_SALT（至少 16 個字元的亂數）');
     if (!cfg.teacherOrigins.length) missing.push('FHES_TEACHER_ORIGINS');
     if (!cfg.studentOrigins.length) missing.push('FHES_STUDENT_ORIGINS');
+    if (!cfg.teacherAllow.length) missing.push('FHES_TEACHER_ALLOW（允許的老師 email 或 @網域）');
+    const local = cfg.studentOrigins.every(o => /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(o));
+    if (!local && !['0', '1'].includes(env.FHES_TRUST_PROXY)) missing.push('FHES_TRUST_PROXY（在 nginx 後面請設 1，直接對外請設 0）');
     if (missing.length) throw new Error(`缺少設定：${missing.join('、')}`);
     if (!cfg.cookieSecure && !cfg.studentOrigins.every(o => /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(o)))
         throw new Error('FHES_COOKIE_SECURE=0 只能用在本機 http://localhost');

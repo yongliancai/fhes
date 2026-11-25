@@ -753,7 +753,7 @@
         import { initStudentAdminUI } from './src/ui/student-admin-ui.js';
         import { STUDENT_API_BASE } from './src/config.js';
 
-        const APP_VERSION = 'v6.1';
+        const APP_VERSION = 'v6.2';
         const DATA_VERSION = 6;
         registerClassDefaults(fillHomeworkDefaults);
         registerClassDefaults(fillCollectionDefaults);
@@ -2148,7 +2148,8 @@
             applyFontSize(lsGet(LS_FS_KEY) || 'm'); refreshMuteBtn(); applyHideHearts(lsGet(LS_HIDE_HEARTS_KEY) === '1'); applyReduceMotion(lsGet(LS_MOTION_KEY) === '1');
             resizeCanvas(); initParticles(); animateParticles();
             // 1) 登入（方案 A）：Google 登入並在瀏覽器驗證 ID token 簽章／發行者／受眾／期限／nonce 之前，什麼資料都不開
-            const { identity, signIn, clientId, handoff } = await waitForSignIn({ $ });
+            const signedIn = await waitForSignIn({ $ });
+            const { identity, signIn, clientId } = signedIn;
             // 2) 打開「這個帳號」的資料庫
             DB_NAME = accountDbName(await accountKey(identity.sub));
             try { idb = await openDB(); }
@@ -2181,7 +2182,8 @@
             });
             await LEGACY.detect();
             // v6.2：學生系統（選用）。登入時的 ID token 只在這裡交給後端驗證一次，換成記憶體內的教師工作階段後就丟掉
-            STUDENT = initStudentAdminUI({ app, base: STUDENT_API_BASE, handoff });
+            STUDENT = initStudentAdminUI({ app, base: STUDENT_API_BASE, handoff: signedIn.handoff });
+            delete signedIn.handoff;   // 不在這個範圍保留登入憑證的參考
             // 重新整理時若仍在秩序記錄模式，登入後直接回到記錄畫面（不會露出老師畫面）
             const rm = S.meta.recordMode;
             if (rm && classById(rm.classId) && !classById(rm.classId).deleted) { rec = rm; currentClassId = rm.classId; currentTab = 'students'; renderClassView(); showRecordOverlay(); }

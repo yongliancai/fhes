@@ -51,9 +51,11 @@ test('wrong password and unknown user get the same answer; 5 failures lock the n
     assert.equal((await H.login(a.username, a.initialPassword)).res.statusCode, 200, 'unlocks after 1 minute');
 });
 
-test('per-IP limit: 30 failures in 15 minutes → 429 for every name from that IP', async () => {
+test('per-IP limit: 200 failures in 15 minutes → 429 for every name from that IP (a class behind one NAT is not locked out by a few typos)', async () => {
     const H = await makeHarness(); const A = await seedClass(H);
     for (let i = 0; i < 30; i++) await H.login(`abc${3000 + i}`, 'nope-nope');
+    assert.equal((await H.login(A.accounts.get('cls-a-s2').username, A.accounts.get('cls-a-s2').initialPassword)).res.statusCode, 200, '30 typos from the classroom IP do not block others');
+    await Promise.all(Array.from({ length: 170 }, (_, i) => H.login(`abd${3000 + i}`, 'nope-nope')));
     const a = acc(A, 'cls-a-s3');
     const r = await H.login(a.username, a.initialPassword);
     assert.equal(r.res.statusCode, 429); assert.ok(Number(r.res.headers['retry-after']) > 0);
@@ -179,4 +181,30 @@ test('static student page: allow-list only, no path traversal', async () => {
     for (const p of ['/index.html', '/package.json', '/server/src/app.mjs', '/src/..%2Fpackage.json', '/src/core/../../package.json', '/tests/helpers/fake-google.mjs'])
         assert.equal((await app.inject({ method: 'GET', url: p })).statusCode, 404, p);
     assert.equal((await app.inject({ method: 'GET', url: '/src/core/care.js' })).statusCode, 200);
+});
+
+test('defense in depth: a live session stops working as soon as the account is disabled, even if its sessions were not revoked', async () => {
+    const H = await makeHarness(); const A = await seedClass(H);
+    const s = await H.activate(acc(A, 'cls-a-s5'));
+    assert.equal((await H.s(s, 'GET', '/api/student/me')).statusCode, 200);
+    H.db.prepare("UPDATE student_accounts SET status = 'disabled' WHERE username = ?").run(s.username);   // 例如管理者直接在資料庫停用
+    assert.equal((await H.s(s, 'GET', '/api/student/me')).statusCode, 401);
+    assert.ok(H.db.prepare("SELECT COUNT(*) n FROM sessions WHERE kind = 'student' AND revoked_at IS NULL AND subject_id = (SELECT id FROM student_accounts WHERE username = ?)").get(s.username).n === 0, 'and its sessions get revoked');
+});
+
+test('BUG-021: a parallel burst cannot get past the account lockout (attempts are counted before the async hash check)', async () => {
+    const H = await makeHarness(); const A = await seedClass(H);
+    const a = acc(A, 'cls-a-s6');
+    const rs = await Promise.all(Array.from({ length: 60 }, () => H.login(a.username, 'wrong-guess-1')));
+    const codes = rs.map(r => r.res.statusCode);
+    assert.ok(codes.filter(c => c === 401).length <= 5, `at most 5 guesses evaluated, got ${codes.filter(c => c === 401).length}`);
+    assert.ok(codes.filter(c => c === 429).length >= 55);
+    assert.equal((await H.login(a.username, a.initialPassword)).res.statusCode, 429, 'still locked');
+});
+
+test('BUG-024: a non-ASCII CSRF header is refused with 403, not a server error', async () => {
+    const H = await makeHarness(); const A = await seedClass(H);
+    const s = await H.activate(acc(A, 'cls-a-s1'));
+    const r = await H.s(s, 'POST', '/api/student/care', { itemId: 'land-01', action: 'feed', idempotencyKey: 'csrf-utf8-0001' }, { 'x-fhes-csrf': encodeURIComponent('é').length ? 'é'.repeat(s.csrf.length) : '' });
+    assert.equal(r.statusCode, 403);
 });

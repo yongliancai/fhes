@@ -19,7 +19,7 @@ export const makeHarness = async ({ start = Date.parse('2026-11-25T09:00:00+08:0
     const db = openDb(':memory:');
     const app = buildApp({
         db, now: () => clock.t, jwks: async () => keys.jwks,
-        config: { clientId: TEST_CLIENT_ID, teacherOrigins: [TEACHER_ORIGIN], studentOrigins: [STUDENT_ORIGIN], ipSalt: 'test-salt-0123456789', cookieSecure: true },
+        config: { clientId: TEST_CLIENT_ID, teacherOrigins: [TEACHER_ORIGIN], teacherAllow: [TEACHER_A.email, '@example.test'], studentOrigins: [STUDENT_ORIGIN], ipSalt: 'test-salt-0123456789', cookieSecure: true },
     });
     await app.ready();
     let n = 0;
