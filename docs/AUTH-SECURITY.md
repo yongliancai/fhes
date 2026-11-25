@@ -1,6 +1,6 @@
 # 登入與資料隔離：架構與安全邊界（v6.1）
 
-> Decisions: ADR-011 to ADR-014 in `docs/DECISIONS.md`. Every claim below is tested in a browser with **simulated** Google services (`e2e/auth.e2e.mjs`, `e2e/sync.e2e.mjs`) and in unit tests (`tests/auth.test.mjs`). On 2026-11-25 the main flows were also run once against **real Google** with one test account in Chrome and Edge (`docs/REAL-GOOGLE-ACCEPTANCE.md`). A second real account (A/B isolation) is still BLOCKED.
+> Decisions: ADR-011 to ADR-014 in `docs/DECISIONS.md`. Every claim below is tested in a browser with **simulated** Google services (`e2e/auth.e2e.mjs`, `e2e/sync.e2e.mjs`) and in unit tests (`tests/auth.test.mjs`). On 2026-11-25 the main flows were also run once against **real Google** with one test account in Chrome and Edge (`docs/REAL-GOOGLE-ACCEPTANCE.md`). A second real account was tested the same day (A/B isolation, wrong-account authorization, cross-account sheet access: PASS).
 
 ## 1. Two separate steps
 | | Authentication (who is the teacher) | Authorization (may the app use Sheets) |

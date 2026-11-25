@@ -102,6 +102,7 @@ Each entry names the regression test that fails on the buggy version and passes 
 - **DETECT**: real Chrome 158: after "登出", pressing the button signed straight back into the same account (user saw no window). `button_auto_select` was never enabled.
 - **ROOT_CAUSE**: Chrome's FedCM button flow behaviour for a returning account (Google/Chrome side; not documented for this case). The app had opted into it with `use_fedcm_for_button: true`.
 - **FIX**: `use_fedcm_for_button: false`, `button_auto_select: false` → Google's popup with its account chooser (ADR-014).
+- **ADDENDUM (second-account test)**: Chrome also holds an empty third account area (`fhes-acct-88e93b…`) that belongs to neither test account and predates account B. Most likely the 11:07 FedCM auto sign-in used another Google account in that browser without any chooser, which is worse than "cannot switch". Not proven; it supports the popup decision.
 - **PROVE**: real Chrome: popup mode showed the chooser; closing it kept the app locked; "切換帳號" showed the chooser. No automated test can reproduce Chrome's FedCM UI (fake GIS) → recorded as manual evidence in `docs/REAL-GOOGLE-ACCEPTANCE.md`.
 
 ## BUG-016 — Firefox: "InvalidStateError: Navigated away from page" (the OPEN Firefox CI failure)

@@ -45,6 +45,7 @@ Status words follow the Code Factory guide strictly: **PASS** = actually execute
 | 2026-11-25 | real-Google final (@ eb91792, nothing else running) | `npm run verify` / `npm run test:e2e` / `E2E_CHANNEL=chrome npm run test:e2e` | Windows 11 / Edge / Chrome | PASS — 117/117, 39/39, 39/39 |
 | 2026-11-25 | real-Google final | CI on eb91792: `verify`, `e2e` (Chrome), `e2e-compat (firefox)`, `e2e-compat (webkit)` | GitHub Actions ubuntu-24.04 | verify PASS 117/117 · Chrome PASS 39/39 · **Firefox PASS 39/39** (first green run; BUG-016 fix confirmed) · **WebKit FAIL 37/39**: `auth › account isolation` = test race (evaluate during the lock→reload; `assertLocked` now re-reads after the reload, assertion unchanged) and `sync › spreadsheet … refused` = page closed mid-click. WebKit stderr shows only GPU/EGL-unavailable warnings, no crash signal; cause unknown |
 | 2026-11-25 | earlier full run (invalid) | Edge E2E while a second Edge suite and an extra debug Edge were running | Windows 11 | 31/39 — 8 × "browser has been closed"; environment interference, discarded and re-run above |
+| 2026-11-25 | real Google, second account | A/B isolation, wrong-account authorization, cross-account spreadsheet access | Chrome 158, two test Gmail accounts, synthetic data | PASS X1–X8 (report §6) |
 | CI | every push | GitHub Actions `Quality (no deployment)`: `verify` + `e2e` (ubuntu, Chrome) | ubuntu-latest, Node 22 | green for P2 (feff057), P3 (4b6bb42), P4 (853a880); later runs are listed in Draft PR #1 |
 
 ## Acceptance matrix
@@ -82,7 +83,7 @@ Status words follow the Code Factory guide strictly: **PASS** = actually execute
 | A-30 | Login screen + account dialog: 4 viewports, axe critical/serious = 0, keyboard sign-in | `e2e/auth` (4 viewport tests + keyboard) | PASS |
 | A-31 | Firefox / WebKit (Safari engine) | CI job `e2e-compat` (playwright builds) — see evidence log | Firefox: **PASS 39/39** in CI after BUG-016. WebKit: **FAIL** (random page closures/crashes, cause unknown). Real Safari/Firefox on devices: NOT_VERIFIED |
 | A-32 | Real Google sign-in + Sheets with a real account | `docs/REAL-GOOGLE-ACCEPTANCE.md` | **PASS** (one test account, two browsers) · popup reliability: OPEN (BUG-017) |
-| A-33 | Real A/B account isolation; another account cannot use this spreadsheet | needs a second test Google account | **BLOCKED** (user chose not to test now); emulated: A-24–A-26 PASS; real: foreign sheet refused by Google (S13a) PASS |
+| A-33 | Real A/B account isolation; another account cannot use this spreadsheet | `docs/REAL-GOOGLE-ACCEPTANCE.md` §6 (two real test accounts, Chrome) | **PASS** (X1–X8: separate data areas, wrong-account authorization refused, B refused A's sheet, A's sheet untouched, Google denies A reading B's sheet). One earlier false PASS was retracted and re-done |
 | A-34 | Wrong origin / wrong Client ID messages | origin warning (unit + E2E + real button on `localhost:8766`); malformed ID (E2E) | PASS · non-existent Client ID (`invalid_client`, Google's own page): NOT_VERIFIED |
 | — | v5.1 daily settlement + CSV | `e2e/legacy-v51 › daily settlement snapshot and day CSV` | PASS |
 | — | Visual regression (pixel baseline comparison) | screenshots are produced (CI artifact `e2e-screenshots`) for human review; no automatic pixel diff | NOT_CONFIGURED |
