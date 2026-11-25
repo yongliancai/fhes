@@ -229,3 +229,15 @@ test('BUG-013: Google error page inside the popup (403 access_denied, not a test
         assert.equal(auth.connected?.() ?? false, false);
     } finally { delete globalThis.window; }
 });
+
+test('BUG-014: 403 SERVICE_DISABLED (Sheets API not enabled) is a setup problem, not "no access to this spreadsheet"; real permission 403 unchanged', async () => {
+    const { classifyHttp } = await import('../src/sync/engine.js');
+    // 2026-11-25 真實 Google 回應的形狀（專案編號換成假的）
+    const body = JSON.stringify({ error: { code: 403, message: 'Google Sheets API has not been used in project 1234567890 before or it is disabled.', status: 'PERMISSION_DENIED', details: [{ '@type': 'type.googleapis.com/google.rpc.ErrorInfo', reason: 'SERVICE_DISABLED', domain: 'googleapis.com' }] } });
+    const e = classifyHttp(403, body);
+    assert.equal(e.kind, 'config'); assert.equal(e.retryable, false);
+    assert.match(e.message, /尚未啟用「Google Sheets API」/);
+    const p = classifyHttp(403, JSON.stringify({ error: { code: 403, message: 'The caller does not have permission', status: 'PERMISSION_DENIED' } }));
+    assert.equal(p.kind, 'permission');
+    assert.equal(classifyHttp(403, '{"error":{"message":"Quota exceeded for quota metric rate"}}').kind, 'rate');
+});

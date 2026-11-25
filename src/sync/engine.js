@@ -21,6 +21,8 @@ export class SyncError extends Error {
 export const classifyHttp = (status, body = '') => {
     if (status === 401) return new SyncError('auth', 'Google 授權已過期或被撤銷，請重新連線。', { status });
     if (status === 429 || (status === 403 && /rate|quota/i.test(body))) return new SyncError('rate', 'Google 試算表暫時限制請求次數，稍後自動重試。', { status, retryable: true });
+    // BUG-014（真實 Google 驗收時發現）：Cloud 專案沒啟用 Sheets API 也是 403，不能說成「沒有這份試算表的權限」
+    if (status === 403 && /SERVICE_DISABLED|has not been used in project|API_DISABLED|accessNotConfigured/i.test(body)) return new SyncError('config', '這個 OAuth 用戶端所在的 Google Cloud 專案尚未啟用「Google Sheets API」。請管理者到 Google Cloud →「API 和服務 → 程式庫」啟用後，等幾分鐘再試（見設定說明）。', { status });
     if (status === 403) return new SyncError('permission', '沒有這份試算表的存取權限。', { status });
     if (status === 404) return new SyncError('notfound', '找不到試算表（可能已被刪除或沒有權限）。', { status });
     if (status >= 500) return new SyncError('server', 'Google 伺服器暫時錯誤，稍後自動重試。', { status, retryable: true });
