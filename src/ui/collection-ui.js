@@ -6,8 +6,8 @@ import {
     canUnlock, energyOf, makeGrant, revokeGrant, owns, growthStage, stageName, worldProgress, activeGrants, grantId, DEFAULT_COSTS,
     validateSpecialItem, makeSpecialItem, addTag, renameTag, setTagActive, tagImpact, deleteTag, tagName, MAX_TAGS_PER_ITEM,
 } from '../core/collection.js';
-import { creatureSVG } from '../art/creatures.js';
-import { sceneSVG, placeInScene } from '../art/scenes.js';
+import { creatureArt, hasArt } from '../art/sprites.js';
+import { createZoo } from './zoo.js';
 
 /**
  * app：{ S, getCurrentClass, studentsOf, dbWrite, notify, uid, localDate, saveClass, afterDataChange, playSound, confetti, reducedMotion }
@@ -16,6 +16,7 @@ export const initCollectionUI = (app) => {
     const { S } = app;
     let owner = null;          // { type: 'group'|'class', id }
     let world = 'land';
+    let zoo = null;           // 目前顯示中的園區（重繪前要先停掉動畫迴圈）
 
     const ownerLabel = (c, o) => o.type === 'class' ? '全班' : `第 ${o.id} 小隊`;
     const groupIds = (c) => {
@@ -83,22 +84,24 @@ export const initCollectionUI = (app) => {
     const worldView = (c, ledger, ownerId, decor, energy) => {
         const w = worldById.get(world);
         const items = CATALOG.filter(x => x.world === world);
-        const { svg, layer } = sceneSVG(world, { decorLevel: decor, label: `${w.name}棲地` });
         const owned = items.filter(it => owns(S.grants, c.id, owner.type, ownerId, it.id));
-        owned.forEach((it, i) => {
+        const actors = owned.map(it => {
             const g = S.grants.find(x => x.id === grantId(c.id, owner.type, ownerId, it.id));
             const st = growthStage({ ledger, grant: g }).stage;
-            placeInScene(layer, creatureSVG(it, { stage: st }), i, { title: `${it.name}（${stageName(it, st)}）`, onClick: (node) => react(node) });
+            return { item: it, stage: st, title: `${it.name}（${stageName(it, st)}）`, stageLabel: stageName(it, st) };
         });
         // 特殊收藏也住在對應世界
-        activeGrants(S.grants, c.id, owner.type, ownerId).filter(g => g.special).forEach((g, j) => {
+        activeGrants(S.grants, c.id, owner.type, ownerId).filter(g => g.special).forEach(g => {
             const sp = S.specialItems.find(s => s.id === g.itemId); if (!sp) return;
             const base = catalogById.get(sp.baseItemId);
             if ((base?.world || 'fantasy') !== world) return;
-            placeInScene(layer, creatureSVG(fakeCatalogItem(sp), { stage: growthStage({ ledger, grant: g }).stage }), owned.length + j, { title: sp.name, onClick: (node) => react(node) });
+            const it = fakeCatalogItem(sp), st = growthStage({ ledger, grant: g }).stage;
+            actors.push({ item: it, stage: st, title: sp.name, stageLabel: `🎖️ 特殊收藏・${stageName(it, st)}`, artId: sp.baseItemId });
         });
-        const scene = h('div', { class: 'col-scene' }, svg,
-            owned.length ? null : h('p', { class: 'col-scene-empty', text: `${w.icon} ${w.name}還沒有夥伴。累積 XP 後，就能解鎖第一位！` }));
+        zoo?.destroy();
+        zoo = createZoo({ world, actors, decorLevel: decor, label: `${w.name}棲地`, reducedMotion: app.reducedMotion, onDetail: (id) => openDetail(c, id) });
+        if (!actors.length) zoo.el.append(h('p', { class: 'col-scene-empty', text: `${w.icon} ${w.name}還沒有夥伴。累積 XP 後，就能解鎖第一位！` }));
+        const scene = zoo.el;
         const cards = h('div', { class: 'col-grid' }, items.map(it => itemCard(c, ledger, ownerId, it, energy)));
         return h('div', {}, h('p', { class: 'col-tagline muted', text: `${w.group}・${w.tagline}` }), scene, cards);
     };
@@ -113,7 +116,7 @@ export const initCollectionUI = (app) => {
             'aria-label': `${hidden ? '未揭露的收藏' : it.name}，${rarityById.get(it.rarity).name}，${has ? `已收藏，${stageName(it, st)}` : chk?.ok ? `可以解鎖，需要 ${chk.cost} 能量` : '尚未解鎖'}`,
             onclick: () => openDetail(c, it.id) },
             h('span', { class: 'col-no', text: String(it.no).padStart(2, '0') }),
-            creatureSVG(it, { size: 92, silhouette: !has, stage: st }),
+            creatureArt(it, { size: 92, silhouette: !has, stage: st }),
             h('span', { class: 'col-name', text: hidden ? '？？？' : it.name }),
             rarityBadge(it.rarity),
             has ? h('span', { class: 'col-stage', text: stageName(it, st) }) : h('span', { class: 'col-cost' + (chk?.ok ? ' ok' : ''), text: `⚡ ${chk?.cost ?? '—'}` }));
@@ -139,7 +142,7 @@ export const initCollectionUI = (app) => {
         const hidden = !has && chk?.locked;
         const gs = has ? growthStage({ ledger, grant: g }) : null;
         const track = GROWTH_TRACKS[it.track] || GROWTH_TRACKS.animal;
-        const artBox = h('div', { class: 'col-detail-art' + (has ? ' owned' : '') }, creatureSVG(it, { size: 180, silhouette: !has, stage: gs?.stage ?? 0 }));
+        const artBox = h('div', { class: 'col-detail-art' + (has ? ' owned' : '') }, creatureArt(it, { size: 180, silhouette: !has, stage: gs?.stage ?? 0, artId: sp?.baseItemId }));
         fill(detail.card, 
             h('h2', { text: hidden ? '？？？' : `${it.name}` }),
             h('div', { class: 'col-detail-meta' }, rarityBadge(it.rarity),
@@ -150,7 +153,7 @@ export const initCollectionUI = (app) => {
             has ? h('div', { class: 'col-track', 'aria-label': '成長階段' }, track.map((name, i) => h('span', { class: 'col-step' + (i <= gs.stage ? ' on' : ''), text: name }))) : null,
             has ? h('p', { class: 'muted', text: gs.stage < 3 ? `再累積 ${gs.toNext} XP 進入「${track[gs.stage + 1]}」。照顧夥伴不會消耗分數。` : '🌟 已完成紀錄！' }) : null,
             has ? h('p', { class: 'muted small', text: `${ownerLabel(c, owner)}於 ${app.localDate(g.acquiredAt)} 收藏（${{ xp: `用 ${g.cost} 探索能量解鎖`, teacher: '老師頒發', special: '特殊收藏頒發' }[g.source] || g.source}）${g.note ? `：${g.note}` : ''}` }) : null,
-            !special ? h('p', { class: 'muted small', text: `角色設定：${CONFIRM_LABEL[it.confirm]}・🎨 原創佔位插畫（待美術定稿）` }) : null,
+            !special ? h('p', { class: 'muted small', text: `角色設定：${CONFIRM_LABEL[it.confirm]}・${hasArt(it.id) ? '🎨 AI 生成公仔圖（試作）' : '🎨 原創佔位插畫（待美術定稿）'}` }) : null,
             h('div', { class: 'modal-actions wrap' },
                 has ? h('button', { class: 'btn btn-success', text: '👋 互動', onclick: () => react(artBox) }) : null,
                 !has && !special ? h('button', { class: 'btn btn-primary', id: 'col-unlock', disabled: chk?.ok ? null : true, title: chk?.ok ? null : chk?.reason,
@@ -161,11 +164,11 @@ export const initCollectionUI = (app) => {
         detail.open();
     };
 
-    const celebrate = (c, it) => {
+    const celebrate = (c, it, artId = null) => {
         const ov = makeModal('col-celebrate', { label: '解鎖成功' });
         fill(ov.card, h('div', { class: 'col-celebrate' },
             h('p', { class: 'col-celebrate-t', text: `🎉 ${ownerLabel(c, owner)} 收藏了` }),
-            h('div', { class: 'col-celebrate-art' }, creatureSVG(it, { size: 200, stage: 0 })),
+            h('div', { class: 'col-celebrate-art' }, creatureArt(it, { size: 200, stage: 0, artId })),
             h('p', { class: 'col-celebrate-n' }, `${it.name} `, rarityBadge(it.rarity)),
             h('button', { class: 'btn btn-primary', text: '太棒了！', onclick: () => ov.close() })));
         ov.open();
@@ -190,7 +193,7 @@ export const initCollectionUI = (app) => {
         if (!g) { app.notify('已經收藏了'); return; }
         await saveGrants([g]);
         detail.close(); render(c);
-        const it = itemOf(c, itemId); celebrate(c, special ? fakeCatalogItem(it) : it);
+        const it = itemOf(c, itemId); celebrate(c, special ? fakeCatalogItem(it) : it, special ? it.baseItemId : null);
     };
     const revoke = async (c, g) => {
         const note = prompt('撤銷這件收藏（只用於「誤發」；扣分或兌換不會收回收藏）。請填寫原因：', '');
@@ -213,7 +216,7 @@ export const initCollectionUI = (app) => {
                 const it = fakeCatalogItem(sp);
                 return h('div', { class: `col-card special r-${sp.rarity}${has ? ' owned' : ''}`, style: `--rc:${rarityById.get(sp.rarity).color}`, dataset: { item: sp.id } },
                     h('button', { class: 'col-card-hit', 'aria-label': `${sp.name}，${has ? '已收藏' : '未收藏'}`, onclick: () => openDetail(c, sp.id) },
-                        creatureSVG(it, { size: 84, silhouette: !has, stage: 3 })),
+                        creatureArt(it, { size: 84, silhouette: !has, stage: 3, artId: sp.baseItemId })),
                     h('span', { class: 'col-name', text: sp.name }), rarityBadge(sp.rarity),
                     h('div', { class: 'col-tags' }, (sp.tagIds || []).map(t => h('span', { class: 'hw-tag tag', text: tagName(c, t) }))),
                     h('button', { class: 'btn btn-secondary mini', text: '✏️ 編輯', onclick: () => openSpecialEditor(c, sp) }));

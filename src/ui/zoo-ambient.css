@@ -1,0 +1,71 @@
+/* 園區環境動態（src/art/ambient.js）。全部是裝飾，不接收點擊。 */
+.amb-layer { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
+.amb-front { z-index: 2000; }
+.amb { position: absolute; display: block; }
+.amb-vignette { inset: 0; background: radial-gradient(ellipse 75% 70% at 50% 45%, transparent 60%, rgba(5,10,30,0.35) 100%); }
+
+/* 飄動的雲 */
+.amb-cloud { top: var(--y); left: -25%; width: 18%; aspect-ratio: 3 / 1; opacity: var(--a); transform: scale(var(--s));
+    background: radial-gradient(closest-side at 30% 60%, #fff 70%, transparent 72%), radial-gradient(closest-side at 55% 40%, #fff 70%, transparent 72%), radial-gradient(closest-side at 75% 62%, #fff 70%, transparent 72%);
+    filter: blur(1px); animation: ambDrift var(--d) linear infinite; animation-delay: var(--o); }
+.amb-cloud.amb-near { width: 34%; opacity: 0.45; filter: blur(4px); }
+@keyframes ambDrift { from { left: -35%; } to { left: 110%; } }
+.amb-sunglow { top: -30%; left: 45%; width: 50%; aspect-ratio: 1; border-radius: 50%; background: radial-gradient(closest-side, color-mix(in srgb, var(--c, #fff6c8) 55%, transparent), transparent);
+    animation: ambPulse 8s ease-in-out infinite; }
+@keyframes ambPulse { 50% { opacity: 0.6; transform: scale(1.06); } }
+
+/* 蝴蝶、落葉 */
+.amb-butterfly { left: var(--x); top: var(--y); width: 1.6%; aspect-ratio: 1.4; transform: scale(var(--s)); animation: ambFlutterPath var(--d) ease-in-out infinite alternate; animation-delay: var(--o); }
+.amb-butterfly::before, .amb-butterfly::after { content: ''; position: absolute; top: 0; width: 50%; height: 100%; border-radius: 60% 40% 50% 50%; background: #ffb347; animation: ambWing 0.25s ease-in-out infinite alternate; }
+.amb-butterfly::before { left: 0; transform-origin: 100% 50%; }
+.amb-butterfly::after { right: 0; transform-origin: 0 50%; background: #ff7aa2; }
+@keyframes ambWing { to { transform: scaleX(0.2); } }
+@keyframes ambFlutterPath { 0% { translate: 0 0; } 25% { translate: 6vw -3vw; } 50% { translate: 2vw -6vw; } 75% { translate: -5vw -2vw; } 100% { translate: -2vw 2vw; } }
+.amb-leaf { left: var(--x); top: -5%; width: 1.2%; aspect-ratio: 1.6; border-radius: 0 100% 0 100%; background: #7fbf5a; opacity: 0.85; animation: ambFall var(--d) linear infinite; animation-delay: var(--o); }
+@keyframes ambFall { 0% { transform: translate(0, 0) rotate(0); } 50% { transform: translate(4vw, 30vh) rotate(200deg); } 100% { transform: translate(-2vw, 70vh) rotate(420deg); opacity: 0; } }
+
+/* 海洋：光束、泡泡、遠方魚群、水紋 */
+.amb-ray { left: var(--x); top: -10%; width: var(--w); height: 120%; background: linear-gradient(to bottom, rgba(255,255,255,0.28), transparent 80%);
+    transform: skewX(-12deg); transform-origin: top; animation: ambRay var(--d) ease-in-out infinite alternate; animation-delay: var(--o); filter: blur(2px); }
+@keyframes ambRay { from { opacity: 0.25; transform: skewX(-16deg); } to { opacity: 0.8; transform: skewX(-8deg); } }
+.amb-bubble { left: var(--x); top: var(--y); width: 0.9%; aspect-ratio: 1; border-radius: 50%; border: 1.5px solid rgba(230,250,255,0.85); background: radial-gradient(circle at 30% 30%, rgba(255,255,255,0.7) 10%, transparent 40%);
+    transform: scale(var(--s)); animation: ambRise var(--d) linear infinite; animation-delay: var(--o); }
+@keyframes ambRise { 0% { translate: 0 0; opacity: 0; } 10% { opacity: 1; } 50% { translate: 1vw -35vh; } 100% { translate: -1vw -75vh; opacity: 0; } }
+.amb-school { top: var(--y); left: -20%; width: 12%; aspect-ratio: 3; animation: ambDrift var(--d) linear infinite; animation-delay: var(--o); opacity: 0.35; }
+.amb-school i { position: absolute; width: 14%; aspect-ratio: 2.2; border-radius: 50% 40% 40% 50%; background: #0d3a7a; left: calc(var(--k) * 12%); top: calc(var(--r) * 60%);
+    animation: ambSwimBob 1.4s ease-in-out infinite; animation-delay: calc(var(--k) * -0.2s); }
+@keyframes ambSwimBob { 50% { translate: 0 30%; } }
+.amb-caustic { inset: 0 0 auto 0; height: 30%; background: repeating-radial-gradient(ellipse 40px 14px at 50% 0, rgba(255,255,255,0.12) 0 2px, transparent 3px 12px); mix-blend-mode: screen; animation: ambCaustic 9s linear infinite; }
+@keyframes ambCaustic { to { background-position: 120px 0; } }
+
+/* 天空：風 */
+.amb-wind { left: var(--x); top: var(--y); width: 10%; height: 2px; border-radius: 2px; background: linear-gradient(to right, transparent, rgba(255,255,255,0.9), transparent); animation: ambWind var(--d) ease-in-out infinite; animation-delay: var(--o); }
+@keyframes ambWind { 0% { translate: -20vw 0; opacity: 0; } 30% { opacity: 1; } 100% { translate: 30vw -2vh; opacity: 0; } }
+
+/* 科技：掃描線、浮動光點、閃爍 */
+.amb-scan { inset: 0; background: linear-gradient(to bottom, transparent 45%, rgba(0,229,255,0.16) 50%, transparent 55%); background-size: 100% 300%; animation: ambScan 6s linear infinite; }
+@keyframes ambScan { from { background-position: 0 100%; } to { background-position: 0 0; } }
+.amb-pixel { left: var(--x); top: var(--y); width: 0.7%; aspect-ratio: 1; background: #00e5ff; box-shadow: 0 0 8px #00e5ff; transform: scale(var(--s)); animation: ambRise var(--d) linear infinite; animation-delay: var(--o); }
+.amb-flicker { inset: 0; background: rgba(0,229,255,0.05); animation: ambFlicker 7s steps(1) infinite; }
+@keyframes ambFlicker { 0%, 100% { opacity: 0; } 61% { opacity: 1; } 62% { opacity: 0; } 64% { opacity: 1; } 65% { opacity: 0; } }
+
+/* 史前：遠方飛行剪影、塵埃 */
+.amb-flyer { top: var(--y); left: -10%; width: 4%; aspect-ratio: 3; transform: scale(var(--s, 1)); animation: ambDrift var(--d) linear infinite; animation-delay: var(--o); opacity: 0.4; }
+.amb-flyer::before { content: ''; position: absolute; inset: 0; background: #5a3a2a; clip-path: polygon(0 40%, 42% 55%, 50% 30%, 58% 55%, 100% 40%, 56% 70%, 50% 90%, 44% 70%); animation: ambFlap 1.2s ease-in-out infinite; }
+@keyframes ambFlap { 50% { transform: scaleY(0.5); } }
+.amb-dust { left: var(--x); top: var(--y); width: 0.5%; aspect-ratio: 1; border-radius: 50%; background: #fff3c4; box-shadow: 0 0 6px #ffd23f; opacity: 0.7; transform: scale(var(--s)); animation: ambWander var(--d) ease-in-out infinite alternate; animation-delay: var(--o); }
+@keyframes ambWander { 0% { translate: 0 0; } 33% { translate: 3vw -4vh; } 66% { translate: -2vw -8vh; } 100% { translate: 2vw -3vh; } }
+
+/* 奇幻：極光、星星、螢火蟲 */
+.amb-aurora { inset: -10% -10% 55% -10%; background: linear-gradient(100deg, transparent 10%, rgba(126,249,255,0.22) 30%, rgba(183,255,138,0.18) 45%, rgba(255,157,240,0.2) 60%, transparent 80%);
+    filter: blur(14px); animation: ambAurora 14s ease-in-out infinite alternate; }
+@keyframes ambAurora { from { transform: translateX(-6%) skewY(-3deg); opacity: 0.6; } to { transform: translateX(6%) skewY(3deg); opacity: 1; } }
+.amb-star { left: var(--x); top: var(--y); width: 0.45%; aspect-ratio: 1; border-radius: 50%; background: #fff; box-shadow: 0 0 6px #fff; animation: ambTwinkle var(--d) ease-in-out infinite; animation-delay: var(--o); }
+@keyframes ambTwinkle { 50% { opacity: 0.15; transform: scale(0.6); } }
+.amb-firefly { left: var(--x); top: var(--y); width: 0.7%; aspect-ratio: 1; border-radius: 50%; background: #fffbb0; box-shadow: 0 0 10px 3px rgba(255,240,120,0.8);
+    animation: ambWander var(--d) ease-in-out infinite alternate, ambTwinkle 2.6s ease-in-out infinite; animation-delay: var(--o), var(--o); }
+
+/* 減少動態：保留靜態氛圍，停止所有動作 */
+html.reduce-motion .amb, html.reduce-motion .amb *, html.reduce-motion .amb::before, html.reduce-motion .amb::after { animation: none !important; }
+html.reduce-motion .amb-leaf, html.reduce-motion .amb-bubble, html.reduce-motion .amb-wind, html.reduce-motion .amb-pixel, html.reduce-motion .amb-school, html.reduce-motion .amb-flyer { display: none; }
+@media (prefers-reduced-motion: reduce) { .amb, .amb *, .amb::before, .amb::after { animation: none !important; } .amb-leaf, .amb-bubble, .amb-wind, .amb-pixel, .amb-school, .amb-flyer { display: none; } }

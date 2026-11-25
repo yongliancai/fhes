@@ -1,0 +1,4 @@
+{
+  "_note": "人工核准後才列入；scripts/art-process.py 只處理這裡列出的圖。",
+  "approved": ["land-01_adult", "ocean-07_adult", "tech-10_adult"]
+}

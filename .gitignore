@@ -6,3 +6,6 @@ test-results/
 .env
 .env.*
 !.env.example
+
+# AI 生圖原始檔（體積大，只提交處理後的素材）
+art/raw/
