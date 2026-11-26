@@ -5,7 +5,7 @@ import { mkdtempSync, readFileSync, writeFileSync, readdirSync, utimesSync, exis
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomBytes } from 'node:crypto';
-import { openDb } from '../server/src/db.mjs';
+import { openDb, SCHEMA_VERSION } from '../server/src/db.mjs';
 import { backup, restore, verify, prune, encrypt, decrypt, BACKUP_RE } from '../server/backup.mjs';
 
 const tmp = () => mkdtempSync(join(tmpdir(), 'fhes-bk-'));
@@ -33,7 +33,7 @@ test('backup is a consistent encrypted snapshot (no plaintext names or hashes); 
         const target = join(dir, 'restored.db');
         assert.equal(verify({ file: r.file, key, tmpDir: dir }).ok, true);
         const chk = restore({ file: r.file, target, key });
-        assert.deepEqual([chk.ok, chk.version, chk.accounts], [true, 1, 1]);
+        assert.deepEqual([chk.ok, chk.version, chk.accounts], [true, SCHEMA_VERSION, 1]);
         const back = openDb(target);
         assert.equal(back.prepare('SELECT username FROM student_accounts').get().username, 'abc3456');
         back.close();

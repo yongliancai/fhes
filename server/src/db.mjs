@@ -2,7 +2,7 @@
 // 不存：明文密碼、session id 原文、教師 email 或 Google sub 原文。
 import Database from 'better-sqlite3';
 
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 
 const MIGRATIONS = [
     // v1
@@ -99,6 +99,27 @@ const MIGRATIONS = [
         token_hash TEXT PRIMARY KEY,
         expires_at INTEGER NOT NULL
     );
+    `,
+    // v2（v6.2 小老師）：老師指定的小老師可以登記全班作業；登記先存在這裡，教師端收取後轉成老師的作業事件
+    `
+    ALTER TABLE student_accounts ADD COLUMN is_helper INTEGER NOT NULL DEFAULT 0 CHECK (is_helper IN (0, 1));
+    ALTER TABLE classes ADD COLUMN inbox_seq INTEGER NOT NULL DEFAULT 0;   -- 目前發布的投影已經包含到第幾筆登記
+    CREATE TABLE hw_registrations (
+        seq INTEGER PRIMARY KEY AUTOINCREMENT,          -- 教師端收取的游標
+        id TEXT NOT NULL UNIQUE,
+        class_id TEXT NOT NULL REFERENCES classes(id),
+        helper_account_id TEXT NOT NULL REFERENCES student_accounts(id),
+        helper_local_id TEXT NOT NULL,
+        assignment_id TEXT NOT NULL,
+        local_student_id TEXT NOT NULL,
+        state TEXT NOT NULL CHECK (state IN ('submitted', 'missing', 'needs', 'done')),
+        local_date TEXT NOT NULL,
+        idempotency_key TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        UNIQUE (helper_account_id, idempotency_key, local_student_id)
+    );
+    CREATE INDEX hwreg_class ON hw_registrations (class_id, seq);
+    CREATE INDEX hwreg_helper_day ON hw_registrations (helper_account_id, local_date);
     `,
 ];
 

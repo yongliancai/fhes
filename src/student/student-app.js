@@ -2,7 +2,7 @@
 // 安全：不在瀏覽器存任何資料（只有 HttpOnly Cookie）；CSRF token 只放記憶體；DOM 一律 textContent（不用 HTML 字串）。
 // 學生只能看到自己的分數與作業、所屬小組的園區；照顧結果由後端裁決，前端不計算任何 XP／分數／成長。
 import { h, fill } from '../ui/dom.js';
-import { SUBMISSION, CORRECTION } from '../core/homework.js';
+import { SIMPLE, SIMPLE_ICON, simpleLabel, simpleOf } from '../core/homework.js';
 import { CARE_ACTIONS, MOODS, CARE_BADGES } from '../core/care.js';
 import { catalogById, worldById, rarityById } from '../data/catalog.js';
 import { sceneCreature } from '../art/student-art.js';
@@ -12,6 +12,7 @@ const root = document.getElementById('app');
 const STALE_DAYS = 3;
 let csrf = null;
 let tab = 'growth';
+let isHelper = false;          // 只決定要不要顯示「登記作業」分頁；真正的權限由後端每次檢查
 const reducedMotion = () => window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
 
 // ------------------------------------------------------------ API
@@ -56,7 +57,7 @@ const showLogin = (notice = '') => {
         try {
             const r = await api('POST', '/api/student/login', { username: user.value.trim(), password: pass.value });
             csrf = r.csrf; pass.value = '';
-            if (r.mustChangePassword) showChangePassword(true); else showMain();
+            if (r.mustChangePassword) showChangePassword(true); else { await refreshMe(); showMain(); }
         } catch (err) { fill(out, msg(err.message, 'error')); btn.disabled = false; pass.value = ''; pass.focus(); }
     } },
     h('h1', { text: '🌟 學生學習中心' }),
@@ -78,7 +79,7 @@ const showChangePassword = (first = false) => {
         if (nw.value !== nw2.value) { fill(out, msg('兩次輸入的新密碼不一樣。', 'error')); return; }
         try {
             const r = await api('POST', '/api/student/password', { currentPassword: cur.value, newPassword: nw.value });
-            csrf = r.csrf; showMain('密碼改好了！以後請用新密碼登入。');
+            csrf = r.csrf; await refreshMe(); showMain('密碼改好了！以後請用新密碼登入。');
         } catch (err) { if (err.status === 401) return fail(err); fill(out, msg(err.message, 'error')); }
     } },
     h('h1', { text: first ? '🔐 設定你的新密碼' : '🔐 更改密碼' }),
@@ -96,15 +97,19 @@ const showChangePassword = (first = false) => {
 
 const logout = async () => {
     try { await api('POST', '/api/student/logout', {}); } catch { /* 已失效也一樣回到登入畫面 */ }
-    csrf = null; showLogin('已經登出。');
+    csrf = null; isHelper = false; tab = 'growth'; showLogin('已經登出。');
 };
+const refreshMe = async () => { try { const me = await api('GET', '/api/student/me'); csrf = me.csrf; isHelper = !!me.helper; } catch { /* 下一個請求會處理 */ } };
 
 // ------------------------------------------------------------ 主畫面
 const TABS = [['growth', '🌱', '我的成長'], ['homework', '📚', '我的作業'], ['zoo', '🐾', '小組園區'], ['help', '❓', '說明']];
+const HELPER_TAB = ['helper', '📝', '登記作業'];
 
 const showMain = async (notice = '') => {
+    const tabs = isHelper ? [...TABS.slice(0, 3), HELPER_TAB, TABS[3]] : TABS;
+    if (!tabs.some(([id]) => id === tab)) tab = 'growth';
     const body = h('section', { id: 'stu-body', class: 'stu-body', tabindex: '-1' });
-    const nav = h('nav', { class: 'stu-tabs', 'aria-label': '分頁' }, TABS.map(([id, icon, label]) => h('button', {
+    const nav = h('nav', { class: 'stu-tabs', 'aria-label': '分頁' }, tabs.map(([id, icon, label]) => h('button', {
         type: 'button', class: 'stu-tab', 'aria-current': tab === id ? 'page' : null, dataset: { tab: id },
         onclick: () => { tab = id; showMain(); },
     }, h('span', { class: 'stu-tab-icon', 'aria-hidden': 'true', text: icon }), h('span', { text: label }))));
@@ -119,6 +124,7 @@ const showMain = async (notice = '') => {
         if (tab === 'growth') await renderGrowth(body);
         else if (tab === 'homework') await renderHomework(body);
         else if (tab === 'zoo') await renderZoo(body);
+        else if (tab === 'helper') await renderHelper(body);
         else renderHelp(body);
     } catch (e) { fail(e); }
 };
@@ -142,35 +148,86 @@ const renderGrowth = async (body) => {
         h('div', { class: 'stu-card' },
             h('h3', { text: '📚 作業' }),
             h('p', { text: `最近的作業 ${hs.total} 項` }),
-            hs.missing ? h('p', { class: 'stu-todo', text: `還沒交：${hs.missing} 項` }) : h('p', { text: '沒有未交的作業 👍' }),
-            hs.needsCorrection ? h('p', { class: 'stu-todo', text: `要訂正：${hs.needsCorrection} 項` }) : null,
+            hs.missing ? h('p', { class: 'stu-todo', text: `未繳交：${hs.missing} 項` }) : h('p', { text: '沒有未繳交的作業 👍' }),
+            hs.needsCorrection ? h('p', { class: 'stu-todo', text: `未訂正：${hs.needsCorrection} 項` }) : null,
             h('button', { class: 'stu-btn', type: 'button', text: '看作業', onclick: () => { tab = 'homework'; showMain(); } })),
         staleNote(d.publishedAt));
 };
 
-const SUB_CLASS = { unchecked: 'muted', missing: 'todo', submitted: 'ok', exempt: 'muted' };
-const COR_CLASS = { ungraded: 'muted', needs: 'todo', done: 'ok', none: 'muted' };
 
+const STATE_CLASS = { submitted: 'ok', done: 'ok', missing: 'todo', needs: 'todo', unchecked: 'muted', exempt: 'muted' };
 const renderHomework = async (body) => {
     const d = await api('GET', '/api/student/homework');
     if (!d.published) return notPublished(body);
     let filter = 'all';
     const list = h('ul', { class: 'stu-hw-list' });
     const draw = () => {
-        const items = d.homework.filter(x => filter === 'all' || (filter === 'missing' ? x.submission === 'missing' : x.correction === 'needs'));
+        const items = d.homework.filter(x => filter === 'all' || simpleOf(x.submission, x.correction) === filter);
         fill(list, items.length ? items.map(x => h('li', { class: 'stu-hw' },
             h('div', { class: 'stu-hw-title' }, h('strong', { text: x.title }), h('span', { class: 'stu-hw-type', text: x.type })),
             h('div', { class: 'stu-hw-dates', text: `${x.assignedDate || ''}${x.dueDate ? ` · 期限 ${x.dueDate}` : ''}` }),
-            h('div', { class: 'stu-hw-badges' },
-                h('span', { class: `stu-badge stu-badge-${SUB_CLASS[x.submission]}`, text: `繳交：${SUBMISSION[x.submission]}${x.late ? '（補交）' : ''}` }),
-                x.correction ? h('span', { class: `stu-badge stu-badge-${COR_CLASS[x.correction]}`, text: `訂正：${CORRECTION[x.correction]}` }) : null))) : h('li', { class: 'stu-hw-empty', text: '這裡沒有作業。' }));
+            h('div', { class: 'stu-hw-badges' }, (() => { const st = simpleOf(x.submission, x.correction); return h('span', { class: `stu-badge stu-badge-${STATE_CLASS[st] || 'muted'}`, dataset: { state: st }, text: `${simpleLabel(st)}${x.late ? '（補交）' : ''}` }); })()))) : h('li', { class: 'stu-hw-empty', text: '這裡沒有作業。' }));
     };
     const chip = (id, label) => h('button', { type: 'button', class: 'stu-chip', 'aria-pressed': String(filter === id), onclick: (e) => { filter = id; e.currentTarget.parentElement.querySelectorAll('.stu-chip').forEach(b => b.setAttribute('aria-pressed', String(b === e.currentTarget))); draw(); } }, label);
     draw();
     fill(body, h('h2', { text: '我的作業' }),
-        h('p', { class: 'stu-sub', text: '「未登記」是老師還沒登記，不代表沒交；「已交」之後還要看「訂正」。' }),
-        h('div', { class: 'stu-chips', role: 'group', 'aria-label': '篩選' }, chip('all', '全部'), chip('missing', '未交'), chip('needs', '待訂正')),
+        h('p', { class: 'stu-sub', text: '「未登記」是老師還沒登記，不代表沒交。' }),
+        h('div', { class: 'stu-chips', role: 'group', 'aria-label': '篩選' }, chip('all', '全部'), chip('missing', '未繳交'), chip('needs', '未訂正')),
         list, staleNote(d.publishedAt));
+};
+
+// ------------------------------------------------------------ 小老師：登記全班作業
+const renderHelper = async (body) => {
+    let v;
+    try { v = await api('GET', '/api/student/helper'); }
+    catch (e) { if (e.status === 403 && e.body?.error === 'not_helper') { isHelper = false; tab = 'growth'; return showMain('老師已經取消你的小老師身分。'); } throw e; }
+    if (!v.published || !v.assignments.length) return fill(body, h('h2', { text: '📝 登記作業' }), msg('老師還沒有發布作業。', 'info'));
+    let aid = v.assignments[0].assignmentId;
+    const note = h('div', { 'aria-live': 'polite' });
+    const list = h('ul', { class: 'stu-reg-list' });
+    const select = h('select', { id: 'stu-reg-assign', class: 'stu-select', onchange: (e) => { aid = e.target.value; draw(); } },
+        v.assignments.map(a => h('option', { value: a.assignmentId, text: `${a.assignedDate || ''} ${a.title}${a.type && a.type !== a.title ? `（${a.type}）` : ''}` })));
+    const send = async (sid, state, button) => {
+        button.disabled = true;
+        const key = newKey(); let r = null;
+        for (let i = 0; i < 2 && !r; i++) {                 // 網路斷掉時用同一個 key 重送一次（後端只存一次）
+            try { r = await api('POST', '/api/student/helper/register', { assignmentId: aid, studentIds: [sid], state, idempotencyKey: key }); }
+            catch (e) {
+                if (e.status !== 0 || i === 1) {
+                    button.disabled = false;
+                    if (e.status === 401 || e.body?.error === 'password_change_required') return fail(e);
+                    if (e.body?.error === 'not_helper') { isHelper = false; tab = 'growth'; return showMain('老師已經取消你的小老師身分。'); }
+                    return fill(note, msg(e.message, 'error'));
+                }
+            }
+        }
+        Object.assign(v.states[aid] ||= {}, r.states);
+        const who = v.students.find(x => x.studentId === sid);
+        fill(note, msg(`已登記：${who?.seat ?? ''}號 ${simpleLabel(state)}`, 'ok'));
+        draw();
+    };
+    const draw = () => {
+        const st = v.states[aid] || {};
+        fill(list, v.students.map(s => {
+            const cur = st[s.studentId] || 'unchecked';
+            const self = s.studentId === v.selfId;
+            return h('li', { class: 'stu-reg', dataset: { sid: s.studentId } },
+                h('div', { class: 'stu-reg-who' },
+                    h('strong', { text: `${s.seat ?? ''}號` }), s.name && s.name !== `${s.seat ?? ''}號` ? h('span', { text: s.name }) : null,
+                    h('span', { class: `stu-badge stu-badge-${STATE_CLASS[cur] || 'muted'}`, text: simpleLabel(cur) })),
+                self ? h('p', { class: 'stu-sub', text: '自己的作業請交給老師登記。' })
+                    : h('div', { class: 'stu-reg-actions', role: 'group', 'aria-label': `${s.seat ?? ''}號的作業狀態` }, Object.entries(SIMPLE).map(([k, label]) => h('button', {
+                        type: 'button', class: `stu-btn stu-reg-btn${cur === k ? ' stu-btn-primary' : ''}`, dataset: { state: k }, 'aria-pressed': String(cur === k),
+                        text: `${SIMPLE_ICON[k]} ${label}`, onclick: (e) => send(s.studentId, k, e.currentTarget),
+                    }))));
+        }));
+    };
+    draw();
+    fill(body,
+        h('h2', { text: '📝 登記作業' }),
+        h('p', { class: 'stu-sub', text: '幫老師登記同學的作業。按下去就會送給老師；按錯了直接再按正確的就好。' }),
+        h('label', { for: 'stu-reg-assign', text: '作業' }), select,
+        note, list, staleNote(v.publishedAt));
 };
 
 const artItem = (a) => {
@@ -263,7 +320,7 @@ const renderHelp = (body) => fill(body,
 const boot = async () => {
     try {
         const me = await api('GET', '/api/student/me');
-        csrf = me.csrf;
+        csrf = me.csrf; isHelper = !!me.helper;
         if (me.mustChangePassword) showChangePassword(true); else showMain();
     } catch (e) { if (e.status === 401) showLogin(); else fail(e); }
 };

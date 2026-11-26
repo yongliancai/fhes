@@ -21,13 +21,29 @@ export const CORRECTION_ICON = Object.freeze({ ungraded: '○', needs: '✎', do
 export const DEFAULT_HW_TYPE_NAMES = ['國隨', '國習', '甲本', '乙本', '數課', '數講', '數練', '數重', '數習', '成語', '考卷'];
 export const DEFAULT_HW_TYPES = Object.freeze(DEFAULT_HW_TYPE_NAMES.map((name, i) => Object.freeze({ id: `hwt-${String(i + 1).padStart(2, '0')}`, name, active: true, builtin: true })));
 export const DEFAULT_HW_REWARD = Object.freeze({ enabled: false, xp: 5 });
+/** v6.2 作業逾期自動愛心（src/core/hw-hearts.js）。since：開始計算的時間（升級當下），之前的未交不會補記 */
+export const DEFAULT_HW_AUTO_HEART = Object.freeze({ enabled: true, hours: 24, holidays: [] });
 
 /** 班級補值器（registerClassDefaults 用） */
 export const fillHomeworkDefaults = (c, fill) => {
     let changed = fill('hwTypes', DEFAULT_HW_TYPES.map(t => ({ ...t })));
     if (!c.hwReward) { c.hwReward = { ...DEFAULT_HW_REWARD }; changed = true; }
+    if (!c.hwAutoHeart) { c.hwAutoHeart = { ...DEFAULT_HW_AUTO_HEART, holidays: [], since: Date.now() }; changed = true; }
     return changed;
 };
+
+// ---------------------------------------------------------------- v6.2 簡易登記（4 個按鈕）
+// 只是「繳交 × 訂正」兩個維度的常用組合，資料格式不變（v6.1 可以照常讀）：
+//   繳交＝已交（未批改）、未繳交＝未交、未訂正＝已交＋待訂正、已訂正＝已交＋已訂正
+// 免交、未登記仍保留給老師（收在「更多」裡）。
+export const SIMPLE = Object.freeze({ submitted: '繳交', missing: '未繳交', needs: '未訂正', done: '已訂正' });
+export const SIMPLE_ICON = Object.freeze({ submitted: '✓', missing: '✗', needs: '✎', done: '★' });
+const SIMPLE_TARGET = { submitted: ['submitted', null], missing: ['missing', null], needs: ['submitted', 'needs'], done: ['submitted', 'done'] };
+/** 由繳交與訂正狀態算出簡易狀態：submitted | missing | needs | done | unchecked | exempt */
+export const simpleOf = (submission, correction) => submission !== 'submitted' ? submission : correction === 'needs' ? 'needs' : correction === 'done' ? 'done' : 'submitted';
+export const simpleState = (rec) => simpleOf(rec.submission, rec.correction);
+export const simpleLabel = (s) => SIMPLE[s] ?? (s === 'exempt' ? '免交' : s === 'unchecked' ? '未登記' : String(s));
+export const isSimpleState = (s) => Object.hasOwn(SIMPLE, s);
 
 export const recordKey = (assignmentId, studentId) => `${assignmentId}|${studentId}`;
 const byTsId = (a, b) => (a.ts - b.ts) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
@@ -121,6 +137,28 @@ export const buildChangeEvents = ({ records, classId, assignmentId, studentIds, 
         });
     }
     return { events, rejected, unchanged, batchId: bid };
+};
+
+/**
+ * 簡易登記：一次產生需要的 1～2 筆事件（先繳交、再訂正；訂正事件時間 +1ms，確保重算順序正確）。
+ * 「繳交」只會把「未訂正／已訂正」改回「未批改」，原本「不需訂正」的保持不變。
+ * hwEvents、assignments：這個班級的全部作業事件與作業（用來在兩步之間重算紀錄）
+ */
+export const buildSimpleChange = ({ hwEvents, assignments = [], records, classId, assignmentId, studentIds, state, reason = '', batchId = null }, ctx) => {
+    if (!isSimpleState(state)) return { events: [], rejected: studentIds.map(studentId => ({ studentId, error: `不明的狀態：${state}` })), unchanged: 0, batchId: null };
+    const [sub, cor] = SIMPLE_TARGET[state];
+    const bid = batchId || (studentIds.length > 1 ? `hwb-${ctx.uid()}` : null);
+    const first = buildChangeEvents({ records, classId, assignmentId, studentIds, field: 'submission', value: sub, reason, batchId: bid }, ctx);
+    let second = { events: [], rejected: [] };
+    if (sub === 'submitted') {
+        const recs = first.events.length ? projectRecords([...hwEvents, ...first.events], assignments) : records;
+        const ids = cor ? studentIds : studentIds.filter(id => ['needs', 'done'].includes(getRecord(recs, assignmentId, id).correction));
+        if (ids.length) second = buildChangeEvents({ records: recs, classId, assignmentId, studentIds: ids, field: 'correction', value: cor || 'ungraded', reason, batchId: bid }, { ...ctx, now: ctx.now + 1 });
+    }
+    const touched = new Set([...first.events, ...second.events].map(e => e.studentId));
+    const rejected = [...first.rejected, ...second.rejected];
+    const rejectedIds = new Set(rejected.map(r => r.studentId));
+    return { events: [...first.events, ...second.events], rejected, unchanged: studentIds.filter(id => !touched.has(id) && !rejectedIds.has(id)).length, batchId: bid };
 };
 
 /**
@@ -247,6 +285,6 @@ export const lastUndoableBatch = (hwEvents, today) => {
         if (!best || e.ts > best.ts || (e.ts === best.ts && e.id > best.id)) best = e;
     }
     if (!best) return null;
-    const n = hwEvents.filter(e => e.batchId === best.batchId).length;
+    const n = new Set(hwEvents.filter(e => e.batchId === best.batchId).map(e => e.studentId)).size;   // 一位學生可能有兩筆（未訂正＝繳交＋訂正）
     return { batchId: best.batchId, n, field: best.field, value: best.value };
 };

@@ -150,6 +150,30 @@ Inaccurate documentation the review found (server-side nonce, "only once", 30/IP
 - **FIX**: switch the snapshot to `journal_mode = DELETE` before checking it, and delete the file with all side files (`-wal`, `-shm`, `-journal`) in every path (backup, verify, failed restore).
 - **PROVE**: the test failed before the fix and passes after it; CLI smoke test keygen → backup → verify → restore → refused second restore.
 
+## BUG-027 (v6.2 小老師) — overdue hearts given before helper registrations were pulled
+- **DETECT**: independent read-only review of the 小老師／auto-heart change.
+- **ROOT CAUSE**: the teacher app checked overdue homework at start-up and every minute, but pulled helper registrations only every 5 minutes. A 繳交 registered by a helper while the teacher's computer was off arrived after the heart was already given, and kept hearts are never removed.
+- **FIX**: hearts wait for the first pull after start-up (at most 20 s). Any auto heart whose wait, recomputed from the current events, ended before the heart's time is withdrawn with a reverse event (「自動撤回…」). This also covers a second device that syncs late. Hearts earned before the work was handed in stay, and so do hearts after a later change to the hours setting.
+- **PROVE**: `tests/hw-rules.test.mjs` (`BUG-027 …`).
+
+## BUG-028 (v6.2 小老師) — upgrading would start hearts for every old unfinished homework
+- **DETECT**: same review.
+- **ROOT CAUSE**: the rule clipped old waits to the switch-on time, so every old 未繳交／未訂正 started counting at the upgrade.
+- **FIX**: only waits that **begin** after the rule is switched on are counted. Nothing is back-filled.
+- **PROVE**: the test 「no hearts when disabled, before the start time …」 now expects 0 for a wait that began earlier.
+
+## BUG-029 (v6.2 小老師) — a helper could override the teacher's 免交
+- **DETECT**: same review.
+- **FIX**: the server refuses registrations for a classmate the published data shows as 免交 (409 `exempt`). The teacher app also skips such registrations (「老師設為免交」).
+- **PROVE**: `tests/server-helper.test.mjs` (`review fixes …`) and `tests/hw-rules.test.mjs` (`BUG-029 …`).
+
+## BUG-030 (v6.2 小老師) — smaller review findings
+- `inbox_seq` could go back to 0 when an old client published. It is now `MAX(inbox_seq, ?)`.
+- A student removed from the roster kept helper powers while the account stayed active. The helper check now also requires the helper's own published row.
+- The undo button counted events instead of students: a batch of 未訂正 for 3 students showed 「× 6」. It now counts distinct students.
+- Converting a large pull recomputed the whole class for every registration. Now only the affected cell is recomputed; 3000 registrations take well under 3 s in the test.
+- **PROVE**: `tests/server-helper.test.mjs` (`review fixes …`) and `tests/hw-rules.test.mjs` (`BUG-030 …`, `large pulls stay fast`).
+
 ## v6.2 test-writing mistakes caught by the suite (not product bugs)
 - Test helper's default new password contained the username → the server correctly refused it as weak.
 - Idempotency keys shorter than 8 characters in a test → the server correctly answered 400.

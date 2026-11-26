@@ -3,9 +3,12 @@
 import { h, fill, makeModal, $ } from './dom.js';
 import { createStudentApi, StudentApiError } from '../sync/student-api.js';
 import { CARE_BADGES } from '../core/care.js';
+import { registrationsToEvents } from '../core/hw-helper.js';
 
 const LS_AUTO = 'fhes.studentAutoPublish.v1';
 const AUTO_DELAY_MS = 30_000;
+const PULL_EVERY_MS = 5 * 60_000;            // 小老師登記：每 5 分鐘自動收取一次
+const META_INBOX = 'studentInbox';           // S.meta.studentInbox = { [classId]: 已收取到的 seq }（只存游標，不存登記內容）
 const lsGet = (k) => { try { return localStorage.getItem(k); } catch { return null; } };
 const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch { /* 無痕視窗 */ } };
 
@@ -26,7 +29,40 @@ export const initStudentAdminUI = ({ app, base, handoff, fetchFn }) => {
         catch (e) { state.status = 'error'; state.message = e instanceof StudentApiError ? e.message : '無法連線學生系統'; }
         finally { handoff = null; }          // 憑證用完就丟
         if (modal.el.classList.contains('visible')) render();
+        if (state.status === 'ok') { await pullAll(); setInterval(pullAll, PULL_EVERY_MS); }
     })();
+    /** 第一次收取完成（或連不上）之後才 resolve；逾期愛心要等它（BUG-027）。最多等 20 秒 */
+    const firstPull = Promise.race([ready.catch(() => {}), new Promise(ok => setTimeout(ok, 20_000))]);
+
+    // ------------------------------------------------------------ 小老師登記：自動收取
+    const inboxOf = () => ({ ...(app.S.meta[META_INBOX] || {}) });
+    /** 收取一個班級；回傳新增的作業事件數。只收「已經連結過學生系統」的班級（有游標紀錄） */
+    const pull = async (cls) => {
+        const cursor = inboxOf()[cls.id] ?? 0;
+        const { registrations, next } = await api.pullRegistrations(cls, cursor);
+        let applied = 0;
+        if (registrations.length) {
+            const out = registrationsToEvents({ regs: registrations, hwEvents: app.S.hwEvents, assignments: app.S.hwAssignments, studentIds: app.studentsOf(cls.id).map(s => s.id), classId: cls.id });
+            if (out.events.length) await app.addHomeworkEvents(out.events);
+            applied = out.applied;
+        }
+        if (next !== cursor) await app.setMeta(META_INBOX, { ...inboxOf(), [cls.id]: next });
+        state.lastPull = { at: Date.now(), applied };
+        if (applied) { app.notify(`收到小老師登記 ${applied} 筆（${cls.name}）`); state.dirty.add(cls.id); }
+        return applied;
+    };
+    let pulling = false;
+    const pullAll = async () => {
+        if (pulling || !api.connected) return;
+        pulling = true;
+        try {
+            const linked = Object.keys(app.S.meta[META_INBOX] || {});
+            for (const id of linked) { const cls = app.S.classes.find(x => x.id === id && !x.deleted); if (cls) { try { await pull(cls); } catch { /* 網路問題：下次再收 */ } } }
+            if (lsGet(LS_AUTO) === '1') for (const id of [...state.dirty]) { const cls = app.S.classes.find(x => x.id === id && !x.deleted); if (cls && state.published.has(id)) await publish(cls, { quiet: true, skipPull: true }); }
+        } finally { pulling = false; }
+    };
+    /** 第一次連結這個班級：建立游標（之後才會自動收取） */
+    const link = async (cls) => { if (!(cls.id in (app.S.meta[META_INBOX] || {}))) await app.setMeta(META_INBOX, { ...inboxOf(), [cls.id]: 0 }); };
 
     const modal = makeModal('student-modal', { wide: true, label: '學生系統' });
     /** 初始密碼只能出現一次：不論怎麼關閉（按鈕、點背景、Esc），都從記憶體與 DOM 清掉 */
@@ -38,9 +74,11 @@ export const initStudentAdminUI = ({ app, base, handoff, fetchFn }) => {
     const nameModeOf = (cls) => cls.studentSystem?.nameMode === 'seat' ? 'seat' : 'name';
     const say = (text, kind = 'info') => { const el = $('student-msg'); if (el) { el.textContent = text; el.dataset.kind = kind; } };
 
-    const publish = async (cls, { overrideVersion, quiet = false } = {}) => {
+    const publish = async (cls, { overrideVersion, quiet = false, skipPull = false } = {}) => {
         try {
-            const r = await api.publish(classData(cls), { today: app.localDate(), nameMode: nameModeOf(cls), overrideVersion });
+            await link(cls);
+            if (!skipPull) { try { await pull(cls); } catch { /* 收取失敗不擋發布；下次再收 */ } }   // 先收小老師的登記，發布的資料才會包含它們
+            const r = await api.publish(classData(cls), { today: app.localDate(), nameMode: nameModeOf(cls), overrideVersion, inboxSeq: inboxOf()[cls.id] ?? 0 });
             state.published.set(cls.id, { at: r.publishedAt, version: r.version, students: r.projection.students.length });
             state.dirty.delete(cls.id); state.stale = null;
             if (!quiet) app.notify(r.unchanged ? '學生系統的資料已經是最新的' : `已發布到學生系統（${r.projection.students.length} 位學生）`);
@@ -65,6 +103,7 @@ export const initStudentAdminUI = ({ app, base, handoff, fetchFn }) => {
     const accountsSection = async (cls) => {
         const box = h('div', { class: 'stu-accounts' }, h('p', { class: 'muted', text: '讀取帳號中…' }));
         try {
+            await link(cls);
             const { accounts, publishedAt } = await api.listAccounts(cls);
             if (publishedAt && !state.published.has(cls.id)) state.published.set(cls.id, { at: publishedAt, version: null });
             const byStudent = new Map(accounts.map(a => [a.localStudentId, a]));
@@ -89,14 +128,20 @@ export const initStudentAdminUI = ({ app, base, handoff, fetchFn }) => {
                             render();
                         } catch (e) { say(e.message, 'error'); }
                     } }) : null),
+                h('p', { class: 'muted small', text: '小老師可以在學生系統登記全班作業（繳交、未繳交、未訂正、已訂正），但不能登記自己的；看不到分數和愛心。登記每 5 分鐘自動收到這台電腦。' }),
                 h('table', { class: 'stu-table' },
-                    h('thead', {}, h('tr', {}, h('th', { text: '座號' }), h('th', { text: '姓名' }), h('th', { text: '帳號' }), h('th', { text: '狀態' }), h('th', { text: '操作' }))),
+                    h('thead', {}, h('tr', {}, h('th', { text: '座號' }), h('th', { text: '姓名' }), h('th', { text: '帳號' }), h('th', { text: '狀態' }), h('th', { text: '小老師' }), h('th', { text: '操作' }))),
                     h('tbody', {}, students.map(s => {
                         const a = byStudent.get(String(s.id));
                         return h('tr', { dataset: { sid: s.id } },
                             h('td', { text: s.seat ?? '' }), h('td', { class: 'left', text: s.name }),
                             h('td', { class: 'mono', text: a?.username || '—' }),
                             h('td', { text: !a ? '未建立' : a.status === 'disabled' ? '已停用' : a.mustChangePassword ? '等待首次登入' : '使用中' }),
+                            h('td', {}, a ? h('input', { type: 'checkbox', class: 'stu-helper', 'aria-label': `${s.name} 是小老師`, checked: a.helper ? true : null, onchange: async (e) => {
+                                const on = e.target.checked;
+                                try { await api.setHelper(cls, a.accountId, on); app.notify(on ? `${s.name} 設為小老師` : `${s.name} 不再是小老師`); }
+                                catch (err) { e.target.checked = !on; say(err.message, 'error'); }
+                            } }) : null),
                             h('td', {}, a ? [act(a, 'reset', '重設密碼'), a.status === 'disabled' ? act(a, 'enable', '啟用') : act(a, 'disable', '停用')] : null));
                     }))));
         } catch (e) { fill(box, h('p', { class: 'error-text', text: e.message || '讀取帳號失敗' })); }
@@ -149,6 +194,9 @@ export const initStudentAdminUI = ({ app, base, handoff, fetchFn }) => {
                     h('div', { class: 'stu-row' },
                         h('button', { id: 'stu-publish', class: 'btn btn-primary', type: 'button', text: '📤 發布到學生系統', onclick: () => publish(cls) }),
                         h('span', { id: 'stu-published-at', class: 'muted', text: `上次發布：${fmt(p?.at)}` }),
+                        h('button', { id: 'stu-pull', class: 'btn btn-secondary btn-sm', type: 'button', text: '📥 收取小老師登記', onclick: async () => {
+                            try { await link(cls); const n = await pull(cls); if (!n) app.notify('沒有新的小老師登記'); render(); } catch (e) { say(e.message, 'error'); }
+                        } }),
                         state.dirty.has(cls.id) ? h('span', { class: 'warn-text', text: '資料有變更，尚未發布' }) : null),
                     state.stale?.classId === cls.id ? h('div', { class: 'warn-box' },
                         h('p', { text: '學生系統上有另一台裝置發布的較新版本。如果這台的資料才是正確的，可以用這台的資料覆蓋。' }),
@@ -163,5 +211,5 @@ export const initStudentAdminUI = ({ app, base, handoff, fetchFn }) => {
     };
 
     btn?.addEventListener('click', async () => { modal.open(); await render(); });
-    return { markDirty, api, ready, publish };
+    return { markDirty, api, ready, firstPull, publish, pull, pullAll };
 };

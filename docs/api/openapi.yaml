@@ -117,12 +117,24 @@ paths:
     post: { security: [{ teacherBearer: [] }], summary: 停用（立即登出）, responses: { "200": { description: OK }, "404": { description: 不是你的班級或帳號 } } }
   /api/teacher/classes/{classKey}/accounts/{accountId}/enable:
     post: { security: [{ teacherBearer: [] }], summary: 重新啟用, responses: { "200": { description: OK }, "404": { description: 不是你的班級或帳號 } } }
+  /api/teacher/classes/{classKey}/accounts/{accountId}/helper:
+    post:
+      security: [{ teacherBearer: [] }]
+      summary: 指定或取消小老師（立即生效）
+      requestBody: { required: true, content: { application/json: { schema: { type: object, additionalProperties: false, required: [helper], properties: { helper: { type: boolean } } } } } }
+      responses: { "200": { description: "帳號資料（含 helper）" }, "404": { description: 不是你的班級或帳號 } }
+  /api/teacher/classes/{classKey}/homework-registrations:
+    get:
+      security: [{ teacherBearer: [] }]
+      summary: 收取小老師登記（依 seq 游標；每次最多 500 筆；保留 120 天）
+      parameters: [{ name: after, in: query, required: false, schema: { type: string, pattern: "^[0-9]{1,15}$" } }]
+      responses: { "200": { description: "{ registrations: [{seq, id, assignmentId, studentId, state, createdAt, helperStudentId, helperSeat}], next, more }" }, "404": { description: 不是你的班級 } }
   /api/teacher/classes/{classKey}/projection:
     put:
       security: [{ teacherBearer: [] }]
       summary: 發布投影（整班替換，單一交易）
       description: "version 較舊 → 409 stale；同版本同 hash → 200 unchanged；同版本不同 hash → 409；hash 與內容不符 → 400。上限 2 MB。"
-      requestBody: { required: true, content: { application/json: { schema: { type: object, additionalProperties: false, required: [version, hash, projection], properties: { version: { type: integer, minimum: 1 }, hash: { type: string, pattern: "^[0-9a-f]{64}$" }, projection: { $ref: "#/components/schemas/Projection" } } } } } }
+      requestBody: { required: true, content: { application/json: { schema: { type: object, additionalProperties: false, required: [version, hash, projection], properties: { version: { type: integer, minimum: 1 }, hash: { type: string, pattern: "^[0-9a-f]{64}$" }, projection: { $ref: "#/components/schemas/Projection" }, inboxSeq: { type: integer, minimum: 0, description: "這次發布已包含到第幾筆小老師登記（選填）" } } } } } }
       responses: { "200": { description: "{ version, publishedAt, unchanged, students, groups }" }, "400": { description: 格式或雜湊錯誤 }, "404": { description: 不是你的班級 }, "409": { description: 版本衝突 }, "413": { description: 太大 } }
   /api/teacher/classes/{classKey}/care-summary:
     get: { security: [{ teacherBearer: [] }], summary: 各小組照顧彙總（唯讀）, responses: { "200": { description: "{ groups: [{groupId, name, care: CareSummary}] }" }, "404": { description: 不是你的班級 } } }
@@ -144,7 +156,7 @@ paths:
       requestBody: { required: true, content: { application/json: { schema: { type: object, additionalProperties: false, required: [currentPassword, newPassword], properties: { currentPassword: { type: string }, newPassword: { type: string } } } } } }
       responses: { "200": { description: "{ ok, csrf }" }, "400": { description: 目前密碼錯誤或新密碼太弱 } }
   /api/student/me:
-    get: { security: [{ studentCookie: [] }], summary: "目前登入狀態（含 CSRF token）", responses: { "200": { description: "{ username, mustChangePassword, csrf }" }, "401": { description: 未登入或已失效 } } }
+    get: { security: [{ studentCookie: [] }], summary: "目前登入狀態（含 CSRF token）", responses: { "200": { description: "{ username, mustChangePassword, csrf, helper }" }, "401": { description: 未登入或已失效 } } }
   /api/student/dashboard:
     get: { security: [{ studentCookie: [] }], summary: 我的成長, responses: { "200": { description: "{ published, className, publishedAt, me: {name, seat, score}, group: {groupId, name, xp, animals}, homeworkSummary }" }, "403": { description: 需要先改密碼 } } }
   /api/student/homework:
@@ -161,3 +173,20 @@ paths:
         "200": { description: "{ counted, replay, myToday, animal, care }" }
         "404": { description: 動物不在你目前的小組（他組、他班、已撤銷） }
         "409": { description: 沒有小組，或同一 key 用在不同動作 }
+  /api/student/helper:
+    get:
+      security: [{ studentCookie: [] }]
+      summary: 小老師：本班名單與作業狀態（不含分數、愛心、小組）
+      responses: { "200": { description: "{ published, publishedAt, className, selfId, students: [{studentId, seat, name}], assignments: [{assignmentId, title, type, assignedDate, dueDate}], states: {assignmentId: {studentId: submitted|missing|needs|done|unchecked|exempt}} }" }, "403": { description: 不是小老師 } }
+  /api/student/helper/register:
+    post:
+      security: [{ studentCookie: [], csrf: [] }]
+      summary: 小老師登記同學作業（不能登記自己）
+      requestBody: { required: true, content: { application/json: { schema: { type: object, additionalProperties: false, required: [assignmentId, studentIds, state, idempotencyKey], properties: { assignmentId: { type: string }, studentIds: { type: array, minItems: 1, maxItems: 80, uniqueItems: true, items: { type: string } }, state: { enum: [submitted, missing, needs, done] }, idempotencyKey: { type: string, pattern: "^[A-Za-z0-9_-]{8,64}$" } } } } } }
+      responses:
+        "200": { description: "{ saved, replay, states }" }
+        "400": { description: 狀態不正確或同學不在本班名單 }
+        "403": { description: 不是小老師、登記自己、CSRF 或 Origin 不符 }
+        "404": { description: 本班沒有這份作業 }
+        "409": { description: 同一 key 用在不同的登記 }
+        "429": { description: 今天登記太多次（每位小老師每天 3000 筆） }

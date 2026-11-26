@@ -8,6 +8,7 @@ import { verifyGoogleIdToken, IdTokenError } from '../../src/auth/id-token.js';
 import { validateProjection, projectionHash } from '../../src/core/student-projection.js';
 import { summarizeCare, nextSlot, isCareAction, DAILY_CARE_LIMIT, CARE_BADGES } from '../../src/core/care.js';
 import { localDate } from '../../src/core/dates.js';
+import { simpleOf, isSimpleState } from '../../src/core/homework.js';
 import { generateUsername, generateInitialPassword, hashPassword, verifyPassword, dummyVerify, passwordProblem, newToken, sha256 } from './passwords.mjs';
 
 export const LIMITS = Object.freeze({
@@ -17,6 +18,7 @@ export const LIMITS = Object.freeze({
     ipWindowMs: 15 * 60_000, ipFailLimit: 200, teacherIpFailLimit: 20,
     classesPerTeacher: 30, accountsPerClass: 80, uncountedCarePerDay: 30,
     projectionBody: 2 * 1024 * 1024, defaultBody: 16 * 1024,
+    helperRowsPerDay: 3000, inboxPage: 500, inboxKeepDays: 120,
 });
 const STALE_SEEN_MS = 60_000;      // last_seen 最多每分鐘更新一次
 
@@ -230,7 +232,7 @@ export const buildApp = ({ db, config, jwks, now = () => Date.now() }) => {
         return json(reply, 200, { classKey: c.id });
     });
 
-    const accountView = (a) => ({ accountId: a.id, localStudentId: a.local_student_id, username: a.username, status: a.status, mustChangePassword: !!a.must_change, lastLoginAt: a.last_login_at, createdAt: a.created_at });
+    const accountView = (a) => ({ accountId: a.id, localStudentId: a.local_student_id, username: a.username, status: a.status, mustChangePassword: !!a.must_change, helper: !!a.is_helper, lastLoginAt: a.last_login_at, createdAt: a.created_at });
 
     app.get('/api/teacher/classes/:classKey/accounts', { preHandler: requireTeacher, schema: { querystring: NO_QUERY } }, async (req, reply) => {
         const c = ownClass(req, reply); if (!c) return;
@@ -288,12 +290,43 @@ export const buildApp = ({ db, config, jwks, now = () => Date.now() }) => {
         });
     }
 
+    // 小老師：只有老師能指定；取消後學生的工作階段不用重登，下一次請求就沒有權限
+    app.post('/api/teacher/classes/:classKey/accounts/:accountId/helper', {
+        preHandler: requireTeacher,
+        schema: { body: { type: 'object', additionalProperties: false, required: ['helper'], properties: { helper: { type: 'boolean' } } } },
+    }, async (req, reply) => {
+        const a = teacherAccount(req, reply); if (!a) return;
+        const v = req.body.helper ? 1 : 0;
+        db.prepare('UPDATE student_accounts SET is_helper = ?, updated_at = ? WHERE id = ?').run(v, now(), a.id);
+        audit(req, 'teacher', req.teacherId, v ? 'account.helper.on' : 'account.helper.off', a.id);
+        return json(reply, 200, accountView({ ...a, is_helper: v }));
+    });
+
+    // 小老師登記收件匣：教師端依游標（seq）收取；回傳的學生 ID 都是教師端本機 ID
+    app.get('/api/teacher/classes/:classKey/homework-registrations', {
+        preHandler: requireTeacher,
+        schema: { querystring: { type: 'object', additionalProperties: false, properties: { after: { type: 'string', pattern: '^[0-9]{1,15}$' } } } },
+    }, async (req, reply) => {
+        const c = ownClass(req, reply); if (!c) return;
+        const after = Number(req.query.after || 0);
+        db.prepare('DELETE FROM hw_registrations WHERE class_id = ? AND created_at < ?').run(c.id, now() - LIMITS.inboxKeepDays * 86400_000);
+        const rows = db.prepare('SELECT * FROM hw_registrations WHERE class_id = ? AND seq > ? ORDER BY seq LIMIT ?').all(c.id, after, LIMITS.inboxPage);
+        const seats = new Map(db.prepare('SELECT local_student_id, data FROM student_projections WHERE class_id = ?').all(c.id).map(r => [r.local_student_id, JSON.parse(r.data).seat]));
+        const last = db.prepare('SELECT MAX(seq) AS m FROM hw_registrations WHERE class_id = ?').get(c.id).m || 0;
+        return json(reply, 200, {
+            registrations: rows.map(r => ({ seq: r.seq, id: r.id, assignmentId: r.assignment_id, studentId: r.local_student_id, state: r.state, createdAt: r.created_at, helperStudentId: r.helper_local_id, helperSeat: seats.get(r.helper_local_id) ?? null })),
+            next: rows.length ? rows[rows.length - 1].seq : after,
+            more: rows.length ? rows[rows.length - 1].seq < last : false,
+        });
+    });
+
     app.put('/api/teacher/classes/:classKey/projection', {
         preHandler: requireTeacher, bodyLimit: LIMITS.projectionBody,
-        schema: { body: { type: 'object', additionalProperties: false, required: ['version', 'hash', 'projection'], properties: { version: { type: 'integer', minimum: 1 }, hash: { type: 'string', pattern: '^[0-9a-f]{64}$' }, projection: { type: 'object' } } } },
+        schema: { body: { type: 'object', additionalProperties: false, required: ['version', 'hash', 'projection'], properties: { version: { type: 'integer', minimum: 1 }, hash: { type: 'string', pattern: '^[0-9a-f]{64}$' }, projection: { type: 'object' }, inboxSeq: { type: 'integer', minimum: 0 } } } },
     }, async (req, reply) => {
         if (!ownClass(req, reply)) return;
         const { version, hash, projection } = req.body;
+        const inboxSeq = req.body.inboxSeq ?? 0;
         const errors = validateProjection(projection);
         if (errors.length) return json(reply, 400, { error: 'invalid_projection', message: '發布的資料格式不正確', details: errors.slice(0, 20) });
         if (await projectionHash(projection) !== hash) return fail(reply, 400, 'hash_mismatch', '資料雜湊不符');
@@ -313,8 +346,8 @@ export const buildApp = ({ db, config, jwks, now = () => Date.now() }) => {
             for (const s of projection.students) upS.run(c.id, s.studentId, s.groupId, JSON.stringify(s), version);
             const upG = db.prepare('INSERT OR REPLACE INTO group_projections (class_id, group_id, data, version) VALUES (?,?,?,?)');
             for (const g of projection.groups) upG.run(c.id, g.groupId, JSON.stringify(g), version);
-            db.prepare('UPDATE classes SET projection_version = ?, projection_hash = ?, published_at = ?, name = ?, name_mode = ? WHERE id = ?')
-                .run(version, hash, t, projection.className, projection.nameMode, c.id);
+            db.prepare('UPDATE classes SET projection_version = ?, projection_hash = ?, published_at = ?, name = ?, name_mode = ?, inbox_seq = MAX(inbox_seq, ?) WHERE id = ?')
+                .run(version, hash, t, projection.className, projection.nameMode, inboxSeq, c.id);
             return { code: 200, body: { version, publishedAt: t, unchanged: false, students: projection.students.length, groups: projection.groups.length } };
         }).immediate();
         if (outcome.code === 200 && !outcome.body.unchanged) audit(req, 'teacher', req.teacherId, 'projection.publish', req.params.classKey, { version, students: projection.students.length });
@@ -392,7 +425,7 @@ export const buildApp = ({ db, config, jwks, now = () => Date.now() }) => {
 
     app.get('/api/student/me', { preHandler: studentGuard({ allowPwChange: true }), schema: { querystring: NO_QUERY } }, async (req, reply) => {
         const { account: a, session: s } = req.student;
-        return json(reply, 200, { username: a.username, mustChangePassword: s.scope !== 'full', csrf: s.csrf });
+        return json(reply, 200, { username: a.username, mustChangePassword: s.scope !== 'full', csrf: s.csrf, helper: !!a.is_helper });
     });
 
     const classInfo = (a) => db.prepare('SELECT name, published_at, projection_version FROM classes WHERE id = ?').get(a.class_id);
@@ -476,6 +509,74 @@ export const buildApp = ({ db, config, jwks, now = () => Date.now() }) => {
         if (result.code !== 200) return fail(reply, result.code, result.error, result.message);
         const view = zooView(a);
         return json(reply, 200, { counted: result.counted, replay: result.replay, myToday: view.myToday, animal: view.care?.animals?.[itemId] || null, care: view.care });
+    });
+
+    // ============================================================ 小老師（登記全班作業）
+    // 權限一律從工作階段推導：帳號必須是這個班級老師指定的小老師；只能登記自己班級、已發布名單上的同學，不能登記自己。
+    // 看得到：同學座號（只顯示座號模式下沒有姓名）與作業狀態。看不到：分數、愛心、其他班級。
+    const helperGuard = (req, reply) => {
+        const a = req.student.account;
+        // 不在目前名單上的學生（轉出、被老師從發布中移除）即使帳號還開著，也不能當小老師
+        if (!a.is_helper || !myProjection(a)) { fail(reply, 403, 'not_helper', '你不是小老師'); return false; }
+        return true;
+    };
+    const helperView = (a) => {
+        const c = db.prepare('SELECT name, published_at, inbox_seq FROM classes WHERE id = ?').get(a.class_id);
+        const rows = db.prepare('SELECT data FROM student_projections WHERE class_id = ?').all(a.class_id).map(r => JSON.parse(r.data))
+            .sort((x, y) => (x.seat ?? 999) - (y.seat ?? 999) || String(x.studentId).localeCompare(String(y.studentId)));
+        const assignments = new Map();
+        for (const s of rows) for (const hw of s.homework) if (!assignments.has(hw.assignmentId)) assignments.set(hw.assignmentId, { assignmentId: hw.assignmentId, title: hw.title, type: hw.type, assignedDate: hw.assignedDate, dueDate: hw.dueDate });
+        const states = {};
+        for (const s of rows) for (const hw of s.homework) (states[hw.assignmentId] ||= {})[s.studentId] = simpleOf(hw.submission, hw.correction);
+        // 教師端還沒收取／還沒重新發布的登記：蓋在投影上面，小老師馬上看得到自己剛剛的登記
+        const pending = db.prepare('SELECT assignment_id, local_student_id, state FROM hw_registrations WHERE class_id = ? AND seq > ? ORDER BY seq').all(a.class_id, c.inbox_seq || 0);
+        for (const r of pending) if (states[r.assignment_id] && r.local_student_id in states[r.assignment_id]) states[r.assignment_id][r.local_student_id] = r.state;
+        return {
+            published: rows.length > 0, publishedAt: c.published_at, className: c.name, selfId: a.local_student_id,
+            students: rows.map(s => ({ studentId: s.studentId, seat: s.seat, name: s.name })),
+            assignments: [...assignments.values()].sort((x, y) => (y.assignedDate || '').localeCompare(x.assignedDate || '')),
+            states,
+        };
+    };
+    app.get('/api/student/helper', { preHandler: studentGuard(), schema: { querystring: NO_QUERY } }, async (req, reply) => {
+        if (!helperGuard(req, reply)) return;
+        return json(reply, 200, helperView(req.student.account));
+    });
+    app.post('/api/student/helper/register', {
+        preHandler: studentGuard({ write: true }),
+        schema: { body: { type: 'object', additionalProperties: false, required: ['assignmentId', 'studentIds', 'state', 'idempotencyKey'], properties: {
+            assignmentId: { type: 'string', minLength: 1, maxLength: 64 },
+            studentIds: { type: 'array', minItems: 1, maxItems: 80, uniqueItems: true, items: { type: 'string', minLength: 1, maxLength: 64 } },
+            state: { type: 'string', maxLength: 16 }, idempotencyKey: KEY } } },
+    }, async (req, reply) => {
+        if (!helperGuard(req, reply)) return;
+        const { account: a } = req.student;
+        const { assignmentId, studentIds, state, idempotencyKey } = req.body;
+        if (!isSimpleState(state)) return fail(reply, 400, 'bad_request', '不明的狀態');
+        if (studentIds.includes(a.local_student_id)) return fail(reply, 403, 'self', '自己的作業請交給老師登記');
+        const today = localDate(now());
+        const result = db.transaction(() => {
+            const prev = db.prepare('SELECT assignment_id, state, local_student_id FROM hw_registrations WHERE helper_account_id = ? AND idempotency_key = ?').all(a.id, idempotencyKey);
+            if (prev.length) {
+                const same = prev.every(p => p.assignment_id === assignmentId && p.state === state) && prev.length === studentIds.length && studentIds.every(id => prev.some(p => p.local_student_id === id));
+                return same ? { code: 200, saved: prev.length, replay: true } : { code: 409, error: 'idempotency_conflict', message: '同一個操作代碼用在不同的登記' };
+            }
+            const roster = new Map(db.prepare('SELECT local_student_id, data FROM student_projections WHERE class_id = ?').all(a.class_id).map(r => [r.local_student_id, JSON.parse(r.data)]));
+            if (!studentIds.every(id => roster.has(id))) return { code: 400, error: 'bad_student', message: '名單上沒有這位同學' };
+            if (![...roster.values()].some(s => s.homework.some(hw => hw.assignmentId === assignmentId))) return { code: 404, error: 'not_found', message: '找不到這份作業' };
+            const exempt = studentIds.filter(id => roster.get(id).homework.some(hw => hw.assignmentId === assignmentId && hw.submission === 'exempt'));
+            if (exempt.length) return { code: 409, error: 'exempt', message: '老師設為免交的同學不能登記' };
+            const used = db.prepare('SELECT COUNT(*) AS n FROM hw_registrations WHERE helper_account_id = ? AND local_date = ?').get(a.id, today).n;
+            if (used + studentIds.length > LIMITS.helperRowsPerDay) return { code: 429, error: 'rate_limited', message: '今天登記的次數太多了，請找老師' };
+            const ins = db.prepare('INSERT INTO hw_registrations (id, class_id, helper_account_id, helper_local_id, assignment_id, local_student_id, state, local_date, idempotency_key, created_at) VALUES (?,?,?,?,?,?,?,?,?,?)');
+            const t = now();
+            for (const sid of studentIds) ins.run(`hr_${newToken().slice(0, 20)}`, a.class_id, a.id, a.local_student_id, assignmentId, sid, state, today, idempotencyKey, t);
+            return { code: 200, saved: studentIds.length, replay: false };
+        }).immediate();
+        if (result.code !== 200) return fail(reply, result.code, result.error, result.message);
+        if (!result.replay) audit(req, 'student', a.id, 'helper.register', a.class_id, { count: result.saved, state });
+        const view = helperView(a);
+        return json(reply, 200, { saved: result.saved, replay: result.replay, states: view.states[assignmentId] || {} });
     });
 
     // ============================================================ 學生頁面（同源靜態檔，只開放白名單）

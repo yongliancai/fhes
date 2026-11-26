@@ -134,9 +134,9 @@ test('student zoo: care is decided by the server (3 per day), names with HTML st
     assert.deepEqual(await S.page.$$eval('.stu-stat-num', n => n.map(x => x.textContent)), ['3', '5']);
     await S.page.click('.stu-tab[data-tab="homework"]');
     await S.page.waitForSelector('.stu-hw');
-    assert.ok(await S.page.isVisible('text=繳交：已交'));
-    assert.ok(await S.page.isVisible('text=訂正：待訂正'), 'submitted and correction shown separately');
-    await S.page.click('.stu-chip:text("待訂正")');
+    assert.ok(await S.page.isVisible('.stu-badge[data-state="submitted"]:text("繳交")'));
+    assert.ok(await S.page.isVisible('.stu-badge[data-state="needs"]:text("未訂正")'), 'v6.2 four simple states');
+    await S.page.click('.stu-chip:text("未訂正")');
     assert.equal(await S.page.locator('.stu-hw').count(), 1);
     await S.page.click('.stu-tab[data-tab="zoo"]');
     await S.page.waitForSelector('.stu-scene svg .scene-actor');
@@ -163,6 +163,85 @@ test('student zoo: care is decided by the server (3 per day), names with HTML st
     // 伺服器確實只記了 3 次
     assert.equal(A.db.prepare('SELECT COUNT(*) n FROM group_care_events WHERE slot IS NOT NULL').get().n, 3);
     await S.context.close();
+});
+
+test('小老師: teacher marks a helper, the helper registers a classmate on a phone, the teacher app receives it as homework events', async () => {
+    const { url } = await setup();
+    const A = await startApi(url.replace(/\/$/, ''));
+    const t = await openApp({ studentApi: A.url });
+    const { page } = t;
+    await createClass(page, '合成小老師班', 3);
+    await page.click('.nav-tab[data-tab="homework"]');
+    await page.click('#hw-view-toggle');
+    await page.click('#hw-add');
+    await page.selectOption('#hw-f-type', { label: '國習' });
+    await page.fill('#hw-f-title', 'L7 小老師測試');
+    await page.click('#hw-f-ok');
+    await page.waitForSelector('.hw-card:has(.hw-title:text-is("L7 小老師測試"))');
+    // 發帳號、指定 2 號為小老師、發布
+    await page.click('.nav-tab[data-tab="students"]');
+    await page.click('#student-system-btn');
+    await page.waitForSelector('#student-status[data-status="ok"]', { timeout: 10000 });
+    await page.click('#stu-create-all');
+    await page.waitForSelector('.stu-new');
+    const slips = await page.$$eval('.stu-new tbody tr', rows => rows.map(r => [...r.children].map(td => td.textContent)));
+    const [, , helperUser, helperPass] = slips[1];
+    await page.locator('.stu-accounts tbody tr').nth(1).locator('input.stu-helper').check();
+    await page.waitForFunction(() => /設為小老師/.test(document.body.textContent));
+    await page.click('#stu-publish');
+    await page.waitForFunction(() => /上次發布：\d/.test(document.querySelector('#stu-published-at')?.textContent || ''));
+    await page.click('#student-modal .modal-actions .btn');
+
+    const S = await openStudent(A);
+    await studentLogin(S.page, helperUser, helperPass);
+    await changePassword(S.page, helperPass, 'Helper-Tree-58');
+    await S.page.click('.stu-tab[data-tab="helper"]');
+    await S.page.waitForSelector('.stu-reg-list .stu-reg');
+    assert.equal(await S.page.locator('.stu-reg').count(), 3);
+    assert.equal(await S.page.locator('.stu-reg').nth(1).locator('button').count(), 0, 'no buttons on the helper\'s own row');
+    assert.ok(await S.page.isVisible('text=自己的作業請交給老師登記'));
+    await S.page.locator('.stu-reg').nth(0).locator('button[data-state="missing"]').click();
+    await S.page.waitForSelector('.stu-reg >> nth=0 >> .stu-badge:text("未繳交")');
+    await S.page.locator('.stu-reg').nth(2).locator('button[data-state="needs"]').click();
+    await S.page.waitForSelector('.stu-reg >> nth=2 >> .stu-badge:text("未訂正")');
+    assert.deepEqual(await overflow(S.page), []);
+    await shot(S.page, 'v62-helper-register-mobile');
+    const text = await S.page.textContent('#stu-body');
+    assert.ok(!/分數|愛心|XP/.test(text), 'the helper screen shows no scores or hearts');
+    assert.equal(A.db.prepare('SELECT COUNT(*) n FROM hw_registrations').get().n, 2);
+
+    // 教師端收取 → 變成老師的作業紀錄（記錄是小老師登記的）
+    await page.click('.nav-tab[data-tab="students"]');
+    await page.click('#student-system-btn');
+    await page.waitForSelector('#stu-pull');
+    await page.click('#stu-pull');
+    await page.waitForFunction(() => /收到小老師登記 2 筆/.test(document.body.textContent));
+    await page.click('#student-modal .modal-actions .btn');
+    await page.click('.nav-tab[data-tab="homework"]');
+    await page.click('#hw-view-toggle');
+    await page.waitForSelector('.hw-matrix');
+    const cells = await page.$$eval('.hw-matrix tbody .hw-cell', b => b.map(x => x.textContent));
+    assert.match(cells[0], /未繳交/); assert.match(cells[1], /未登記/); assert.match(cells[2], /未訂正/);
+    await page.locator('.hw-matrix tbody .hw-cell').first().click();
+    await page.click('#hw-cell-modal .hw-hist summary');
+    assert.match(await page.textContent('#hw-cell-modal .hw-hist'), /小老師 2號登記/);
+    await page.click('#hw-cell-modal .modal-actions .btn');
+    // 再收一次不會重複
+    await page.click('.nav-tab[data-tab="students"]');
+    await page.click('#student-system-btn');
+    await page.click('#stu-pull');
+    await page.waitForFunction(() => /沒有新的小老師登記/.test(document.body.textContent));
+    await page.click('#student-modal .modal-actions .btn');
+    // 老師取消小老師 → 學生下一次操作就沒有權限，分頁消失
+    await page.click('#student-system-btn');
+    await page.locator('.stu-accounts tbody tr').nth(1).locator('input.stu-helper').uncheck();
+    await page.waitForFunction(() => /不再是小老師/.test(document.body.textContent));
+    await S.page.locator('.stu-reg').nth(0).locator('button[data-state="submitted"]').click();
+    await S.page.waitForSelector('text=老師已經取消你的小老師身分');
+    assert.equal(await S.page.locator('.stu-tab[data-tab="helper"]').count(), 0);
+    assert.deepEqual(S.errors.filter(e => !/status of (401|403)/.test(e)), []);
+    assert.deepEqual(t.errors, []);
+    await S.context.close(); await t.close();
 });
 
 test('student page accessibility (axe) on desktop and login screen', async () => {

@@ -15,6 +15,15 @@
 | 真實 Google 帳號換學生系統工作階段 | — | **BLOCKED**：需要部署好的 API 與使用者批准（`docs/STUDENT-DEPLOY-TODO.md` A11） |
 | 正式 VPS 上的 Session 隔離 | — | **BLOCKED**：未批准連線 VPS |
 
+### 2026-11-26 追加：4 個作業按鈕、逾期自動愛心、小老師登記（ADR-021～023）
+
+| 項目 | 結果 |
+|---|---|
+| `npm run verify` | **PASS**：196/196（新增 `tests/hw-rules.test.mjs` 15 項、`tests/server-helper.test.mjs` 7 項） |
+| 瀏覽器 E2E（Edge） | **PASS**：45/45（新增：小老師手機登記 → 教師端收取；匯入逾期作業自動加愛心且不重複；4 個按鈕） |
+| 獨立只讀審查 | 找到 7 項（1 高、3 中、3 低），**全部修正**（BUG-027～030），各有回歸測試；確認沒有越權漏洞，v1→v2 資料庫升級在真實檔案上驗證過 |
+| Chrome、Firefox、WebKit | 這次沒有重跑（NOT_VERIFIED） |
+
 ## 2. 指令要求的驗收項目
 
 | 要求 | 證據 | 狀態 |

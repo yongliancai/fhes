@@ -125,3 +125,18 @@ The app requests only `https://www.googleapis.com/auth/drive.file` (files the ap
 - A newer version replaces the whole class in one transaction: students or groups missing from it lose their projection (no ghost data).
 - The teacher can choose to publish seat numbers instead of names.
 - The student page shows the publish time and warns when it is older than 3 days.
+
+## ADR-021 — 小老師 (student helpers) register homework through the student system (2026-11-26)
+- Decided by the user (multiple-choice discussion): helpers use the student system, may register **all** homework of their class, and the teacher app receives registrations **automatically** (every 5 minutes, before each publish, or on demand).
+- The teacher marks helpers per account (`student_accounts.is_helper`, schema v2). Permission is checked on every request from the session; removing the flag takes effect on the next request.
+- Helpers see classmates' seat/name (seat only in seat mode) and the 4 simple states for published homework; never scores, hearts, groups or other classes. They cannot register themselves (403) or classmates not in the published roster (400). Only the 4 simple states are allowed (免交 stays teacher-only). 3000 rows per helper per day.
+- Registrations are stored server-side (`hw_registrations`, kept 120 days) and pulled by cursor. The teacher app turns each into ordinary homework events with fixed ids `hwr|<id>|n`, timestamped at registration time; a cell the teacher changed after the registration is left alone. The teacher's data stays the source of truth; the server never edits it.
+
+## ADR-022 — Automatic hearts for overdue homework (2026-11-26)
+- Decided by the user: 未繳交 and 未訂正 count from the moment they are registered; only school days count (weekends and teacher-listed holidays excluded, Asia/Taipei); one heart per 24 school-hours (configurable 1–168), repeating every day; hearts stay after the work is handed in (the teacher can remove them as usual).
+- Pure rule in `src/core/hw-hearts.js`; the teacher app runs it on start-up, after import or sync, after pulling helper registrations, and every minute. Heart ids are fixed (`hwheart|<event that started the wait>|n`) so several devices or repeated runs never double-count, and a heart the teacher removed or undid is never re-created.
+- Only time after `hwAutoHeart.since` counts: upgrading or switching the rule back on never back-fills old homework. Archived homework stops accruing.
+- Hearts are created with the creation time as their date (not back-dated), so already-settled daily snapshots never change. They are marked `source: 'hw-auto'`, shown as recorded by 「自動（作業逾期）」, and excluded from 「復原上一步」.
+
+## ADR-023 — Four homework buttons (2026-11-26)
+- 繳交／未繳交／未訂正／已訂正 are combinations of the existing two dimensions (submission × correction); the data format and v6.1/v5.1 compatibility are unchanged. One press writes at most two events (correction 1 ms after submission). 免交, 清除登記 and 不需訂正 remain for the teacher under 「更多」.

@@ -740,7 +740,8 @@
         import { SESSIONS, DEFAULT_SESSION_TIMES, ensureClassDefaults, newClassObj as coreNewClassObj, sessionAt } from './src/core/classes.js';
         import { convertV4 as coreConvertV4, parseBackup as coreParseBackup, buildBackup as coreBuildBackup, BACKUP_TABLES, buildLegacyV51Backup } from './src/core/backup.js';
         import { registerClassDefaults } from './src/core/classes.js';
-        import { fillHomeworkDefaults } from './src/core/homework.js';
+        import { fillHomeworkDefaults, typeName as hwTypeName, simpleLabel } from './src/core/homework.js';
+        import { dueHomeworkHearts, withdrawnHomeworkHearts } from './src/core/hw-hearts.js';
         import { fillCollectionDefaults } from './src/core/collection.js';
         import { xpLedger, xpOf, groupKey, XP_VERSION } from './src/core/xp.js';
         import { initCollectionUI } from './src/ui/collection-ui.js';
@@ -1328,7 +1329,7 @@
             for (let i = S.events.length - 1; i >= 0; i--) {
                 const e = S.events[i];
                 if (e.classId !== c.id || e.date !== today) continue;
-                if ((e.recordedBy || 'teacher') !== 'teacher') continue;
+                if ((e.recordedBy || 'teacher') !== 'teacher' || String(e.source || '').startsWith('hw-auto')) continue;   // 自動愛心（與撤回）不算老師的上一步
                 if (e.undone || e.revoked || e.undoOf || e.batchId === 'migrate-v4' || !isCounted(e)) continue;
                 return e.batchId ? S.events.filter(x => x.batchId === e.batchId && !x.undone && !x.undoOf) : [e];
             }
@@ -1401,7 +1402,7 @@
         const SESSION_ICON = { '早自修': '🌅', '午休': '🌙', '其他': '🕐' };
         const seatName = (s) => s ? `${s.seat ?? ''}號 ${s.name}` : '（已移除）';
         /** 記錄人：只在老師畫面顯示 */
-        const recorderName = (e) => { const r = e.recordedBy || 'teacher'; return r === 'teacher' ? '老師' : seatName(studentById(r)); };
+        const recorderName = (e) => { if (String(e.source || '').startsWith('hw-auto')) return '自動（作業逾期）'; const r = e.recordedBy || 'teacher'; return r === 'teacher' ? '老師' : seatName(studentById(r)); };
         let rec = null;           // { classId, session, recorderId, startedAt, lastId, count }
         let recPickSid = null;
         const recordInertTargets = () => [...document.body.children].filter(el => el.id !== 'record-overlay' && el.tagName !== 'SCRIPT');
@@ -2097,6 +2098,7 @@
             recomputeTotals();
             afterDataChange();
             await autoSettle();
+            await runAutoHearts();                 // 匯入的資料裡若有逾期的作業，依規則補上（id 固定，不會重複）
             currentClassId = null; renderDashboard(); switchScreen('dashboard');
             notify('導入完成！');
         });
@@ -2117,18 +2119,65 @@
         const animateParticles = () => { ctx.clearRect(0, 0, canvas.width, canvas.height); particles.forEach(p => { p.update(); p.draw(); }); requestAnimationFrame(animateParticles); };
         window.addEventListener('resize', () => { resizeCanvas(); initParticles(); });
 
+        // ---------- v6.2 作業逾期自動愛心（規則在 src/core/hw-hearts.js；id 固定，重複執行不會重複加） ----------
+        let heartsRunning = false;
+        // BUG-027：有學生系統時，先收完小老師的登記再判斷（避免老師剛開電腦就對其實已經登記繳交的同學加愛心）
+        let heartsGate = Promise.resolve();
+        const runAutoHearts = async () => {
+            if (heartsRunning || !idb) return 0;
+            heartsRunning = true;
+            try {
+                await heartsGate;
+                const now = Date.now(); const list = [];
+                // 先撤回「依現在的資料不該存在」的自動愛心（例如較晚才收到、但時間較早的登記）
+                const wrong = aliveClasses().flatMap(c => withdrawnHomeworkHearts({ cls: c, hwEvents: S.hwEvents, autoHearts: S.events.filter(e => e.classId === c.id && e.source === 'hw-auto' && !e.undoOf), now }));
+                if (wrong.length) {
+                    const reverses = wrong.map(e => ({ ...reverseOf(e, `自動撤回：${e.reason}（之後收到較早的登記）`), source: 'hw-auto-withdraw' }));
+                    wrong.forEach(e => { e.undone = true; e.updatedAt = now; });
+                    await addEvents(reverses, wrong);
+                    notify(`有 ${wrong.length} 顆自動愛心已撤回（收到較早的作業登記）`, 4000);
+                }
+                for (const c of aliveClasses()) {
+                    const due = dueHomeworkHearts({ cls: c, hwEvents: S.hwEvents, assignments: S.hwAssignments, studentIds: studentsOf(c.id).map(st => st.id), existingIds: eventById, now });
+                    for (const d of due) {
+                        const a = S.hwAssignments.find(x => x.id === d.assignmentId);
+                        const what = `${hwTypeName(c, a?.typeId)}${a?.title ? ` ${a.title}` : ''}`;
+                        list.push({ ...makeEvent({ classId: c.id, targetId: d.studentId, kind: 'heart', delta: 1, reason: `作業逾期：${what}（${simpleLabel(d.state)}${d.n > 1 ? `，第 ${d.n} 顆` : ''}）` }), id: d.id, source: 'hw-auto', accruedAt: d.accruedAt });
+                    }
+                }
+                if (!list.length) return 0;
+                await addEvents(list);
+                if (currentClassId && list.some(e => e.classId === currentClassId)) { if (currentTab === 'students') list.forEach(e => refreshStudentCard(e.targetId)); else renderCurrentTab(); }
+                notify(`作業逾期：自動加了 ${list.length} 顆愛心`, 4000);
+                return list.length;
+            } finally { heartsRunning = false; }
+        };
+
         // ---------- 新模組（作業、圖鑑、同步）共用的應用程式介面 ----------
         const app = {
             S, getCurrentClass, studentsOf, studentById, seatName, dbWrite, notify, uid, localDate, localTime, mdLabel, addDays, stampForFile,
             deviceId: () => S.meta.deviceId || 'dev-unknown', saveClass, afterDataChange, downloadCSV,
             playSound: (n) => Sound.play(n), confetti: (emojis, n) => spawnConfetti(emojis, n), reducedMotion,
+            setMeta,
+            /** 小老師登記收取後寫入（事件 id 固定；已經有的略過） */
+            addHomeworkEvents: async (events) => {
+                const have = new Set(S.hwEvents.map(e => e.id));
+                const fresh = events.filter(e => !have.has(e.id));
+                if (!fresh.length) return 0;
+                S.hwEvents.push(...fresh);
+                await dbWrite({ hwEvents: fresh });
+                afterDataChange();
+                if (currentClassId && currentTab === 'homework') renderCurrentTab();
+                await runAutoHearts();
+                return fresh.length;
+            },
         };
         const HW = initHomeworkUI(app);
         const COL = initCollectionUI(app);
         SYNC = initSyncUI({
             S, S_KEY, dbWrite, dbGetAll, setMeta, notify, $, localDateTime, appVersion: APP_VERSION, deviceId: app.deviceId,
             onRemoteChange: async () => {
-                await upgradeData(); recomputeTotals(); renderDashboard();
+                await upgradeData(); recomputeTotals(); renderDashboard(); await runAutoHearts();
                 if (currentClassId && classById(currentClassId) && !classById(currentClassId).deleted) { renderCurrentTab(); refreshPendingBtn(); }
             },
         });
@@ -2161,6 +2210,8 @@
             recomputeTotals();
             await autoSettle();
             renderDashboard(); switchScreen('dashboard');
+            await runAutoHearts();
+            setInterval(() => { runAutoHearts().catch(err => console.error(err)); }, 60_000);   // 每分鐘檢查一次逾期作業
             // 3) 帳號選單、跨分頁登出、工作階段到期
             const accountTag = DB_NAME;
             initAccountUI({ $, identity, signIn, hooks: {
@@ -2183,6 +2234,7 @@
             await LEGACY.detect();
             // v6.2：學生系統（選用）。登入時的 ID token 只在這裡交給後端驗證一次，換成記憶體內的教師工作階段後就丟掉
             STUDENT = initStudentAdminUI({ app, base: STUDENT_API_BASE, handoff: signedIn.handoff });
+            heartsGate = STUDENT.firstPull || Promise.resolve();
             delete signedIn.handoff;   // 不在這個範圍保留登入憑證的參考
             // 重新整理時若仍在秩序記錄模式，登入後直接回到記錄畫面（不會露出老師畫面）
             const rm = S.meta.recordMode;

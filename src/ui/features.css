@@ -57,6 +57,12 @@
 .hw-cell.sub-submitted { border-color: rgba(57,255,136,0.55); }
 .hw-cell.sub-missing { border-color: rgba(255,111,174,0.6); }
 .hw-cell.sub-exempt { opacity: 0.7; }
+.hw-cell.st-needs { border-color: rgba(255,210,63,0.7); }
+.hw-cell.st-done { border-color: rgba(57,255,136,0.85); background: rgba(57,255,136,0.08); }
+.hw-cell { font-size: 1em; }
+.hw-simple-grid .reason-btn { font-size: 1.1em; min-height: 56px; }
+.hw-more { margin-top: 10px; }
+.hw-more summary { cursor: pointer; color: var(--text-secondary); }
 .hw-cell .late { color: var(--gold); }
 .hw-cell.conflict { border: 2px solid var(--gold); }
 .hw-follow { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; margin-top: 20px; }

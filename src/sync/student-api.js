@@ -55,17 +55,29 @@ export const createStudentApi = ({ base, fetchFn = (...a) => fetch(...a), now = 
             return call('POST', `/api/teacher/classes/${encodeURIComponent(await api.classKey(cls))}/accounts/${encodeURIComponent(accountId)}/${action}`, {});
         },
         async careSummary(cls) { return call('GET', `/api/teacher/classes/${encodeURIComponent(await api.classKey(cls))}/care-summary`); },
+        async setHelper(cls, accountId, helper) { return call('POST', `/api/teacher/classes/${encodeURIComponent(await api.classKey(cls))}/accounts/${encodeURIComponent(accountId)}/helper`, { helper: !!helper }); },
+        /** 收取小老師登記（after 之後的全部；分頁自動接續）。回傳 { registrations, next } */
+        async pullRegistrations(cls, after = 0) {
+            const key = encodeURIComponent(await api.classKey(cls));
+            const all = []; let cur = Math.max(0, Math.floor(Number(after) || 0));
+            for (let i = 0; i < 40; i++) {
+                const r = await call('GET', `/api/teacher/classes/${key}/homework-registrations?after=${cur}`);
+                all.push(...r.registrations); cur = r.next;
+                if (!r.more) break;
+            }
+            return { registrations: all, next: cur };
+        },
         /**
          * 發布一個班級。版本＝現在時間（且大於這台上次發布的版本）；overrideVersion 用於「以這台的資料覆蓋」較新的版本。
          * 回傳伺服器回應；409 stale 時丟出 StudentApiError（body.currentVersion）。
          */
-        async publish(data, { today, nameMode, overrideVersion } = {}) {
+        async publish(data, { today, nameMode, overrideVersion, inboxSeq = 0 } = {}) {
             const projection = buildClassProjection(data, { today, nameMode });
             const errors = validateProjection(projection);
             if (errors.length) throw new StudentApiError(0, 'invalid_projection', `資料檢查沒有通過：${errors.slice(0, 3).join('、')}`);
             const key = await api.classKey(data.cls);
             const version = Math.max(overrideVersion || 0, (lastVersion.get(key) || 0) + 1, now());
-            const res = await call('PUT', `/api/teacher/classes/${encodeURIComponent(key)}/projection`, { version, hash: await projectionHash(projection), projection });
+            const res = await call('PUT', `/api/teacher/classes/${encodeURIComponent(key)}/projection`, { version, hash: await projectionHash(projection), projection, inboxSeq: Math.max(0, Math.floor(inboxSeq)) });
             lastVersion.set(key, res.version);
             return { ...res, projection };
         },
