@@ -1,0 +1,101 @@
+/* 2.5D 立體園區（src/ui/zoo.js）。沿用 index.html 的色彩變數。 */
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+.zoo { position: relative; margin-bottom: 14px; border-radius: 16px; overflow: hidden; border: 1px solid var(--panel-border); background: #0b1530; }
+.zoo-view { position: relative; width: 100%; aspect-ratio: 20 / 9; overflow: hidden; touch-action: pan-y; }
+.zoo.zoomed .zoo-view { cursor: grab; touch-action: none; }
+.zoo-cam { position: absolute; inset: 0; transform-origin: 0 0; will-change: transform; }
+.zoo-back { position: absolute; inset: 0; transition: transform 0.4s ease-out; }
+.zoo-back svg { display: block; width: 100%; height: 100%; }
+.zoo-stage { position: absolute; inset: 0; }
+.zoo-prop { position: absolute; aspect-ratio: 1; transform: translate(-50%, -100%); pointer-events: none; }
+.zoo-prop svg { display: block; width: 100%; height: 100%; overflow: visible; }
+.zoo-sway { animation: zooSway 4s ease-in-out infinite; animation-delay: var(--d); transform-box: fill-box; transform-origin: 50% 100%; }
+@keyframes zooSway { 0%, 100% { transform: rotate(-4deg); } 50% { transform: rotate(4deg); } }
+.zoo-blink { animation: zooBlink 2.4s steps(2) infinite; }
+@keyframes zooBlink { 50% { opacity: 0.35; } }
+.zoo-glow { animation: zooGlow 3s ease-in-out infinite; }
+@keyframes zooGlow { 50% { opacity: 0.7; } }
+
+.zoo-actor { position: absolute; aspect-ratio: 1; padding: 0; border: 0; background: none; transform: translate(-50%, -100%); cursor: pointer; border-radius: 30%; }
+.zoo-actor:focus-visible { outline: 3px solid var(--gold); outline-offset: 2px; }
+.zoo-actor .actor-bob { position: absolute; inset: 0; transform-origin: 50% 100%; animation: zooBreath 3.4s ease-in-out infinite; }
+.zoo-flip { position: absolute; inset: 0; filter: brightness(var(--dim, 1)); transition: transform 0.25s; }
+.zoo-sprite { display: block; width: 100%; height: 100%; object-fit: contain; object-position: 50% 100%; pointer-events: none; user-select: none; }
+.zoo-shadow { position: absolute; left: 18%; right: 18%; bottom: -3%; height: 9%; border-radius: 50%; background: radial-gradient(closest-side, rgba(0,0,0,0.35), transparent); }
+.zoo-actor.mode-fly .zoo-shadow, .zoo-actor.mode-swim .zoo-shadow { display: none; }
+.zoo-ring { position: absolute; left: 10%; right: 10%; bottom: -5%; height: 14%; border-radius: 50%; border: 3px solid rgba(255,210,63,0.85); box-shadow: 0 0 12px rgba(255,210,63,0.6); animation: zooRing 2.6s ease-in-out infinite; }
+@keyframes zooRing { 50% { transform: scale(1.08); opacity: 0.6; } }
+.zoo-actor.selected .zoo-flip { filter: brightness(1.08) drop-shadow(0 0 10px #ffd23f); }
+
+/* 行為動畫 */
+@keyframes zooBreath { 0%, 100% { transform: scale(1, 1); } 50% { transform: scale(1.015, 0.985); } }
+.zoo-actor[data-state="walk"] .actor-bob { animation: zooWalk 0.5s ease-in-out infinite; }
+.zoo-actor.mode-fly .actor-bob, .zoo-actor.mode-swim .actor-bob { animation: zooFloat 3s ease-in-out infinite; }
+.zoo-actor.mode-fly[data-state="walk"] .actor-bob, .zoo-actor.mode-swim[data-state="walk"] .actor-bob { animation: zooGlide 1.6s ease-in-out infinite; }
+@keyframes zooWalk { 0%, 100% { transform: translateY(0) rotate(-2deg); } 50% { transform: translateY(-5%) rotate(2deg); } }
+@keyframes zooGlide { 0%, 100% { transform: translateY(0) rotate(-3deg); } 50% { transform: translateY(-6%) rotate(3deg); } }
+@keyframes zooFloat { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-5%); } }
+.zoo-actor[data-state="sleep"] .actor-bob { animation: zooSleep 3s ease-in-out infinite; }
+.zoo-actor[data-state="sleep"] .zoo-flip { filter: brightness(calc(var(--dim, 1) * 0.85)) saturate(0.8); }
+@keyframes zooSleep { 0%, 100% { transform: scale(1, 0.94) translateY(3%); } 50% { transform: scale(1.02, 0.9) translateY(4%); } }
+.zoo-actor[data-state="eat"] .actor-bob, .zoo-actor[data-state="feed"] .actor-bob { animation: zooNibble 0.45s ease-in-out infinite; }
+@keyframes zooNibble { 0%, 100% { transform: rotate(0); } 50% { transform: rotate(-7deg) translateY(2%); } }
+.zoo-actor[data-state="play"] .actor-bob, .zoo-actor[data-state="pet"] .actor-bob { animation: zooHop 0.6s cubic-bezier(.3,.7,.4,1) infinite; }
+@keyframes zooHop { 0%, 100% { transform: translateY(0) scale(1.03, 0.97); } 45% { transform: translateY(-22%) scale(0.97, 1.03); } }
+.zoo-actor[data-state="look"] .actor-bob { animation: zooLook 2.4s ease-in-out infinite; }
+@keyframes zooLook { 0%, 100% { transform: scaleY(1.04) rotate(-3deg); } 50% { transform: scaleY(1.04) rotate(3deg); } }
+.zoo-actor[data-state="greet"] .actor-bob { animation: zooHop 0.9s ease-in-out 2; }
+.zoo-actor.pop .zoo-flip { animation: zooPop 0.5s ease-out; }
+@keyframes zooPop { 40% { scale: 1.15; } }
+
+.zoo-bubble { position: absolute; left: 50%; top: -6%; transform: translate(-50%, -100%) scale(0.4); opacity: 0; transition: 0.25s; font-size: clamp(14px, 2.2vw, 26px);
+    background: rgba(255,255,255,0.92); border-radius: 14px; padding: 1px 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.25); pointer-events: none; line-height: 1.4; }
+.zoo-bubble.on { opacity: 1; transform: translate(-50%, -100%) scale(1); }
+
+/* 稀有度特效（程式繪製，不在圖片裡） */
+.zoo-fx { position: absolute; inset: 0; pointer-events: none; }
+.fx-aura { inset: -12%; border-radius: 50%; background: radial-gradient(closest-side, rgba(255,200,61,0.55), rgba(255,200,61,0.15) 60%, transparent); animation: zooAura 3s ease-in-out infinite; }
+@keyframes zooAura { 50% { transform: scale(1.1); opacity: 0.7; } }
+.fx-sparkle i { position: absolute; width: 7%; aspect-ratio: 1; background: #d4a6ff; clip-path: polygon(50% 0, 62% 38%, 100% 50%, 62% 62%, 50% 100%, 38% 62%, 0 50%, 38% 38%);
+    left: calc(8% + var(--k) * 19%); top: calc(48% - var(--k) * 8%); animation: zooTwinkle 2.2s ease-in-out infinite; animation-delay: calc(var(--k) * -0.45s); }
+@keyframes zooTwinkle { 0%, 100% { transform: scale(0.3); opacity: 0; } 50% { transform: scale(1) translateY(-30%); opacity: 1; } }
+
+/* 控制列與互動面板 */
+.zoo-hud { position: absolute; top: 8px; right: 8px; display: flex; gap: 6px; z-index: 5; }
+.zoo-btn { min-width: 40px; min-height: 40px; padding: 4px 10px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.35); background: rgba(11,21,48,0.72); color: #fff; font-weight: 800; font-size: 1em; }
+.zoo-btn:hover { background: rgba(0,229,255,0.3); }
+.zoo-panel { position: absolute; left: 50%; bottom: 10px; transform: translateX(-50%); z-index: 6; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: center;
+    padding: 8px 12px; border-radius: 14px; background: rgba(11,21,48,0.88); border: 1px solid var(--gold); color: #fff; max-width: calc(100% - 20px); }
+.zoo-panel[hidden] { display: none; }
+.zoo-panel-t { display: flex; flex-direction: column; line-height: 1.2; margin-right: 6px; }
+.zoo-panel-t small { color: var(--gold); }
+.zoo-panel-b { display: flex; gap: 6px; flex-wrap: wrap; }
+
+/* 全螢幕：維持 20:9 舞台，置中 */
+.zoo.is-full, .zoo.pseudo-full { display: flex; align-items: center; justify-content: center; border-radius: 0; border: 0; margin: 0; }
+.zoo.pseudo-full { position: fixed; inset: 0; z-index: 1000; }
+.zoo.is-full .zoo-view, .zoo.pseudo-full .zoo-view { width: min(100vw, calc(100vh * 20 / 9)); }
+.zoo.is-full .zoo-btn, .zoo.pseudo-full .zoo-btn { min-width: 52px; min-height: 52px; font-size: 1.2em; }
+
+/* 圖鑑卡片上的正式角色圖 */
+img.creature-img { object-fit: contain; display: block; transform-origin: 50% 100%; }
+img.creature-img.silhouette { filter: brightness(0) invert(0.12); opacity: 0.85; }
+
+/* 減少動態：角色停在原地，保留選取與縮放 */
+html.reduce-motion .zoo-actor .actor-bob, html.reduce-motion .zoo-fx, html.reduce-motion .zoo-ring { animation: none !important; }
+html.reduce-motion .zoo-back { transition: none; }
+@media (prefers-reduced-motion: reduce) { .zoo-actor .actor-bob, .zoo-fx, .zoo-ring, .zoo-sway, .zoo-glow, .zoo-blink { animation: none !important; } }
+@media (max-width: 600px) { .zoo-view { aspect-ratio: 4 / 3; } .zoo-btn { min-width: 44px; min-height: 44px; } }
+.zoo > .col-scene-empty { position: absolute; inset: auto 0 14px 0; z-index: 4; text-align: center; margin: 0; font-weight: 800; color: #1b2b55; text-shadow: 0 1px 0 rgba(255,255,255,0.7); pointer-events: none; }
+.zoo-tech > .col-scene-empty, .zoo-fantasy > .col-scene-empty, .zoo-ocean > .col-scene-empty { color: #fff; text-shadow: 0 1px 2px rgba(0,0,0,0.6); }
+/* 游泳／飛行的角色沒有地面：完成階段改用金色外光，不畫腳底光圈 */
+.zoo-actor.mode-fly .zoo-ring, .zoo-actor.mode-swim .zoo-ring { display: none; }
+.zoo-actor.complete.mode-fly .zoo-sprite, .zoo-actor.complete.mode-swim .zoo-sprite { filter: drop-shadow(0 0 6px rgba(255,210,63,0.75)); }
+
+/* AI 背景板與道具 */
+.zoo-back.ai img { display: block; width: 100%; height: 100%; object-fit: cover; object-position: 50% 70%; user-select: none; }
+.zoo-prop img { display: block; width: 100%; height: 100%; object-fit: contain; object-position: 50% 100%; filter: brightness(var(--dim, 1)); user-select: none; }
+.zoo-ms-sign span { position: absolute; left: 50%; bottom: 0; transform: translateX(-50%); display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 4px 8px 6px;
+    border-radius: 10px; background: rgba(255,248,225,0.92); border: 2px solid #c98a55; box-shadow: 0 3px 8px rgba(0,0,0,0.25); color: #5a3a1a; white-space: nowrap; }
+.zoo-ms-sign b { font-size: clamp(14px, 2vw, 26px); line-height: 1.1; }
+.zoo-ms-sign small { font-weight: 800; font-size: clamp(9px, 1vw, 13px); }

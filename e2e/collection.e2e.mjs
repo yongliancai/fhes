@@ -44,9 +44,18 @@ test('group XP is not multiplied by members; unlock spends energy; sequential re
         await page.click('#col-celebrate .btn');
         assert.equal(Number(await page.textContent('#col-energy')), energy0 - 10);
         assert.equal(await page.locator('.col-card[data-item="land-01"].owned').count(), 1);
-        assert.equal(await page.locator('.scene-creatures .scene-actor').count(), 1);
-        // 互動不消耗任何東西
-        await page.locator('.scene-creatures .scene-actor').first().click({ force: true });   // 角色一直在晃動（待機動畫），Playwright 的穩定判定永遠不成立
+        assert.equal(await page.locator('.zoo .zoo-actor').count(), 1);
+        // 2.5D 園區：點選角色 → 互動面板；餵食、拍拍不消耗任何東西
+        await page.locator('.zoo .zoo-actor').first().click({ force: true });   // 角色會自己走動（待機動畫），Playwright 的穩定判定永遠不成立
+        await page.waitForSelector('.zoo-panel:not([hidden])');
+        assert.equal(await page.locator('.zoo .zoo-actor.selected').count(), 1);
+        await page.click('.zoo-panel .zoo-btn[aria-label="餵食"]');
+        await page.waitForFunction(() => document.querySelector('.zoo .zoo-actor')?.dataset.state === 'feed');
+        await page.click('.zoo-panel .zoo-btn[aria-label="拍拍"]');
+        await page.waitForFunction(() => /scale\(1\.8\)/.test(document.querySelector('.zoo-cam').style.transform));   // 鏡頭拉近到選取的角色
+        await shot(page, 'p7-zoo-selected');
+        await page.click('.zoo-hud .zoo-btn[aria-label="回到全景"]');
+        await page.waitForSelector('.zoo-panel', { state: 'hidden' });
         assert.equal(Number(await page.textContent('#col-energy')), energy0 - 10);
         // 扣小隊分數不影響收藏與 XP
         await toGroups(page);

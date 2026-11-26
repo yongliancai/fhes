@@ -212,7 +212,8 @@ export const overflow = (page) => page.evaluate(() => {
     for (const el of document.querySelectorAll('body *')) {
         const r = el.getBoundingClientRect();
         if (!r.width || getComputedStyle(el).visibility === 'hidden') continue;
-        if (el.closest('.table-wrap, .hw-matrix-wrap, .modal:not(.visible), #fx-layer, #confetti-container, canvas, .col-scene, svg')) continue;
+        // .zoo-view：園區舞台本身 overflow:hidden，裡面的雲、角色在放大或飄出畫面時會被裁切，不會造成頁面捲動（舞台外框仍照常檢查）
+        if (el.closest('.table-wrap, .hw-matrix-wrap, .modal:not(.visible), #fx-layer, #confetti-container, canvas, .col-scene, .zoo-view, svg')) continue;
         // 固定定位的提示（徽章 toast、通知）平常停在畫面外等待滑入，不會造成頁面捲動
         let fixed = false; for (let a = el; a && a !== document.body; a = a.parentElement) if (getComputedStyle(a).position === 'fixed' && !a.classList.contains('modal')) { fixed = true; break; }
         if (fixed) continue;
