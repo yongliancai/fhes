@@ -79,3 +79,11 @@ test('rollback: v5.1-compatible export is accepted by a v5.1 parser and keeps al
     assert.equal(parsedBy51.events.length, fx.events.length);
     assert.throws(() => parseBackup({ ...out, version: 6 }, { dataVersion: 5.1, convertV4: conv }), /較新版本/, 'a normal v6 backup is refused by v5.1 — hence this export');
 });
+
+test('v6.2 rollback: a backup with the new class field studentSystem still imports with the unchanged v6 parser (v6.1)', () => {
+    const state = { classes: [{ id: 'c1', name: '合成班', groupCount: 2, studentSystem: { nameMode: 'seat' } }], students: [], events: [], dailySnapshots: [], hwAssignments: [], hwEvents: [], xpEvents: [], specialItems: [], grants: [] };
+    const file = JSON.parse(JSON.stringify(buildBackup(state, { dataVersion: DATA_VERSION, appVersion: 'v6.2', now: 1 })));
+    assert.equal(file.version, DATA_VERSION, 'data version unchanged by v6.2');
+    const p = parse(file);
+    assert.equal(p.classes[0].id, 'c1');
+});

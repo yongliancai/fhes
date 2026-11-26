@@ -118,6 +118,68 @@ Each entry names the regression test that fails on the buggy version and passes 
 - **FIX**: keep up to 5 issued, unused nonces; verify against each (each usable once, deleted on success); if none matches, show "登入憑證無效" instead of dropping it silently. Replay protection unchanged (E2E `nonce` mode still refused).
 - **PROVE**: real Chrome after the fix: 1/1 first-attempt sign-in on a reloaded page succeeded. Sample too small → **OPEN (monitoring)**.
 
+## BUG-018 (v6.2) — student initial passwords stayed in the teacher page's DOM after closing the dialog
+- **DETECT**: `e2e/student.e2e.mjs` asserted that the one-time initial password is gone after "關閉"; it was still in the hidden dialog (and in the print-only slip block). Pressing Esc (global handler in `index.html`) closed the dialog without running any clean-up at all.
+- **ROOT CAUSE**: closing only removed the `visible` class; the slips lived on in `modal.card` and `#student-slips`.
+- **FIX**: a `MutationObserver` on the dialog's class wipes the slips from memory and the DOM whenever the dialog stops being visible, whichever way it was closed (button, backdrop, Esc).
+- **PROVE**: the E2E assertion failed before the fix and passes after it.
+
+## BUG-019 (v6.2) — student zoo scene was `role="img"` while containing focusable animals
+- **DETECT**: axe `nested-interactive` (serious) on the student zoo in `e2e/student.e2e.mjs`.
+- **ROOT CAUSE**: `sceneSVG()` labels the scene as an image; assistive technology hides an image's children, so the animal buttons were unreachable for screen readers.
+- **FIX**: the student zoo sets the scene's role to `group`. Animals are also selectable with Enter/Space (the E2E selects one by keyboard).
+- **PROVE**: axe clean on login, growth and zoo screens.
+
+## BUG-020…025 (v6.2) — found by the independent security review (subagent, 2026-11-25), all fixed with regression tests
+| ID | Defect (reproduced by the reviewer) | Root cause | Fix | Proof |
+|---|---|---|---|---|
+| BUG-020 | Overlapping publishes (v10 and v5 at the same time) both returned 200; the class ended on v5 | version check used the class row read **before** `await projectionHash()`, outside the transaction | re-read the class and check versions inside one `IMMEDIATE` transaction | `BUG-020` test (green after the fix; the failing run was the reviewer's script) |
+| BUG-021 | 60 parallel wrong logins: all evaluated, no 429 → lockout and IP limit bypassed | counters were incremented after the async Argon2 verify | count the attempt synchronously before verifying; reset on success | `BUG-021` test; reverting the fix → red |
+| BUG-022 | Any Google account became a teacher; created 240 accounts in 4.5 s | no teacher allow-list or quotas | `FHES_TEACHER_ALLOW` (verified email or @domain), 30 classes/teacher, 80 accounts/class; start-up refuses without the list | `BUG-022` test; reverting → red |
+| BUG-023 | An ID token with the last base64 character re-encoded was accepted again | replay key was the raw string; unused base64 bits decode identically | replay key = SHA-256 of `header.payload` | `BUG-023` test; reverting → red |
+| BUG-024 | Non-ASCII CSRF header → 500 | `timingSafeEqual` on buffers of different byte length | compare byte lengths | `BUG-024` test; reverting → red |
+| BUG-025 | 50 care posts stored 50 rows (47 uncounted) | uncounted actions were always stored | store at most 30 uncounted rows per student per day | `BUG-025` test; reverting → red |
+| (low) | `nameMode: 'seat'` was not enforced by the server | validation did not check names | names must be `N號` in seat mode | test "seat-only mode is enforced" |
+| (low) | the used ID token stayed referenced in `index.html`'s boot scope | destructured into a long-lived `const` | pass it once, then `delete` the reference | code review |
+
+Inaccurate documentation the review found (server-side nonce, "only once", 30/IP, T12 under concurrency, an Argon2 concurrency limit that did not exist, bearer "ends on reload") was corrected in the threat model, `STUDENT-SYSTEM.md` and ADR-017/018.
+
+## BUG-026 (v6.2) — encrypted backup left plaintext `-wal`/`-shm` files next to the snapshot
+- **DETECT**: `tests/server-backup.test.mjs` asserted that only encrypted files remain in the backup folder; two `.tmp-*.db-wal`/`-shm` files were left.
+- **ROOT CAUSE**: the SQLite online-backup copy keeps WAL mode; opening it for the integrity check created WAL side files, which can hold unencrypted rows.
+- **FIX**: switch the snapshot to `journal_mode = DELETE` before checking it, and delete the file with all side files (`-wal`, `-shm`, `-journal`) in every path (backup, verify, failed restore).
+- **PROVE**: the test failed before the fix and passes after it; CLI smoke test keygen → backup → verify → restore → refused second restore.
+
+## BUG-027 (v6.2 小老師) — overdue hearts given before helper registrations were pulled
+- **DETECT**: independent read-only review of the 小老師／auto-heart change.
+- **ROOT CAUSE**: the teacher app checked overdue homework at start-up and every minute, but pulled helper registrations only every 5 minutes. A 繳交 registered by a helper while the teacher's computer was off arrived after the heart was already given, and kept hearts are never removed.
+- **FIX**: hearts wait for the first pull after start-up (at most 20 s). Any auto heart whose wait, recomputed from the current events, ended before the heart's time is withdrawn with a reverse event (「自動撤回…」). This also covers a second device that syncs late. Hearts earned before the work was handed in stay, and so do hearts after a later change to the hours setting.
+- **PROVE**: `tests/hw-rules.test.mjs` (`BUG-027 …`).
+
+## BUG-028 (v6.2 小老師) — upgrading would start hearts for every old unfinished homework
+- **DETECT**: same review.
+- **ROOT CAUSE**: the rule clipped old waits to the switch-on time, so every old 未繳交／未訂正 started counting at the upgrade.
+- **FIX**: only waits that **begin** after the rule is switched on are counted. Nothing is back-filled.
+- **PROVE**: the test 「no hearts when disabled, before the start time …」 now expects 0 for a wait that began earlier.
+
+## BUG-029 (v6.2 小老師) — a helper could override the teacher's 免交
+- **DETECT**: same review.
+- **FIX**: the server refuses registrations for a classmate the published data shows as 免交 (409 `exempt`). The teacher app also skips such registrations (「老師設為免交」).
+- **PROVE**: `tests/server-helper.test.mjs` (`review fixes …`) and `tests/hw-rules.test.mjs` (`BUG-029 …`).
+
+## BUG-030 (v6.2 小老師) — smaller review findings
+- `inbox_seq` could go back to 0 when an old client published. It is now `MAX(inbox_seq, ?)`.
+- A student removed from the roster kept helper powers while the account stayed active. The helper check now also requires the helper's own published row.
+- The undo button counted events instead of students: a batch of 未訂正 for 3 students showed 「× 6」. It now counts distinct students.
+- Converting a large pull recomputed the whole class for every registration. Now only the affected cell is recomputed; 3000 registrations take well under 3 s in the test.
+- **PROVE**: `tests/server-helper.test.mjs` (`review fixes …`) and `tests/hw-rules.test.mjs` (`BUG-030 …`, `large pulls stay fast`).
+
+## v6.2 test-writing mistakes caught by the suite (not product bugs)
+- Test helper's default new password contained the username → the server correctly refused it as weak.
+- Idempotency keys shorter than 8 characters in a test → the server correctly answered 400.
+- A test advanced the clock 14 h and then reused the teacher's 8-hour token → the server correctly answered 401; the test now opens a fresh teacher session.
+- Animals bob continuously, so Playwright's "stable" check never passes for a mouse click; the E2E selects them by keyboard instead (no `force`).
+
 ## TEST-HARNESS notes (not product bugs, recorded so they are not repeated)
 - `page.waitForSelector('#import-modal:not(.visible)')` waits for *visible* by default → use `{ state: 'hidden' }`.
 - Reading a card number immediately after a click races the async IndexedDB write → `waitVal()` polls until the expected value or timeout and then lets the assertion show the real value.

@@ -11,3 +11,8 @@ export const GOOGLE_CLIENT_ID = '614456020578-m6363jtnho42k9n7u2c4b8djjs7hpagc.a
 //   目前網址不在清單內時，登入畫面會先提醒（否則老師按下登入只會看到 Google 的 origin_mismatch 或沒有反應）。
 //   修改 Google Cloud 設定時要同步更新這裡；清單為空 = 不檢查。
 export const GOOGLE_AUTHORIZED_ORIGINS = ['http://localhost:8765', 'https://yongliancai.github.io'];
+
+// STUDENT_API_BASE（v6.2）：學生系統 API 的網址（例如 https://fhes.example.edu.tw）。公開資訊，不是密鑰。
+//   - 留空：教師端不顯示「學生系統」，一切照 v6.1 運作。
+//   - 正式網址需要使用者另外核准部署後才填入（docs/STUDENT-DEPLOY-TODO.md）。
+export const STUDENT_API_BASE = '';

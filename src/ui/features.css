@@ -57,6 +57,12 @@
 .hw-cell.sub-submitted { border-color: rgba(57,255,136,0.55); }
 .hw-cell.sub-missing { border-color: rgba(255,111,174,0.6); }
 .hw-cell.sub-exempt { opacity: 0.7; }
+.hw-cell.st-needs { border-color: rgba(255,210,63,0.7); }
+.hw-cell.st-done { border-color: rgba(57,255,136,0.85); background: rgba(57,255,136,0.08); }
+.hw-cell { font-size: 1em; }
+.hw-simple-grid .reason-btn { font-size: 1.1em; min-height: 56px; }
+.hw-more { margin-top: 10px; }
+.hw-more summary { cursor: pointer; color: var(--text-secondary); }
 .hw-cell .late { color: var(--gold); }
 .hw-cell.conflict { border: 2px solid var(--gold); }
 .hw-follow { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; margin-top: 20px; }
@@ -219,3 +225,31 @@ body.locked .app-screen, body.locked .modal, body.locked .record-overlay, body.l
 .legacy-list { border: 1px solid var(--panel-border); border-radius: 12px; padding: 8px 14px; margin: 10px 0; }
 .legacy-row { display: flex; }
 @media (max-width: 600px) { .account-chip { max-width: 160px; } .auth-card { padding: 22px 16px 14px; } }
+
+/* ---------- v6.2 學生系統（教師端） ---------- */
+.stu-status[data-status="ok"] { color: var(--green, #39ff14); }
+.stu-status[data-status="error"] { color: #ff6b6b; }
+.stu-msg[data-kind="error"] { color: #ff6b6b; }
+.stu-publish { display: grid; gap: 12px; margin: 10px 0 18px; }
+.stu-row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+.stu-row > .btn { width: auto; writing-mode: horizontal-tb; white-space: nowrap; }
+.stu-select { width: auto; min-width: 10em; }
+.stu-check { display: flex; gap: 8px; align-items: center; font-weight: 400; }
+.stu-check input { width: auto; margin: 0; }
+.stu-table { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 0.95em; }
+.stu-table th, .stu-table td { padding: 6px 8px; border-bottom: 1px solid var(--panel-border); text-align: center; }
+.stu-table td.left { text-align: left; }
+.stu-table .mono, .stu-slip .mono { font-family: 'Share Tech Mono', ui-monospace, monospace; letter-spacing: 0.05em; }
+.btn.btn-sm { padding: 4px 10px; font-size: 0.85em; margin: 2px; }
+.stu-new { border: 2px dashed #ffd23f; border-radius: 10px; padding: 12px; margin: 12px 0; }
+.warn-text { color: #ffd23f; }
+.warn-box { border: 1px solid #ffd23f; border-radius: 8px; padding: 10px; }
+.stu-care-list { margin: 6px 0 0 1.2em; }
+.stu-slips { display: none; }
+@media print {
+    body.printing-slips > *:not(#student-slips), body:has(#student-slips) > *:not(#student-slips) { display: none !important; }
+    .stu-slips { display: grid !important; grid-template-columns: repeat(2, 1fr); gap: 8mm; color: #000; background: #fff; }
+    .stu-slip { border: 1px dashed #000; padding: 6mm; font-size: 13pt; break-inside: avoid; }
+    .stu-slip-name { font-weight: 700; margin-bottom: 3mm; }
+    .stu-slip-note { font-size: 10pt; margin-top: 3mm; }
+}

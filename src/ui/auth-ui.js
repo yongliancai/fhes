@@ -69,11 +69,11 @@ export const waitForSignIn = ({ $ }) => new Promise((resolve) => {
         try {
             await signIn.mount(btnBox, {
                 onVerifying: () => say('正在驗證 Google 登入…', 'info'),
-                onResult: ({ identity, error }) => {
+                onResult: ({ identity, error, handoff }) => {
                     if (error) { say(ERROR_TEXT[error.code] || `登入失敗：${error.message}`, 'error'); return; }
                     say('');
                     document.body.classList.remove('locked');
-                    resolve({ identity, signIn, clientId });
+                    resolve({ identity, signIn, clientId, handoff });
                 },
             });
             mounted = true;

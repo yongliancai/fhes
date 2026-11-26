@@ -48,6 +48,16 @@ Status words follow the Code Factory guide strictly: **PASS** = actually execute
 | 2026-11-25 | real Google, second account | A/B isolation, wrong-account authorization, cross-account spreadsheet access | Chrome 158, two test Gmail accounts, synthetic data | PASS X1–X8 (report §6) |
 | 2026-11-25 | CI on 5b91fcb | GitHub Actions | verify PASS · Chrome PASS · **Firefox PASS 39/39** (second green run in a row) · **WebKit FAIL 37/39**: both failures are "Target page, context or browser has been closed" mid-test (`auth › account isolation`, `auth › A offline queue`), different tests from the previous run; still unexplained page closures |
 | 2026-11-25 | release candidate (Client ID in `src/config.js`) | `npm run verify` / `npm run test:e2e` / `E2E_CHANNEL=chrome npm run test:e2e` | Windows 11 / Edge / Chrome | PASS — 117/117, 39/39, 39/39 |
+| 2026-11-25 | v6.2 baseline (worktree `feat/v6.2-student` @ 173b73e) | `npm ci` | Windows 11, Node 22.23.1 | PASS |
+| 2026-11-25 | v6.2 P0–P2 | `npm run verify` | Windows 11 | PASS — 157/157 (117 + 40 new: projection, care, server teacher/student/care, guardrails) |
+| 2026-11-25 | v6.2 P3–P4 | `npm run verify` / `npm run test:e2e` | Windows 11 / Edge | PASS — 157/157, 42/42 (39 v6.1 + 3 student E2E); found BUG-018, BUG-019 |
+| 2026-11-25 | v6.2 | `E2E_CHANNEL=chrome npm run test:e2e` (before the review fixes) | Chrome | PASS 42/42 |
+| 2026-11-25 | v6.2 mutation | 18 mutants on server security checks (temp copy) | Node | 17/18 killed → test added for the disabled-account check → 18/18; re-run after the review fixes: 18/18 |
+| 2026-11-25 | v6.2 independent review | read-only reviewer agent with proof-of-concept scripts | Node | 9 findings (BUG-020…025 + 3 low); all fixed; 6 fixes proven red→green by reverting them |
+| 2026-11-25 | v6.2 final | `npm run verify` / `npm run test:e2e` | Windows 11 / Edge | PASS — 169/169, 42/42 |
+| 2026-11-25 | v6.2 | Firefox / WebKit / real Safari / real Google exchange / production VPS | — | NOT_VERIFIED / BLOCKED (see `docs/V62-TEST-REPORT.md`) |
+| 2026-11-25 | v6.2 deploy prep | `npm run verify`; `node --test e2e/student.e2e.mjs`; backup CLI smoke test | Windows 11 / Edge | PASS — 174/174 (encrypted backup/restore/retention, env example vs start-up checks, v6.1 import of a v6.2 backup), student E2E 4/4 (incl. rollback A); found BUG-026 |
+| 2026-11-26 | v6.2 小老師／4 個按鈕／逾期自動愛心 | `npm run verify` / `npm run test:e2e` | Windows 11 / Edge | PASS — 196/196, 45/45 (after fixing review findings BUG-027…030); Chrome/Firefox/WebKit not re-run |
 | CI | every push | GitHub Actions `Quality (no deployment)`: `verify` + `e2e` (ubuntu, Chrome) | ubuntu-latest, Node 22 | green for P2 (feff057), P3 (4b6bb42), P4 (853a880); later runs are listed in Draft PR #1 |
 
 ## Acceptance matrix

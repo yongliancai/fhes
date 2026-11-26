@@ -62,3 +62,11 @@ test('BUG-007: src/ui must use fill() instead of replaceChildren (null would ren
     assert.deepEqual(checkFile('src/ui/x.js', 'fill(card, a, cond ? b : null);'), []);
     assert.deepEqual(checkFile('src/ui/dom.js', 'el.replaceChildren(...kids);'), []);
 });
+
+test('server guardrails (v6.2): no browser ui/sync imports, no test helpers, no logging of passwords or tokens', () => {
+    assert.ok(checkFile('server/src/x.mjs', "import { h } from '../../src/ui/dom.js';").length > 0);
+    assert.ok(checkFile('server/src/x.mjs', "import { createTestKeys } from '../../tests/helpers/fake-google.mjs';").length > 0);
+    assert.ok(checkFile('server/src/x.mjs', 'console.log("reset", initialPassword);').length > 0);
+    assert.ok(checkFile('server/src/x.mjs', 'console.info(token);').length > 0);
+    assert.deepEqual(checkFile('server/src/x.mjs', "import { verifyGoogleIdToken } from '../../src/auth/id-token.js';\nconsole.log('listening');"), []);
+});

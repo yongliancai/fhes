@@ -10,7 +10,7 @@ export default [
         languageOptions: { ecmaVersion: 2023, sourceType: 'module', globals: { ...globals.browser, google: 'readonly' } },
     },
     {
-        files: ['scripts/**/*.mjs', 'tests/**/*.mjs', 'e2e/**/*.mjs', 'eslint.config.js'],
+        files: ['scripts/**/*.mjs', 'server/**/*.mjs', 'tests/**/*.mjs', 'e2e/**/*.mjs', 'eslint.config.js'],
         languageOptions: { ecmaVersion: 2023, sourceType: 'module', globals: { ...globals.node } },
     },
     {

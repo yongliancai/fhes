@@ -74,15 +74,17 @@ export const createGoogleSignIn = ({ clientId, fetchFn = (...a) => fetch(...a), 
                         try {
                             if (!resp || typeof resp.credential !== 'string') throw new IdTokenError('malformed', '沒有收到 Google 登入憑證');
                             // 依新到舊試每一個未用過的 nonce；nonce 不符才換下一個，其他錯誤（簽章、aud、過期…）立即失敗
-                            let identity = null; let lastErr = new IdTokenError('nonce', '登入憑證的 nonce 不符');
+                            let identity = null; let usedNonce = null; let lastErr = new IdTokenError('nonce', '登入憑證的 nonce 不符');
                             for (const n of [myNonce, ...[...issued].reverse().filter(x => x !== myNonce)]) {
                                 if (!issued.includes(n)) continue;
-                                try { identity = await verify(resp.credential, n); issued.splice(issued.indexOf(n), 1); break; }
+                                try { identity = await verify(resp.credential, n); usedNonce = n; issued.splice(issued.indexOf(n), 1); break; }
                                 catch (e) { if (e instanceof IdTokenError && e.code === 'nonce') { lastErr = e; continue; } throw e; }
                             }
                             init();                                // 下一次登入用新的 nonce
                             if (!identity) throw lastErr;
-                            onResult({ identity: Object.freeze({ ...identity, signedInAt: now(), sessionExpiresAt: now() + SESSION_MAX_MS }) });
+                            // handoff：已驗證的 ID token 與其 nonce，只交給呼叫端「立即」換學生系統的教師工作階段（v6.2 ADR-017），
+                            // 呼叫端用完就丟；不寫入任何儲存空間、不記錄。
+                            onResult({ identity: Object.freeze({ ...identity, signedInAt: now(), sessionExpiresAt: now() + SESSION_MAX_MS }), handoff: Object.freeze({ credential: resp.credential, nonce: usedNonce }) });
                         } catch (e) {
                             onResult({ error: e instanceof IdTokenError ? e : new IdTokenError('network', '登入驗證時網路中斷，請再試一次') });
                         }
