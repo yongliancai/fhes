@@ -75,3 +75,127 @@ The app requests only `https://www.googleapis.com/auth/drive.file` (files the ap
   - Otherwise the token is revoked and refused.
 - On sign-out or account switch, `SYNC.stop()` cancels timers, drops queued conflict choices, revokes the in-memory token and refuses further runs, before the page reloads. A's queue therefore can never be sent with B's token.
 - "使用這份" first probes the spreadsheet with a read-only metadata GET. A 403 or 404 refuses it, nothing is saved, and no other spreadsheet is substituted.
+
+## ADR-015 — v6.2 adds a minimal backend for students only (2026-11-25)
+**Context.** v6.2 lets students sign in and see their own data. ADR-011 rejected a backend because data lived only on the teacher's device; that reasoning does not hold for students, who must not get the teacher's data or tokens, and whose access must be checked by a server.
+**Decision.** A small Node.js API (`server/`) holds per-student projections, student accounts and group care events. The teacher app stays the source of truth for score, homework, XP and grants (IndexedDB + Google Sheets, unchanged).
+**Options compared** (no remote access to the VPS was made; based on project files and the user's statement that a VPS exists):
+| | Existing VPS + Node (chosen) | Serverless (e.g. Cloud Run / Functions + managed DB) |
+|---|---|---|
+| Security | Full control; same-origin cookie for students; must patch OS/Node ourselves | Managed patching; cross-site cookies or token storage harder; more IAM surface |
+| Cost | Already paid | New billing account and resources (needs approval) |
+| Maintenance | One process, one SQLite file, nginx reverse proxy | Cold starts, vendor config, separate DB service |
+| Domain / cookies | Student page and API on one sub-domain → `__Host-` cookie, `SameSite=Strict` | Needs custom domain mapping to get the same |
+| Backup | File copy of SQLite (daily, encrypted) | Provider snapshots |
+| Isolation | Separate system user, port bound to 127.0.0.1, own data directory; must not share the existing site's process | Strong by default |
+**Consequence.** Deployment, domain, TLS, nginx/PM2 changes are listed as approval items; nothing is done on the real VPS.
+**Rollback.** The teacher app works without the API (feature hidden when `STUDENT_API_BASE` is empty). Stopping the process removes the student system; teacher data is unaffected.
+
+## ADR-016 — Stack: Fastify 5, better-sqlite3, Argon2id (2026-11-25)
+- Fastify: maintained, schema validation, body limits, no extra plugins except `@fastify/cookie`.
+- better-sqlite3 instead of `node:sqlite` (still experimental in Node 22): mature, synchronous, real transactions; one file, easy backup. Suitable for one school (hundreds of students).
+- Argon2id (`argon2` package, OWASP parameters m=19 MiB, t=2, p=1). Node 22 has no built-in Argon2.
+- The server imports the browser's pure modules (`src/auth/id-token.js`, `src/core/student-projection.js`, `src/core/care.js`) so rules are written once.
+
+## ADR-017 — Teacher authentication on the server (2026-11-25)
+- The teacher app already receives a Google ID token at sign-in. When the student system is configured, that token (and its nonce) is sent once to `POST /api/teacher/session`, then dropped from memory.
+- The server verifies it with Google's JWKS using the same `verifyGoogleIdToken()` (signature, iss, aud/azp, exp, sub) plus `iat` no older than 10 minutes. The nonce is supplied by the client and is inside the token, so on the server it is only a consistency check; replay protection is the one-time use of the signed content (SHA-256 of `header.payload`, kept until expiry), not of the raw string (BUG-023).
+- Only teachers on `FHES_TEACHER_ALLOW` (full email or `@domain`, `email_verified` required) get a session; quotas: 30 classes per teacher, 80 accounts per class (BUG-022).
+- The server returns an opaque Bearer token (8 h, stored hashed) kept only in the teacher page's memory. CORS allows only configured teacher origins. No cookies for teachers → no CSRF.
+- A class belongs to the teacher who created its link: `(teacherId, localClassId)`. Other teachers get 404.
+- Tests use a test JWKS injected into the app factory; the production entry (`server/main.mjs`) always fetches Google's JWKS and refuses to start without a Client ID. No test flag exists in production code paths that skips verification.
+
+## ADR-018 — Student accounts and sessions (2026-11-25)
+- Teachers create accounts; usernames are random (`abc1234` style, ambiguous letters removed); initial passwords are 10 random characters from a 32-letter alphabet, shown once.
+- First sign-in must change the password (policy: ≥ 8 chars, not the username, not common, not one repeated character or a simple sequence).
+- Sessions: random 256-bit id in a `__Host-fhes_sid` cookie (HttpOnly, Secure, SameSite=Strict); server stores SHA-256 only; idle 2 h, absolute 12 h; rotated on sign-in and password change; all revoked on teacher reset/disable.
+- Every state-changing student request needs `X-FHES-CSRF` (per-session token) and an allowed `Origin`.
+- Every attempt is counted before the asynchronous Argon2 check (BUG-021). Lockout per account (5 failures → 1, 2, 4 … 15 min) and per IP (200 failures / 15 min → 429, high enough that one NAT'd classroom is not locked out by typos). Unknown usernames still run one Argon2 verification. Behind nginx, `FHES_TRUST_PROXY` must be set explicitly.
+- All ACL comes from the session: `accountId → classId, localStudentId`; the group comes from the latest projection. Student endpoints take no identity parameters.
+
+## ADR-019 — Group care is cosmetic and capped (2026-11-25)
+- Care events live only on the server. Each student has at most 3 counted care actions per Asia/Taipei day across all groups, enforced by `UNIQUE(account, localDate, slot)` with `slot ∈ 1..3`, inside a transaction; `UNIQUE(account, idempotencyKey)` makes retries safe. Extra actions return `counted:false` and only play an animation.
+- Care changes mood (calm → happy → very happy; never negative), unlocks group decorations at 10/30/60/100/160 counted actions, and gives a "team day" star when at least half of the group's members cared that day.
+- Care never creates XP, score or grants, and does not change growth stages. Projections are built from v6.1 data only.
+- No death, sickness, decay below neutral, streaks or daily-login pressure.
+
+## ADR-020 — Teacher projection publishing (2026-11-25)
+- `src/core/student-projection.js` (pure) builds per-student DTOs from v6.1 data with the existing rules (`computeTotals`, `projectRecords`, `xpLedger`, `growthStage`). Hearts are not published.
+- Publishing is manual ("發布到學生系統"), optionally automatic after changes (debounced). Each publish carries `version` (monotonic, ms) and a SHA-256 `hash` of the canonical content. Older version → 409; same version + same hash → idempotent 200; same version + different hash → 409.
+- A newer version replaces the whole class in one transaction: students or groups missing from it lose their projection (no ghost data).
+- The teacher can choose to publish seat numbers instead of names.
+- The student page shows the publish time and warns when it is older than 3 days.
+
+## ADR-024 — Platform users are separate from class memberships (2026-11-27, P1)
+- **Context**: v6.2 had one student account per class. The multi-class plan (`docs/V62-MULTICLASS-DESIGN.md`) lets one person belong to several teachers' classes.
+- **Decision**:
+  - New tables `users`, `password_credentials` and `auth_identities` (Google; only `SHA-256(iss|sub)` is stored).
+  - `student_accounts` is rebuilt in place as the **class membership** table. The table name and ids stay the same, so care events (`account_id`) and helper registrations (`helper_account_id`) keep their foreign keys and data untouched, and the daily care limit and helper rights are per class without any change.
+  - Old accounts become one user each, so nothing is merged by name or email.
+  - Teachers get a user and a Google identity from their existing `account_hash`.
+  - Student sessions now point to the user; all student sessions are logged out once at the upgrade.
+- **Migration safety**:
+  - Steps that rebuild a referenced table turn foreign keys off outside the transaction and require an empty `foreign_key_check` plus a count reconciliation before COMMIT.
+  - Any failure rolls back the whole step.
+  - A database newer than the program is refused (`SchemaTooNewError`), so going back to old code cannot corrupt a new file.
+- **Consequences**: teachers' publishing and the projection format are unchanged.
+
+## ADR-027 — Per-class student API; the server decides who and which class (2026-11-27, P1)
+- **Decision**:
+  - Student routes also exist as `/api/student/classes/{memberId}/…`. `memberId` is the student's **own** membership id ("my code in this class"). The server accepts it only if it belongs to the signed-in user and is active; otherwise 404.
+  - The design proposed the teacher-side `classKey` here instead. It was changed because student responses have never contained a classKey, and the existing security test enforces that.
+  - The old single-class paths keep working when the user has exactly one active class. With several classes they return 409 `choose_class`; they never silently pick the first one.
+  - Disabling a membership affects only that class. The student is logged out only if it was their last active class.
+  - Teachers can reset only passwords that their class issued, and only if the student is not in another teacher's class (D3; P2 narrows this further, see ADR-028).
+  - A suspended teacher (`teachers.status`) is refused at sign-in and on every request.
+
+## ADR-028 — Teacher self-signup, invitations, claim codes and admin-approved password resets (2026-11-27, P2)
+- **Context**: the multi-class plan lets any teacher open classes and lets students join several teachers' classes. Decisions D3, D3a, D4 and D5 in `docs/V62-MULTICLASS-DESIGN.md` §11.
+- **Decision**:
+  - `FHES_TEACHER_SIGNUP=allowlist` (default) or `open`. Open mode accepts any Google account with a verified email and creates an empty teacher (`teachers.signup='self'`). It gives no access to anyone else's class. Switching back to allowlist takes access away again at the next sign-in.
+  - A teacher can link at most 10 new classes per day (30 in total). Teachers can be suspended from the admin page or the host CLI (`server/admin.mjs`). Suspension signs them out at once and stops their invitation and claim codes.
+  - **Invitation codes** only create a *join request*. The teacher chooses which local student the request is; the student's typed name and seat are hints, never used for matching. At most 3 live codes per class, 7 days by default, with a use limit; codes can be revoked.
+  - **Claim codes** are one-time codes for one specific local student, printed by the teacher; 30 days. Regenerating a code for the same student voids the old one.
+  - Codes are 10 characters from a 31-character alphabet (about 2^49), stored only as an HMAC and shown once. Wrong codes are limited to 10 per user and 50 per IP per 15 minutes.
+  - **Remove from class** and **leave class** end that membership on the next request. The user, their password and their other classes are untouched. Rejoining the same class reuses the same membership row.
+  - Removed or left memberships no longer block sign-in. A user with no live class can sign in but sees no class data.
+  - **D3**: a teacher can reissue a password only if their class issued it and nobody has signed in with it yet (`password_credentials.first_login_at`). Otherwise the teacher sends a reset request. Only the platform owner can approve it; approval creates a one-time initial password shown once, signs the student out everywhere and is audited.
+  - **D3a**: the platform owner is bootstrapped from `FHES_ADMIN_EMAIL` (verified email, only while no owner exists). After that only the identity hash counts. The admin API uses Bearer tokens (no cookies), 4-hour sessions, audit for every action. The API is off when no admin email is configured. School admins are not in this version.
+  - The admin page (`admin.html`) lives on the teacher site, because that site already loads Google sign-in; the student site's CSP stays unchanged.
+- **Consequences**:
+  - Database v4 (new tables; `sessions` rebuilt only to allow `kind='admin'`). Existing sessions are kept.
+  - The teacher UI gets invitation codes with a QR code (`src/vendor/qr.js`, no CDN), join-request approval, claim-code slips, "remove" and the D3 reset buttons.
+  - The student page's own "join class" screen and the `#join=` link handling come in P3 (done, see ADR-029).
+
+## ADR-029 — Student multi-class screens and optional student Google sign-in (2026-11-28, P3)
+- **Context**: decision D6 (students may sign in with Google) and the P3 work package in `docs/V62-MULTICLASS-DESIGN.md` §10.
+- **Decision**:
+  - The student page shows "My classes": one class opens directly, two or more get a class switcher, none shows the join form. Every request uses `/api/student/classes/{memberId}/…`.
+  - Switching class clears the screen. A request generation counter drops answers (and errors) that arrive after the student switched away (T30). Nothing is written to browser storage; the class list and the selected class live only in memory.
+  - One code box: `POST /api/student/redeem` tries claim codes first, then invitation codes. An invitation code without a name returns `need_name`, which is not counted as a wrong code.
+  - QR links `student.html#join=<code>` are read into memory and removed from the address bar with `history.replaceState`. If the student is not signed in, the code waits until sign-in.
+  - Student Google sign-in is off by default (`FHES_STUDENT_GOOGLE=on` turns it on). Only then does the student page's CSP add `https://accounts.google.com/gsi/` (script `gsi/client`, style `gsi/style`, frame and connect), and its `Cross-Origin-Opener-Policy` becomes `same-origin-allow-popups`. API responses keep the strict headers.
+  - A Google account that is not linked yet is **not** turned into a new account automatically: the server answers `not_linked`, the page explains that students with a teacher-issued account should sign in with their password and link Google there, and only a second, explicit click creates a new account with no class (`create: true`). At most 60 new Google accounts per network per 15 minutes.
+  - Linking needs the current password and a fresh Google sign-in. A Google account that already belongs to another user is refused (409), never merged. Unlinking needs the password; an account created with Google has no password and cannot unlink.
+  - Forgotten password (D3): a student who linked Google signs in with Google and sets a new password after another fresh Google sign-in. All other sessions are signed out. Memberships are unchanged.
+  - Users now have a kind (`student` or `staff`). A teacher's or the admin's Google account cannot be used on the student page, and a Google account used by a student cannot become a teacher or the admin.
+  - Only the hash of `iss|sub` is stored; no email or name.
+- **Consequences**:
+  - Database v5 adds `users.kind` (backfilled: teachers and the admin are staff; users with a password, a membership or a join request are students).
+  - Turning the switch on needs work outside this repo: the school's Google Workspace admin must trust the app for students under 18, and the OAuth client must list the student site as a JavaScript origin. Password sign-in always stays available.
+  - The fake Google library used in browser tests now also covers the student page. Real Google and real Safari are not verified.
+
+## ADR-021 — 小老師 (student helpers) register homework through the student system (2026-11-26)
+- Decided by the user (multiple-choice discussion): helpers use the student system, may register **all** homework of their class, and the teacher app receives registrations **automatically** (every 5 minutes, before each publish, or on demand).
+- The teacher marks helpers per account (`student_accounts.is_helper`, schema v2). Permission is checked on every request from the session; removing the flag takes effect on the next request.
+- Helpers see classmates' seat/name (seat only in seat mode) and the 4 simple states for published homework; never scores, hearts, groups or other classes. They cannot register themselves (403) or classmates not in the published roster (400). Only the 4 simple states are allowed (免交 stays teacher-only). 3000 rows per helper per day.
+- Registrations are stored server-side (`hw_registrations`, kept 120 days) and pulled by cursor. The teacher app turns each into ordinary homework events with fixed ids `hwr|<id>|n`, timestamped at registration time; a cell the teacher changed after the registration is left alone. The teacher's data stays the source of truth; the server never edits it.
+
+## ADR-022 — Automatic hearts for overdue homework (2026-11-26)
+- Decided by the user: 未繳交 and 未訂正 count from the moment they are registered; only school days count (weekends and teacher-listed holidays excluded, Asia/Taipei); one heart per 24 school-hours (configurable 1–168), repeating every day; hearts stay after the work is handed in (the teacher can remove them as usual).
+- Pure rule in `src/core/hw-hearts.js`; the teacher app runs it on start-up, after import or sync, after pulling helper registrations, and every minute. Heart ids are fixed (`hwheart|<event that started the wait>|n`) so several devices or repeated runs never double-count, and a heart the teacher removed or undid is never re-created.
+- Only time after `hwAutoHeart.since` counts: upgrading or switching the rule back on never back-fills old homework. Archived homework stops accruing.
+- Hearts are created with the creation time as their date (not back-dated), so already-settled daily snapshots never change. They are marked `source: 'hw-auto'`, shown as recorded by 「自動（作業逾期）」, and excluded from 「復原上一步」.
+
+## ADR-023 — Four homework buttons (2026-11-26)
+- 繳交／未繳交／未訂正／已訂正 are combinations of the existing two dimensions (submission × correction); the data format and v6.1/v5.1 compatibility are unchanged. One press writes at most two events (correction 1 ms after submission). 免交, 清除登記 and 不需訂正 remain for the teacher under 「更多」.

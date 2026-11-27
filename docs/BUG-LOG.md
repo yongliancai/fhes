@@ -118,6 +118,108 @@ Each entry names the regression test that fails on the buggy version and passes 
 - **FIX**: keep up to 5 issued, unused nonces; verify against each (each usable once, deleted on success); if none matches, show "登入憑證無效" instead of dropping it silently. Replay protection unchanged (E2E `nonce` mode still refused).
 - **PROVE**: real Chrome after the fix: 1/1 first-attempt sign-in on a reloaded page succeeded. Sample too small → **OPEN (monitoring)**.
 
+## BUG-018 (v6.2) — student initial passwords stayed in the teacher page's DOM after closing the dialog
+- **DETECT**: `e2e/student.e2e.mjs` asserted that the one-time initial password is gone after "關閉"; it was still in the hidden dialog (and in the print-only slip block). Pressing Esc (global handler in `index.html`) closed the dialog without running any clean-up at all.
+- **ROOT CAUSE**: closing only removed the `visible` class; the slips lived on in `modal.card` and `#student-slips`.
+- **FIX**: a `MutationObserver` on the dialog's class wipes the slips from memory and the DOM whenever the dialog stops being visible, whichever way it was closed (button, backdrop, Esc).
+- **PROVE**: the E2E assertion failed before the fix and passes after it.
+
+## BUG-019 (v6.2) — student zoo scene was `role="img"` while containing focusable animals
+- **DETECT**: axe `nested-interactive` (serious) on the student zoo in `e2e/student.e2e.mjs`.
+- **ROOT CAUSE**: `sceneSVG()` labels the scene as an image; assistive technology hides an image's children, so the animal buttons were unreachable for screen readers.
+- **FIX**: the student zoo sets the scene's role to `group`. Animals are also selectable with Enter/Space (the E2E selects one by keyboard).
+- **PROVE**: axe clean on login, growth and zoo screens.
+
+## BUG-020…025 (v6.2) — found by the independent security review (subagent, 2026-11-25), all fixed with regression tests
+| ID | Defect (reproduced by the reviewer) | Root cause | Fix | Proof |
+|---|---|---|---|---|
+| BUG-020 | Overlapping publishes (v10 and v5 at the same time) both returned 200; the class ended on v5 | version check used the class row read **before** `await projectionHash()`, outside the transaction | re-read the class and check versions inside one `IMMEDIATE` transaction | `BUG-020` test (green after the fix; the failing run was the reviewer's script) |
+| BUG-021 | 60 parallel wrong logins: all evaluated, no 429 → lockout and IP limit bypassed | counters were incremented after the async Argon2 verify | count the attempt synchronously before verifying; reset on success | `BUG-021` test; reverting the fix → red |
+| BUG-022 | Any Google account became a teacher; created 240 accounts in 4.5 s | no teacher allow-list or quotas | `FHES_TEACHER_ALLOW` (verified email or @domain), 30 classes/teacher, 80 accounts/class; start-up refuses without the list | `BUG-022` test; reverting → red |
+| BUG-023 | An ID token with the last base64 character re-encoded was accepted again | replay key was the raw string; unused base64 bits decode identically | replay key = SHA-256 of `header.payload` | `BUG-023` test; reverting → red |
+| BUG-024 | Non-ASCII CSRF header → 500 | `timingSafeEqual` on buffers of different byte length | compare byte lengths | `BUG-024` test; reverting → red |
+| BUG-025 | 50 care posts stored 50 rows (47 uncounted) | uncounted actions were always stored | store at most 30 uncounted rows per student per day | `BUG-025` test; reverting → red |
+| (low) | `nameMode: 'seat'` was not enforced by the server | validation did not check names | names must be `N號` in seat mode | test "seat-only mode is enforced" |
+| (low) | the used ID token stayed referenced in `index.html`'s boot scope | destructured into a long-lived `const` | pass it once, then `delete` the reference | code review |
+
+Inaccurate documentation the review found (server-side nonce, "only once", 30/IP, T12 under concurrency, an Argon2 concurrency limit that did not exist, bearer "ends on reload") was corrected in the threat model, `STUDENT-SYSTEM.md` and ADR-017/018.
+
+## BUG-026 (v6.2) — encrypted backup left plaintext `-wal`/`-shm` files next to the snapshot
+- **DETECT**: `tests/server-backup.test.mjs` asserted that only encrypted files remain in the backup folder; two `.tmp-*.db-wal`/`-shm` files were left.
+- **ROOT CAUSE**: the SQLite online-backup copy keeps WAL mode; opening it for the integrity check created WAL side files, which can hold unencrypted rows.
+- **FIX**: switch the snapshot to `journal_mode = DELETE` before checking it, and delete the file with all side files (`-wal`, `-shm`, `-journal`) in every path (backup, verify, failed restore).
+- **PROVE**: the test failed before the fix and passes after it; CLI smoke test keygen → backup → verify → restore → refused second restore.
+
+## BUG-027 (v6.2 小老師) — overdue hearts given before helper registrations were pulled
+- **DETECT**: independent read-only review of the 小老師／auto-heart change.
+- **ROOT CAUSE**: the teacher app checked overdue homework at start-up and every minute, but pulled helper registrations only every 5 minutes. A 繳交 registered by a helper while the teacher's computer was off arrived after the heart was already given, and kept hearts are never removed.
+- **FIX**: hearts wait for the first pull after start-up (at most 20 s). Any auto heart whose wait, recomputed from the current events, ended before the heart's time is withdrawn with a reverse event (「自動撤回…」). This also covers a second device that syncs late. Hearts earned before the work was handed in stay, and so do hearts after a later change to the hours setting.
+- **PROVE**: `tests/hw-rules.test.mjs` (`BUG-027 …`).
+
+## BUG-028 (v6.2 小老師) — upgrading would start hearts for every old unfinished homework
+- **DETECT**: same review.
+- **ROOT CAUSE**: the rule clipped old waits to the switch-on time, so every old 未繳交／未訂正 started counting at the upgrade.
+- **FIX**: only waits that **begin** after the rule is switched on are counted. Nothing is back-filled.
+- **PROVE**: the test 「no hearts when disabled, before the start time …」 now expects 0 for a wait that began earlier.
+
+## BUG-029 (v6.2 小老師) — a helper could override the teacher's 免交
+- **DETECT**: same review.
+- **FIX**: the server refuses registrations for a classmate the published data shows as 免交 (409 `exempt`). The teacher app also skips such registrations (「老師設為免交」).
+- **PROVE**: `tests/server-helper.test.mjs` (`review fixes …`) and `tests/hw-rules.test.mjs` (`BUG-029 …`).
+
+## BUG-030 (v6.2 小老師) — smaller review findings
+- `inbox_seq` could go back to 0 when an old client published. It is now `MAX(inbox_seq, ?)`.
+- A student removed from the roster kept helper powers while the account stayed active. The helper check now also requires the helper's own published row.
+- The undo button counted events instead of students: a batch of 未訂正 for 3 students showed 「× 6」. It now counts distinct students.
+- Converting a large pull recomputed the whole class for every registration. Now only the affected cell is recomputed; 3000 registrations take well under 3 s in the test.
+- **PROVE**: `tests/server-helper.test.mjs` (`review fixes …`) and `tests/hw-rules.test.mjs` (`BUG-030 …`, `large pulls stay fast`).
+
+## BUG-031 (v6.2 student page) — long names without spaces made the phone page wider than the screen
+- **DETECT**: GitHub Actions, Chrome job, test 39: clicking the 「作業」 tab hit a card instead (`.stu-card … intercepts pointer events`). It did not happen on Windows.
+- **ROOT CAUSE**: nothing let a long run of letters with no spaces break onto the next line. The test student's name contains `onerror="window.__pwned=1">`. With the wider Linux fonts on the CI runner that line is wider than a 390px phone, so the page scrolled sideways and the fixed tab bar moved away from where the click landed. On Windows it reproduces at 320px (page 362px wide).
+- **FIX**: `.stu-app { overflow-wrap: anywhere; }`. Long names, homework titles and class names now wrap.
+- **PROVE**: the student zoo E2E test now also checks that the growth and homework pages fit at 390px and 320px. Without the fix it fails with 「document 362>320」; with the fix it passes.
+
+## CI test-environment fixes (not product bugs, 2026-11-27)
+- **Firefox** (3 failures): the test passed `isMobile`, which Firefox does not support (`options.isMobile is not supported in Firefox`). Firefox now runs with the same phone-sized window but without `isMobile`. No assertion was removed.
+- **WebKit**, student login: WebKit does not keep `Secure` cookies on `http://127.0.0.1`; Edge and Firefox do (confirmed with a small probe). The student session cookie is `__Host-…; Secure`, so on WebKit every student was logged out right after logging in. The E2E student API now runs over **HTTPS with a self-signed certificate generated for each run**, the same conditions as production. The Secure and `__Host-` checks are unchanged, and Node's own test calls trust only that certificate.
+- **WebKit**, `SameSite`: Playwright WebKit reports the stored cookie's `SameSite` as `None` even though the server sends `Strict` (seen on Windows). The test now checks the server's `Set-Cookie` header in every browser (`SameSite=Strict`, `HttpOnly`, `Secure`, `Path=/`, no `Domain`). It still checks the stored value in Edge, Chrome and Firefox.
+- **WebKit**, CSP: Playwright screenshots inject a `<style>`, and in WebKit the page's strict CSP blocks it and logs 「Refused to apply a stylesheet」 (confirmed with a probe page). That line is now ignored only while a screenshot is being taken, only in WebKit, and only for that exact text. Any other CSP violation still fails the test.
+
+## BUG-032 (OPEN, CI only) — Linux WebKit in GitHub Actions intermittently stalls in v6.1 browser tests
+- **DETECT**: `e2e-compat (webkit)` on every CI run so far, a different v6.1 test each time:
+  - c272b9a (v6.1): test 30
+  - 796b6fa: tests 4 and 10, plus the student tests (those were fixed in P1)
+  - c80ae99: test 43 (sync badge timed out after 15 s)
+  - 9a8f042: tests 4 and 9 (`Target page, context or browser has been closed` while clicking a visible button; the WebKit process logged `WebLoaderStrategy::internallyFailedLoadTimerFired` just before test 4)
+- **NOT REPRODUCED**: Playwright WebKit on Windows passes all 45 tests, and the sync test passed 6 times in a row. Chrome and Firefox pass in CI.
+- **Evidence (2026-11-27, CI runs 45940706019 and 45942204051, crash and close events printed to the job log)**:
+  - The "page closed" failures are **WebKit web-process crashes** (`PAGE CRASH`). Tests and the app did not close the pages, and sometimes WebKit logs `ERROR: WebKit encountered an internal error … WebLoaderStrategy.cpp(649)`.
+  - Run 45940706019 (before the change): 4 page crashes in the 45 tests, plus one page that stopped answering for over 20 s.
+  - Responsiveness diagnostic on Linux WebKit, same steps each time:
+    - Normal motion: about 13–21 frames per second. A page hang or crash happened in 3 of 12 measurements. The variants that switch off just the canvas, the scan sweep, the mascot or the blur behaved the same; sweep-off and blur-off each crashed once.
+    - Reduced motion: about 31–32 frames per second, with **0 crashes in 4 measurements**.
+  - Run 45942204051 (after the change):
+    - Normal suite: 45/45, 0 crashes. One internal WebKit error was logged without effect.
+    - Controlled experiment, full suite with reduced motion: 45/45, 0 crashes.
+- **Conclusion (moderate confidence)**:
+  - The crash is a WebKit (Linux, software rendering) bug; a page must never crash from CSS or canvas animation.
+  - Continuous rendering makes it more likely: the starfield canvas, the scan sweep, the floating mascot and CSS animations, all under `backdrop-filter`. No single element explains it. Windows WebKit never crashes.
+  - Not proven: one green run is too few, given earlier runs had 1 to 5 failures.
+- **Changes**:
+  - The starfield redraws at most 30 times a second, and not at all with reduced motion (before, it kept drawing on a hidden canvas).
+  - The sync test (test 43) had its own race: it trusted a stale 「已同步」 badge. It now waits for A's rename to reach the sheet (`e2e/sync.e2e.mjs`).
+  - Crash and close diagnostics are printed to the CI log, and the reduced-motion experiment and per-component measurements run in CI as evidence only.
+  - No timeout was lengthened, no retry was added, and no assertion or test was removed.
+- **STATUS**: CI green twice in a row (45942204051, 45943929716; every earlier WebKit run had failed). In the stress diagnostic, 2 of 24 normal-motion measurements across those two runs still crashed WebKit, so the crash is **reduced but not eliminated**. The 45-test gate passes. Root cause: **partly confirmed** (WebKit renderer crash, linked to continuous animation); WebKit stability **NOT_VERIFIED** until it stays green over more runs.
+- **Recurrence (2026-11-27, run 45998651373, commit 564b43b, P2 UI)**: the WebKit E2E job failed 46/47. One `PAGE CRASH` on the teacher page (`url=/`) failed the v5.1 test "daily settlement snapshot and day CSV". That test and page were not changed by P2. Both new P2 tests passed on WebKit CI. The same job's reduced-motion run passed 47/47, and the stress diagnostic had 0 crashes in 12 measurements. Chrome, Firefox and verify passed. This matches BUG-032: crashes are less frequent, not gone. Nothing was re-run to get a green result; WebKit CI is **FAIL** for this commit.
+
+## v6.2 test-writing mistakes caught by the suite (not product bugs)
+- Test helper's default new password contained the username → the server correctly refused it as weak.
+- Idempotency keys shorter than 8 characters in a test → the server correctly answered 400.
+- A test advanced the clock 14 h and then reused the teacher's 8-hour token → the server correctly answered 401; the test now opens a fresh teacher session.
+- Animals bob continuously, so Playwright's "stable" check never passes for a mouse click; the E2E selects them by keyboard instead (no `force`).
+
 ## TEST-HARNESS notes (not product bugs, recorded so they are not repeated)
 - `page.waitForSelector('#import-modal:not(.visible)')` waits for *visible* by default → use `{ state: 'hidden' }`.
 - Reading a card number immediately after a click races the async IndexedDB write → `waitVal()` polls until the expected value or timeout and then lets the assertion show the real value.

@@ -1,0 +1,19 @@
+// PM2 設定範本（複製成 /srv/fhes-student/ecosystem.config.cjs）。說明：docs/STUDENT-DEPLOY-GUIDE.md 第 4 節
+// 啟動：  pm2 start ecosystem.config.cjs && pm2 save
+// 環境變數從 fhes-student.env 讀取（node --env-file），這個檔案本身不含任何機密
+module.exports = {
+    apps: [{
+        name: 'fhes-student',
+        cwd: '/srv/fhes-student/app',
+        script: 'server/main.mjs',
+        node_args: '--env-file=/srv/fhes-student/fhes-student.env',
+        instances: 1,                 // SQLite：只能一個程序
+        exec_mode: 'fork',
+        max_memory_restart: '400M',
+        autorestart: true,
+        restart_delay: 3000,
+        out_file: '/srv/fhes-student/logs/out.log',
+        error_file: '/srv/fhes-student/logs/error.log',
+        time: true,
+    }],
+};

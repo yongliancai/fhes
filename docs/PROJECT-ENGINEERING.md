@@ -4,6 +4,7 @@ Single source of truth for AI-assisted development (Claude Code, Codex, ChatGPT 
 ## Authorization
 - Approved (2026-11-24, user): P2–P6 on the isolated branch `chore/code-factory-p0-p2` / Draft PR #1, using synthetic data and isolated test environments only.
 - Approved (2026-11-25, user): required Google sign-in (方案 A) with per-account data isolation, on the same branch / Draft PR #1. Simulated Google services and synthetic accounts only; no real Google Cloud resources, no hosting/backend deployment.
+- Approved (2026-11-25, user): v6.2 student system P0–P6 on the isolated worktree branch `feat/v6.2-student`, local/test environments and synthetic data only; commits, pushing that branch and a Draft PR are allowed. Not approved: VPS access or changes, production database/domain, PM2/nginx/CloudPanel, real students, production Sheets, paid services, Firebase, merge to `main`, deployment (`docs/STUDENT-DEPLOY-TODO.md`).
 - Forbidden until separately approved: merge to `main`; publishing/deploying (GitHub Pages included); auto-merge/auto-deploy; touching real student data; reading, changing or deleting remote Firebase/Firestore data; creating real Google Cloud/OAuth/Sheets resources; sharing credentials; expanding access.
 
 ## Default process
@@ -28,6 +29,7 @@ Bugs: DETECT → REPRODUCE → ROOT_CAUSE → FIX → PREVENT → PROVE → RECO
 - Catalogue: 6 worlds × 12 base items with rarity 5/4/2/1 (`npm test` enforces it); special items have their own IDs, ≤2 tags, never occupy base slots; tags never act as unlock conditions; builtin tags can be disabled but not deleted.
 - Sync: IndexedDB is the offline store; Google Sheets is the cloud copy. Never overwrite whole sheets; push only changed rows; append-only for immutable tables; three-way hash compare to detect conflicts; never claim success before the remote write is confirmed; OAuth tokens live only in memory.
 - Backups: v4, v5, v5.1 and v6 files must keep importing; newer versions are refused; import always downloads a pre-import backup first.
+- Student system (ADR-015…020): student endpoints take no identity parameters (everything comes from the server session); teachers only reach classes they linked (others → 404); care is capped at 3 counted actions per student per Asia/Taipei day and never changes XP, score, grants or growth; hearts are never published; projections replace the whole class (no ghost data); initial passwords are shown once and stored only as Argon2id hashes.
 - Identity (ADR-011/012/013): nothing opens before a verified Google sign-in; the account key is `sub` (never email); each account has its own IndexedDB; data that belongs to no account is never assigned automatically (preview → choose → backup → copy → undoable); Sheets authorization must be for the signed-in `sub`; sign-out/switch stops sync and clears memory before anything else; the login gate is not described as encryption or server-side access control.
 
 ## Verification

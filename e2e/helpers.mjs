@@ -1,8 +1,10 @@
 // E2E 共用：啟動靜態伺服器 + 系統瀏覽器（playwright-core，不下載瀏覽器）
 // 本機 Windows 預設 Edge；CI（ubuntu）預設 Chrome。可用 E2E_CHANNEL 覆寫（chrome / msedge / chromium）。
 import { chromium, firefox, webkit } from 'playwright-core';
-import { mkdirSync, readFileSync, appendFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, appendFileSync, existsSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { resolve, dirname, join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 import { startServer } from '../scripts/serve.mjs';
@@ -31,6 +33,30 @@ const DIAG_LOG = join(OUT, `diag-${ENGINE}.log`);
 const diag = (line) => { if (DIAG) appendFileSync(DIAG_LOG, `${new Date().toISOString()} ${line}
 `); };
 let diagSeq = 0;
+
+/**
+ * 學生系統 API 的測試用 TLS 憑證（自簽、只給 127.0.0.1、執行時才產生、不進版控）。
+ * 為什麼要 HTTPS：WebKit 在 http://127.0.0.1 不保存 Secure Cookie（Edge／Firefox 會），
+ * 學生 Session 是 `__Host-` + Secure，用 http 測試時 WebKit 一登入就沒有工作階段（CI 失敗的原因）。
+ * 改用 HTTPS 讓三個瀏覽器都在和正式環境相同的條件下測試，不放寬任何 Cookie 設定。
+ */
+let tls = null;
+const findOpenssl = () => {
+    if (process.env.OPENSSL) return process.env.OPENSSL;
+    if (process.platform !== 'win32') return 'openssl';
+    for (const p of ['C:\\Program Files\\Git\\usr\\bin\\openssl.exe', 'C:\\Program Files\\Git\\mingw64\\bin\\openssl.exe']) if (existsSync(p)) return p;
+    return 'openssl';
+};
+export const testTls = () => {
+    if (tls) return tls;
+    const dir = mkdtempSync(join(tmpdir(), 'fhes-e2e-tls-'));
+    const cnf = join(dir, 'req.cnf'); const key = join(dir, 'key.pem'); const cert = join(dir, 'cert.pem');
+    writeFileSync(cnf, '[req]\nprompt = no\ndistinguished_name = dn\nx509_extensions = ext\n[dn]\nCN = 127.0.0.1\n[ext]\nsubjectAltName = IP:127.0.0.1\n');
+    execFileSync(findOpenssl(), ['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', '2', '-keyout', key, '-out', cert, '-config', cnf], { stdio: 'pipe', env: { ...process.env, MSYS_NO_PATHCONV: '1' } });
+    tls = { key: readFileSync(key), cert: readFileSync(cert) };
+    rmSync(dir, { recursive: true, force: true });
+    return tls;
+};
 
 let shared = null;
 /** 一個測試檔共用一個瀏覽器與伺服器；每個測試用全新 context（全新 IndexedDB） */
@@ -98,11 +124,14 @@ export const reloadAndSignIn = async (page, account = TEACHER_A) => {
  * 開新頁面：自動接受 confirm/alert，回答 prompt（依佇列），收集 console error / pageerror。
  * opts.viewport、opts.reducedMotion、opts.query、opts.emu（Sheets 模擬器）
  * opts.signIn（預設 true：以合成老師帳號登入）、opts.account、opts.clientId（null = 不預設 Client ID）
+ * opts.waitFor（signIn: false 時等待的元素，預設 #auth-gate）
  */
 export const openApp = async (opts = {}) => {
     const { url, browser } = await setup();
-    const context = await browser.newContext({ acceptDownloads: true, viewport: opts.viewport || { width: 1280, height: 800 },
-        reducedMotion: opts.reducedMotion || 'no-preference', locale: 'zh-TW', timezoneId: 'Asia/Taipei', ...(opts.context || {}) });
+    // ignoreHTTPSErrors：只為了接受測試用學生系統 API 的自簽憑證（testTls）；教師頁本身仍是 http://127.0.0.1
+    const context = await browser.newContext({ acceptDownloads: true, ignoreHTTPSErrors: true, viewport: opts.viewport || { width: 1280, height: 800 },
+        // E2E_REDUCED_MOTION=1：只給 CI 的對照實驗用（BUG-032），預設一律是一般動態效果
+        reducedMotion: opts.reducedMotion || (process.env.E2E_REDUCED_MOTION === '1' ? 'reduce' : 'no-preference'), locale: 'zh-TW', timezoneId: 'Asia/Taipei', ...(opts.context || {}) });
     // 外部網路一律擋掉（字型等）；Google 相關端點由假 Google／模擬器回應
     await context.route(/^https?:\/\/(?!127\.0\.0\.1)/, r => r.abort());
     const { revoked } = await wireFakeGoogle(context);
@@ -110,10 +139,12 @@ export const openApp = async (opts = {}) => {
     const clientId = opts.clientId === undefined ? TEST_CLIENT_ID : opts.clientId;
     // clientId: null = 模擬「部署時沒有設定 Client ID」：這個 context 拿到的 src/config.js 是空的 Client ID（來源清單照舊）。
     // 其他測試使用 repo 裡的 config：假 GIS 會用 App 設定的 Client ID 簽 aud，所以真正的 Client ID 不影響測試。
-    if (opts.clientId === null) {
-        const real = readFileSync(join(ROOT, 'src', 'config.js'), 'utf8');
-        const blank = real.replace(/export const GOOGLE_CLIENT_ID = '[^']*';/, "export const GOOGLE_CLIENT_ID = '';");
-        await context.route(/\/src\/config\.js$/, r => r.fulfill({ status: 200, contentType: 'text/javascript; charset=utf-8', body: blank }));
+    // studentApi（v6.2）：這個 context 的 src/config.js 指向測試用的學生系統 API
+    if (opts.clientId === null || opts.studentApi) {
+        let cfg = readFileSync(join(ROOT, 'src', 'config.js'), 'utf8');
+        if (opts.clientId === null) cfg = cfg.replace(/export const GOOGLE_CLIENT_ID = '[^']*';/, "export const GOOGLE_CLIENT_ID = '';");
+        if (opts.studentApi) cfg = cfg.replace(/export const STUDENT_API_BASE = '[^']*';/, `export const STUDENT_API_BASE = '${opts.studentApi}';`);
+        await context.route(/\/src\/config\.js$/, r => r.fulfill({ status: 200, contentType: 'text/javascript; charset=utf-8', body: cfg }));
     }
     if (clientId) await context.addInitScript((cid) => { try { if (!localStorage.getItem('fhes_google_client_id')) localStorage.setItem('fhes_google_client_id', cid); } catch { /* ignore */ } }, clientId);
     const seq = ++diagSeq;
@@ -127,13 +158,15 @@ export const openApp = async (opts = {}) => {
         });
     }
     const page = await context.newPage();
+    let closingOnPurpose = false;
     if (DIAG) {
         diag(`--- context #${seq} opened (${ENGINE})`);
         page.on('framenavigated', f => { if (f === page.mainFrame()) diag(`#${seq} navigated ${f.url().replace(/^https?:\/\/[^/]+/, '')}`); });
         page.on('console', m => diag(`#${seq} console.${m.type()} ${JSON.stringify(m.text()).slice(0, 800)} loc=${JSON.stringify(m.location())}`));
         page.on('pageerror', e => diag(`#${seq} pageerror ${e.name}: ${e.message} stack=${JSON.stringify((e.stack || '').slice(0, 600))}`));
-        page.on('crash', () => diag(`#${seq} PAGE CRASH url=${page.url()}`));
-        page.on('close', () => diag(`#${seq} page closed`));
+        // BUG-032：崩潰與「不是測試自己關的」關閉，同時印到標準輸出（CI 的工作紀錄看得到，不必下載 artifact）
+        page.on('crash', () => { diag(`#${seq} PAGE CRASH url=${page.url()}`); console.log(`[diag ${ENGINE}] context #${seq} PAGE CRASH url=${page.url().replace(/^https?:\/\/[^/]+/, '')}`); });
+        page.on('close', () => { diag(`#${seq} page closed`); if (!closingOnPurpose) console.log(`[diag ${ENGINE}] context #${seq} PAGE CLOSED UNEXPECTEDLY url=${page.url().replace(/^https?:\/\/[^/]+/, '')}`); });
         page.on('requestfailed', r => diag(`#${seq} requestfailed ${r.method()} ${r.url().slice(0, 120)} ${r.failure()?.errorText}`));
     }
     const errors = [];
@@ -154,8 +187,9 @@ export const openApp = async (opts = {}) => {
         // 等到 App 真的跑起來（「新增班級」卡片由模組腳本產生）；腳本壞掉時立即失敗並附上錯誤
         try { await signIn(page, opts.account || TEACHER_A); }
         catch { throw new Error(`App did not start: ${errors.join(' | ') || 'no page error captured'}`); }
-    } else await page.waitForSelector('#auth-gate', { timeout: 10000 });
+    } else await page.waitForSelector(opts.waitFor || '#auth-gate', { timeout: 10000 });
     const close = async () => {
+        closingOnPurpose = true;
         if (DIAG) {
             diag(`#${seq} closing; collected errors=${JSON.stringify(errors)}`);
             await context.tracing.stop({ path: join(OUT, `trace-${ENGINE}-${seq}.zip`) }).catch(e => diag(`#${seq} trace stop failed: ${e.message}`));

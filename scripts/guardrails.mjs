@@ -60,6 +60,14 @@ export const checkFile = (path, text) => {
     if (path.startsWith('src/sync/')) {
         for (const m of text.matchAll(IMPORT_FROM)) if (/\/ui\//.test(m[1]) || /^\.\.\/ui\b/.test(m[1])) errors.push(`${path} imports ${m[1]}: sync may not depend on ui.`);
     }
+    // v6.2 後端（ADR-015～018）：不依賴前端 ui/sync、不載入測試工具、不把憑證或密碼印到記錄
+    if (path.startsWith('server/')) {
+        for (const m of text.matchAll(IMPORT_FROM)) {
+            if (/\/src\/(?:ui|sync)\//.test(m[1])) errors.push(`${path} imports ${m[1]}: the server may not depend on browser ui/sync code.`);
+            if (/tests\/|fake-google|sheets-emulator/.test(m[1])) errors.push(`${path} imports ${m[1]}: test helpers must never be loaded by the server.`);
+        }
+        if (TOKEN_LOG.test(text) || /\bconsole\s*\.\s*\w+\s*\([^)]*\b(?:password|initialPassword|csrf|cookie)\b/i.test(text)) errors.push(`${path} logs something that looks like a credential or password.`);
+    }
     if (/^tests\/fixtures\/.+\.json$/.test(path)) {
         let data = null; try { data = JSON.parse(text); } catch { errors.push(`${path} is not valid JSON`); }
         if (data && data._synthetic !== true) errors.push(`${path} must declare "_synthetic": true (no real student data in fixtures).`);

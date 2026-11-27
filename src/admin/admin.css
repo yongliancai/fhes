@@ -1,0 +1,24 @@
+/* 學生系統管理頁：簡單、清楚，不需要太空主題 */
+:root { color-scheme: light dark; --bg: #f6f7f9; --fg: #1d2330; --muted: #5b6475; --line: #d9dde5; --card: #fff; --accent: #1f6feb; --warn: #9a6700; --err: #c62828; }
+@media (prefers-color-scheme: dark) { :root { --bg: #11151c; --fg: #e6e9ef; --muted: #9aa3b2; --line: #2c3340; --card: #191f29; --accent: #4c8dff; --warn: #e3b341; --err: #ff7b72; } }
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.6 system-ui, "Noto Sans TC", "Microsoft JhengHei", sans-serif; }
+.adm-gate, .adm-app { max-width: 1100px; margin: 0 auto; padding: 24px 16px 48px; }
+.adm-gate { max-width: 520px; text-align: center; padding-top: 12vh; }
+.adm-gsi { display: flex; justify-content: center; min-height: 48px; margin: 20px 0; }
+.adm-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+h1 { font-size: 1.5rem; margin: 0 0 8px; }
+h2 { font-size: 1.15rem; margin: 28px 0 8px; }
+section { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 4px 16px 16px; margin-top: 16px; overflow-x: auto; }
+.adm-muted { color: var(--muted); }
+.adm-status[data-kind="error"], .adm-msg[data-kind="error"] { color: var(--err); }
+.adm-warn { color: var(--warn); font-weight: 600; }
+.adm-table { width: 100%; border-collapse: collapse; font-size: 0.95rem; }
+.adm-table th, .adm-table td { padding: 6px 8px; border-bottom: 1px solid var(--line); text-align: center; vertical-align: middle; }
+.adm-table td.left { text-align: left; }
+.mono { font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; }
+.adm-btn { font: inherit; padding: 4px 12px; margin: 2px; border-radius: 6px; border: 1px solid var(--line); background: transparent; color: var(--fg); cursor: pointer; }
+.adm-btn:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+.adm-primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.adm-new { border: 2px dashed var(--warn); border-radius: 8px; padding: 8px 12px; margin: 12px 0; }
+.adm-audit td { font-size: 0.85rem; }

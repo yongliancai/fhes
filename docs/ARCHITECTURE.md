@@ -34,6 +34,15 @@
 | `src/ui/homework-ui.js` | ui | homework tab: projection-safe stats, teacher matrix, batch, follow-up, history, settings, reward rule |
 | `src/ui/features.css` | ui | styles for v6 features |
 
+| `src/core/student-projection.js` | core | v6.2: per-student DTO from v6.1 rules (no hearts), validation, SHA-256 hash (shared with the server) |
+| `src/core/care.js` | core | v6.2: group care rules (3/day, mood, badges, team days); cosmetic only |
+| `src/sync/student-api.js` | sync | v6.2: teacher client for the student API (in-memory bearer, accounts, versioned publish) |
+| `src/ui/student-admin-ui.js` | ui | v6.2: 「學生系統」 dialog (accounts, one-time slips, publish, care summary); hidden when `STUDENT_API_BASE` is empty |
+| `src/art/student-art.js` | art | v6.2: approved-art lookup by catalog ID with SVG fallback |
+| `src/data/art-manifest.js` | data | approved art list (empty on this branch; generated on the art branch) |
+| `student.html`, `src/student/*` | student page | v6.2: student learning centre, served same-origin by the API under a strict CSP. P3: my classes / class switcher / one code box, `#join=` links; `student-google.js` loads Google sign-in only when the server's switch is on (ADR-029) |
+| `server/` | backend | v6.2: Fastify + better-sqlite3 + Argon2id API (`docs/STUDENT-SYSTEM.md`, `docs/api/openapi.yaml`) |
+
 Dependency direction: `ui → sync → auth/core/data`; `auth` depends on nothing else. `core`/`data` are pure (no browser globals). Enforced by `scripts/guardrails.mjs`.
 
 ## Browser storage
@@ -65,8 +74,12 @@ In-memory `S` mirrors the stores; totals are recomputed from events.
 - Sync runs 4 s after any change, on `online`, on tab focus, or manually; retryable errors back off 5 s → 5 min; auth errors wait for the teacher to click 重新連線.
 - Teacher-facing setup: `docs/GOOGLE-SHEETS-SETUP.md`.
 
+## Student system (v6.2)
+See `docs/STUDENT-SYSTEM.md` (architecture, permission matrix, data flow), `docs/STUDENT-THREAT-MODEL.md`, ADR-015…020. The teacher app stays the source of truth; the server stores only projections, student accounts (Argon2id), sessions (hashed) and care events. Local demo: `npm run student:dev`.
+
 ## Tests
 - `tests/*.test.mjs` — Node built-in runner, imports production modules directly; synthetic fixtures in `tests/fixtures/` (v4/v5/v5.1 backups with hand-checked expected totals).
 - `e2e/*.e2e.mjs` — playwright-core + system browser against `scripts/serve.mjs`. Every test signs in through `tests/helpers/fake-google.mjs` (fake GIS that really RS256-signs ID tokens with a per-run key, JWKS and userinfo routes); `e2e/auth.e2e.mjs` covers the gate, invalid tokens, isolation, sessions and token leaks.
 - `tests/helpers/sheets-emulator.mjs` — Google Sheets REST emulator with fault injection; used by unit tests (fake fetch) and E2E (network routes for `sheets.googleapis.com` and a fake GIS script). Not shipped.
+- `tests/server-*.test.mjs` — v6.2 backend through `app.inject()` with an in-memory DB and test-signed Google tokens (`tests/helpers/server-harness.mjs`); `e2e/student.e2e.mjs` runs the real API in-process with the teacher app and the student page.
 - `scripts/guardrails.mjs`, `scripts/lint.mjs`, `scripts/check-inline-js.mjs` — deterministic checks.

@@ -8,6 +8,8 @@ export const TEST_CLIENT_ID = '1234567890-testclientabc.apps.googleusercontent.c
 export const OTHER_CLIENT_ID = '9999999999-otherclientxyz.apps.googleusercontent.com';
 export const TEACHER_A = Object.freeze({ sub: '100000000000000000001', email: 'teacher.a@example.test', name: '測試老師甲' });
 export const TEACHER_B = Object.freeze({ sub: '100000000000000000002', email: 'teacher.b@example.test', name: '測試老師乙' });
+/** 平台管理員（D3a）：只在後端測試用；E2E 不建立管理員 */
+export const ADMIN = Object.freeze({ sub: '100000000000000000099', email: 'owner@admin.example.test', name: '測試管理員' });
 export const KID = 'fhes-test-kid-1';
 
 const gen = () => webcrypto.subtle.generateKey({ name: 'RSASSA-PKCS1-v1_5', modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: 'SHA-256' }, true, ['sign', 'verify']);

@@ -65,6 +65,26 @@ jobs:
           E2E_DIAG: '1'
           # 瀏覽器程序的 stderr（WebKit 頁面崩潰的原因）印到這個步驟的紀錄裡
           DEBUG: pw:browser
+      # BUG-032 診斷（只蒐集證據）：一般 vs 減少動態效果下，網頁回應時間與每秒畫面數。結果不影響上面 45 項 E2E 的判定。
+      - name: Responsiveness diagnostic (BUG-032, evidence only)
+        if: always()
+        continue-on-error: true
+        run: node e2e/diag-responsiveness.mjs
+        timeout-minutes: 10
+        env:
+          E2E_BROWSER: ${{ matrix.browser }}
+          E2E_DIAG: '1'
+          DIAG_SECONDS: '20'
+      # BUG-032 對照實驗（只蒐集證據）：同一個 WebKit 環境，全部 45 項改用「減少動態效果」再跑一次，比較崩潰次數。
+      # 不影響工作結果；正式判定只看上面一般設定的那一輪。
+      - name: Controlled experiment — full suite with reduced motion (BUG-032, evidence only)
+        if: always() && matrix.browser == 'webkit'
+        continue-on-error: true
+        run: npm run test:e2e 2>&1 | grep -E --line-buffered "^# (pass|fail) |^not ok|PAGE CRASH|PAGE CLOSED|WebKit encountered"
+        env:
+          E2E_BROWSER: ${{ matrix.browser }}
+          E2E_DIAG: '1'
+          E2E_REDUCED_MOTION: '1'
       - uses: actions/upload-artifact@v4
         if: always()
         with:

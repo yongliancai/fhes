@@ -1,7 +1,7 @@
 // 作業分頁 UI：今日作業、匿名統計（投影安全）、教師矩陣、批次登記、追蹤清單、個人歷程、作業類別設定
 import { h, makeModal, pct, fill } from './dom.js';
 import {
-    SUBMISSION, CORRECTION, SUBMISSION_ICON, CORRECTION_ICON, projectRecords, getRecord, buildChangeEvents, buildUndoBatch, buildResolveEvent,
+    SUBMISSION, CORRECTION, SIMPLE, SIMPLE_ICON, simpleState, simpleLabel, buildSimpleChange, projectRecords, getRecord, buildChangeEvents, buildUndoBatch, buildResolveEvent,
     assignmentStats, followUpLists, studentHistory, lastUndoableBatch, addHwType, renameHwType, setHwTypeActive, canDeleteHwType, typeName, makeAssignment, copyAssignments,
 } from '../core/homework.js';
 
@@ -38,10 +38,12 @@ export const initHomeworkUI = (app) => {
         app.afterDataChange();
     };
 
-    /** 套用變更（單格或批次），回傳產生的事件數 */
+    /** 套用變更（單格或批次）。field = 'simple' 時 value 是 4 個簡易狀態之一（繳交／未繳交／未訂正／已訂正） */
     const change = async (c, assignmentId, studentIds, field, value) => {
         refreshRecords(c);
-        const out = buildChangeEvents({ records, classId: c.id, assignmentId, studentIds, field, value }, ctx());
+        const out = field === 'simple'
+            ? buildSimpleChange({ hwEvents: eventsOf(c), assignments: assignmentsOf(c), records, classId: c.id, assignmentId, studentIds, state: value }, ctx())
+            : buildChangeEvents({ records, classId: c.id, assignmentId, studentIds, field, value }, ctx());
         await writeEvents(out.events);
         if (out.rejected.length) app.notify(`${out.rejected.length} 位略過：${out.rejected[0].error}`, 4000);
         return out;
@@ -123,22 +125,21 @@ export const initHomeworkUI = (app) => {
     };
 
     // ---------------------------------------------------------------- matrix (teacher)
-    const cellText = (r) => {
-        const sub = `${SUBMISSION_ICON[r.submission]} ${SUBMISSION[r.submission]}`;
-        const cor = r.submission === 'submitted' && r.correction ? `${CORRECTION_ICON[r.correction]} ${CORRECTION[r.correction]}` : '';
-        return [sub, cor];
-    };
+    const STATE_ICON = { ...SIMPLE_ICON, unchecked: '·', exempt: '—' };
+    /** 批次的名稱用 4 個按鈕的說法（「未訂正」那一批的最後一筆是訂正事件） */
+    const batchLabel = (field, value) => field === 'submission' ? simpleLabel(value) : value === 'ungraded' ? SIMPLE.submitted : value === 'none' ? CORRECTION.none : simpleLabel(value);
+    const cellText = (r) => { const st = simpleState(r); return [`${STATE_ICON[st] || ''} ${simpleLabel(st)}`, '']; };
     const matrix = (c, list, students) => {
         const allSel = students.length > 0 && students.every(s => selected.has(s.id));
         const head = h('tr', {},
             h('th', {}, h('input', { type: 'checkbox', 'aria-label': '全選', checked: allSel ? true : null, onchange: (e) => { students.forEach(s => e.target.checked ? selected.add(s.id) : selected.delete(s.id)); render(c); } })),
             h('th', { text: '座號' }), h('th', { class: 'left', text: '姓名' }),
             list.map(a => h('th', { class: 'hw-col' }, h('div', { text: aLabel(c, a) }),
-                h('button', { class: 'btn btn-secondary mini', text: '其餘未登記→未交', title: '把這份作業仍是「未登記」的同學設成「未交」',
+                h('button', { class: 'btn btn-secondary mini', text: '其餘未登記→未繳交', title: '把這份作業仍是「未登記」的同學設成「未繳交」',
                     onclick: async () => {
                         const rest = students.filter(s => getRecord(records, a.id, s.id).submission === 'unchecked').map(s => s.id);
                         if (!rest.length) { app.notify('沒有未登記的同學'); return; }
-                        if (!confirm(`把 ${rest.length} 位「未登記」設為「未交」？`)) return;
+                        if (!confirm(`把 ${rest.length} 位「未登記」設為「未繳交」？`)) return;
                         await change(c, a.id, rest, 'submission', 'missing'); render(c);
                     } }))));
         const rows = students.map(s => h('tr', { class: selected.has(s.id) ? 'sel' : '' },
@@ -150,7 +151,7 @@ export const initHomeworkUI = (app) => {
                 const r = getRecord(records, a.id, s.id);
                 const [t1, t2] = cellText(r);
                 return h('td', {}, h('button', {
-                    class: `hw-cell sub-${r.submission}${r.correction ? ` cor-${r.correction}` : ''}${r.conflict ? ' conflict' : ''}`,
+                    class: `hw-cell sub-${r.submission}${r.correction ? ` cor-${r.correction}` : ''} st-${simpleState(r)}${r.conflict ? ' conflict' : ''}`,
                     dataset: { aid: a.id, sid: s.id }, 'aria-label': `${s.name} ${aLabel(c, a)}：${t1}${t2 ? `，${t2}` : ''}${r.conflict ? '，同步衝突' : ''}`,
                     onclick: () => openCell(c, a, s),
                 }, h('span', { text: t1 }), t2 ? h('small', { text: t2 }) : null, r.late ? h('small', { class: 'late', text: '補交' }) : null, r.conflict ? h('small', { class: 'warn', text: '⚠ 衝突' }) : null));
@@ -158,16 +159,16 @@ export const initHomeworkUI = (app) => {
         const batch = h('div', { class: 'hw-batch', hidden: selected.size ? null : true },
             h('span', { text: `已選 ${selected.size} 位` }),
             list.length > 1 ? h('select', { id: 'hw-batch-assign', 'aria-label': '套用到哪份作業' }, list.map(a => h('option', { value: a.id, text: aLabel(c, a) }))) : null,
-            ...Object.entries(SUBMISSION).map(([k, v]) => h('button', { class: 'btn btn-secondary mini', dataset: { batch: k }, text: `→ ${v}`, onclick: () => applyBatch(c, list, 'submission', k) })),
+            ...Object.entries(SIMPLE).map(([k, v]) => h('button', { class: 'btn btn-secondary mini', dataset: { batch: k }, text: `${SIMPLE_ICON[k]} ${v}`, onclick: () => applyBatch(c, list, 'simple', k) })),
             h('span', { class: 'sep' }),
-            ...Object.entries(CORRECTION).map(([k, v]) => h('button', { class: 'btn btn-secondary mini', dataset: { batchCor: k }, text: `→ ${v}`, onclick: () => applyBatch(c, list, 'correction', k) })),
+            ...[['exempt', '免交'], ['unchecked', '清除登記']].map(([k, v]) => h('button', { class: 'btn btn-secondary mini', dataset: { batch: k }, text: v, onclick: () => applyBatch(c, list, 'submission', k) })),
             h('button', { class: 'btn btn-secondary mini', text: '取消選取', onclick: () => { selected.clear(); render(c); } }));
         const lb = lastUndoableBatch(eventsOf(c), app.localDate());
-        const lbLabel = lb ? `${(lb.field === 'submission' ? SUBMISSION : CORRECTION)[lb.value]} × ${lb.n}` : '';
+        const lbLabel = lb ? `${batchLabel(lb.field, lb.value)} × ${lb.n}` : '';
         const undo = h('button', { class: 'btn btn-secondary', id: 'hw-undo-batch', disabled: lb ? null : true,
             text: lb ? `↶ 復原上一批（${lbLabel}）` : '↶ 復原上一批', title: lb ? null : '今天沒有可以復原的批次', onclick: () => undoBatch(c, lb, lbLabel) });
         return h('div', { class: 'hw-matrix-wrap' },
-            h('div', { class: 'hw-matrix-tools' }, undo, h('span', { class: 'muted', text: '點格子改狀態；勾選多位可批次登記。未登記 ≠ 未交。' })),
+            h('div', { class: 'hw-matrix-tools' }, undo, h('span', { class: 'muted', text: '點格子改狀態；勾選多位可批次登記。未登記 ≠ 未繳交。未繳交、未訂正超過規定時間會自動加愛心（⚙️ 作業設定）。' })),
             batch,
             h('div', { class: 'table-wrap' }, h('table', { class: 'data-table hw-matrix' }, h('thead', {}, head), h('tbody', {}, rows))));
     };
@@ -201,15 +202,15 @@ export const initHomeworkUI = (app) => {
                 h('p', { text: '⚠ 兩台裝置對這一格做了不同的修改，請選擇正確的狀態：' }),
                 r.conflict.options.map(o => h('button', { class: 'btn btn-heart', text: `${(r.conflict.field === 'submission' ? SUBMISSION : CORRECTION)[o.value]}（${app.localTime(o.ts)}${o.deviceId ? `・${o.deviceId.slice(0, 6)}` : ''}）`,
                     onclick: async () => { await writeEvents([buildResolveEvent({ records, classId: c.id, assignmentId: a.id, studentId: s.id, field: r.conflict.field, value: o.value }, ctx())]); cellModal.close(); render(c); } }))) : null,
-            h('h3', { class: 'hw-sec', text: '繳交' }),
-            h('div', { class: 'reason-grid' }, Object.entries(SUBMISSION).map(([k, v]) => h('button', {
-                class: `btn reason-btn ${r.submission === k ? 'btn-primary' : 'btn-secondary'}`, dataset: { sub: k }, 'aria-pressed': r.submission === k ? 'true' : 'false',
-                text: `${SUBMISSION_ICON[k]} ${v}`, onclick: () => set('submission', k) }))),
-            h('h3', { class: 'hw-sec', text: '訂正' }),
-            r.submission !== 'submitted' ? h('p', { class: 'muted', text: '先標記「已交」才能設定訂正。' }) : null,
-            h('div', { class: 'reason-grid' }, Object.entries(CORRECTION).map(([k, v]) => h('button', {
-                class: `btn reason-btn ${r.correction === k ? 'btn-primary' : 'btn-secondary'}`, dataset: { cor: k }, 'aria-pressed': r.correction === k ? 'true' : 'false',
-                disabled: r.submission === 'submitted' ? null : true, text: `${CORRECTION_ICON[k]} ${v}`, onclick: () => set('correction', k) }))),
+            h('div', { class: 'reason-grid hw-simple-grid' }, Object.entries(SIMPLE).map(([k, v]) => h('button', {
+                class: `btn reason-btn ${simpleState(r) === k ? 'btn-primary' : 'btn-secondary'}`, dataset: { simple: k }, 'aria-pressed': simpleState(r) === k ? 'true' : 'false',
+                text: `${SIMPLE_ICON[k]} ${v}`, onclick: () => set('simple', k) }))),
+            h('details', { class: 'hw-more' }, h('summary', { text: '更多（免交、清除登記、不需訂正）' }),
+                h('div', { class: 'reason-grid' },
+                    h('button', { class: `btn reason-btn ${r.submission === 'exempt' ? 'btn-primary' : 'btn-secondary'}`, dataset: { sub: 'exempt' }, 'aria-pressed': r.submission === 'exempt' ? 'true' : 'false', text: '— 免交', onclick: () => set('submission', 'exempt') }),
+                    h('button', { class: `btn reason-btn ${r.submission === 'unchecked' ? 'btn-primary' : 'btn-secondary'}`, dataset: { sub: 'unchecked' }, 'aria-pressed': r.submission === 'unchecked' ? 'true' : 'false', text: '· 清除登記（未登記）', onclick: () => set('submission', 'unchecked') }),
+                    h('button', { class: `btn reason-btn ${r.correction === 'none' ? 'btn-primary' : 'btn-secondary'}`, dataset: { cor: 'none' }, 'aria-pressed': r.correction === 'none' ? 'true' : 'false',
+                        disabled: r.submission === 'submitted' ? null : true, text: '◇ 不需訂正', onclick: () => set('correction', 'none') }))),
             r.submittedDate ? h('p', { class: 'muted', text: `交件：${app.mdLabel(r.submittedDate)} ${app.localTime(r.submittedAt)}${r.late ? '（補交）' : ''}${r.correctedAt ? `・訂正完成：${app.localTime(r.correctedAt)}` : ''}` }) : null,
             hist.length ? h('details', { class: 'hw-hist' }, h('summary', { text: `歷程（${hist.length}）` }),
                 h('ul', {}, hist.map(e => h('li', { text: `${app.mdLabel(e.date)} ${app.localTime(e.ts)}　${e.field === 'submission' ? '繳交' : '訂正'}：${label(e.field, e.prev)} → ${label(e.field, e.value)}${e.reason ? `（${e.reason}）` : ''}` })))) : null,
@@ -232,10 +233,10 @@ export const initHomeworkUI = (app) => {
         const uncheckedByAssignment = new Map();
         l.unchecked.forEach(x => uncheckedByAssignment.set(x.assignment.id, (uncheckedByAssignment.get(x.assignment.id) || 0) + 1));
         return h('div', { class: 'hw-follow' },
-            h('div', { class: 'hw-follow-col' }, h('h3', { text: `📮 待補交（${l.missing.length}）` }),
-                l.missing.length ? h('ul', {}, l.missing.map(x => row(x, (a, s) => h('button', { class: 'btn btn-success mini', text: '補交了', onclick: async () => { await change(c, a.id, [s.id], 'submission', 'submitted'); render(c); } })))) : h('p', { class: 'muted', text: '沒有待補交' })),
-            h('div', { class: 'hw-follow-col' }, h('h3', { text: `✎ 待訂正（${l.needs.length}）` }),
-                l.needs.length ? h('ul', {}, l.needs.map(x => row(x, (a, s) => h('button', { class: 'btn btn-success mini', text: '已訂正', onclick: async () => { await change(c, a.id, [s.id], 'correction', 'done'); render(c); } })))) : h('p', { class: 'muted', text: '沒有待訂正' })),
+            h('div', { class: 'hw-follow-col' }, h('h3', { text: `📮 未繳交（${l.missing.length}）` }),
+                l.missing.length ? h('ul', {}, l.missing.map(x => row(x, (a, s) => h('button', { class: 'btn btn-success mini', text: '繳交了', onclick: async () => { await change(c, a.id, [s.id], 'simple', 'submitted'); render(c); } })))) : h('p', { class: 'muted', text: '沒有未繳交' })),
+            h('div', { class: 'hw-follow-col' }, h('h3', { text: `✎ 未訂正（${l.needs.length}）` }),
+                l.needs.length ? h('ul', {}, l.needs.map(x => row(x, (a, s) => h('button', { class: 'btn btn-success mini', text: '已訂正', onclick: async () => { await change(c, a.id, [s.id], 'simple', 'done'); render(c); } })))) : h('p', { class: 'muted', text: '沒有未訂正' })),
             h('div', { class: 'hw-follow-col' }, h('h3', { text: '· 尚未登記（不算未交）' }),
                 uncheckedByAssignment.size ? h('ul', {}, [...uncheckedByAssignment].map(([aid, n]) => { const a = active.find(x => x.id === aid); return h('li', { text: `${app.mdLabel(a.assignedDate)} ${aLabel(c, a)}：${n} 位未登記` }); })) : h('p', { class: 'muted', text: '全部都已登記' }),
                 conflicts.length ? h('h3', { class: 'warn', text: `⚠ 同步衝突（${conflicts.length}）` }) : null,
@@ -379,6 +380,10 @@ export const initHomeworkUI = (app) => {
         const newName = h('input', { type: 'text', id: 'hwt-new', maxlength: '10', placeholder: '新類別名稱' });
         const rewardOn = h('input', { type: 'checkbox', id: 'hw-reward-on', checked: c.hwReward?.enabled ? true : null });
         const rewardXp = h('input', { type: 'number', id: 'hw-reward-xp', min: '1', max: '50', value: c.hwReward?.xp ?? 5, style: 'max-width:5em' });
+        const ah = c.hwAutoHeart || {};
+        const autoOn = h('input', { type: 'checkbox', id: 'hw-auto-on', checked: ah.enabled !== false ? true : null });
+        const autoHours = h('input', { type: 'number', id: 'hw-auto-hours', min: '1', max: '168', value: ah.hours ?? 24, style: 'max-width:5em' });
+        const autoHolidays = h('textarea', { id: 'hw-auto-holidays', rows: '3', placeholder: '2027-01-01', text: (ah.holidays || []).join('\n') });
         fill(settingsModal.card, 
             h('h2', { text: '⚙️ 作業設定' }),
             h('h3', { class: 'hw-sec', text: '📚 作業類別' }),
@@ -396,6 +401,10 @@ export const initHomeworkUI = (app) => {
             h('h3', { class: 'hw-sec', text: '🎉 正向獎勵（預設關閉）' }),
             h('p', { class: 'modal-sub', text: '作業預設不影響個人分數或 XP。開啟後，某份作業「應交的同學全部交齊」時，老師可以按按鈕頒發全班 XP（不會因個別同學未交而扣分）。' }),
             h('label', { class: 'inline-check' }, rewardOn, ' 開啟「全班交齊」獎勵，每份作業全班 XP +', rewardXp),
+            h('h3', { class: 'hw-sec', text: '❤️ 逾期自動愛心' }),
+            h('p', { class: 'modal-sub', text: '「未繳交」或「未訂正」從被登記的那一刻開始計時，只算上課日（週六、週日和下面的放假日不算）。每滿設定的時數加一顆愛心，一直沒改就每天再加一顆。之後補交或訂正，已加的愛心會保留，可以在學生卡片上手動消除。' }),
+            h('label', { class: 'inline-check' }, autoOn, ' 開啟，每滿 ', autoHours, ' 小時（上課日）加一顆愛心'),
+            h('div', { class: 'field' }, h('label', { for: 'hw-auto-holidays', text: '放假日（不計時）：每行一個日期，例如 2027-01-01' }), autoHolidays),
             h('div', { class: 'modal-actions' },
                 h('button', { class: 'btn btn-secondary', text: '取消', onclick: () => settingsModal.close() }),
                 h('button', { class: 'btn btn-primary', id: 'hw-settings-ok', text: '儲存', onclick: async () => {
@@ -414,7 +423,15 @@ export const initHomeworkUI = (app) => {
                         }
                         const xp = parseInt(rewardXp.value, 10);
                         if (rewardOn.checked && !(xp >= 1 && xp <= 50)) throw new Error('獎勵 XP 請輸入 1–50');
+                        const hours = parseInt(autoHours.value, 10);
+                        if (autoOn.checked && !(hours >= 1 && hours <= 168)) throw new Error('自動愛心的時數請輸入 1–168');
+                        const holidays = [...new Set(autoHolidays.value.split(/[\s,，、]+/).map(x => x.trim()).filter(Boolean))];
+                        const badDay = holidays.find(d => !/^\d{4}-\d{2}-\d{2}$/.test(d) || Number.isNaN(Date.parse(`${d}T00:00:00Z`)));
+                        if (badDay) throw new Error(`放假日格式不正確：${badDay}（請用 2027-01-01 這種格式）`);
+                        const wasOn = c.hwAutoHeart?.enabled !== false;
                         c.hwTypes = next.hwTypes; c.hwReward = { enabled: rewardOn.checked, xp: xp >= 1 ? xp : 5 };
+                        // 重新開啟時從現在開始算（關閉期間不補記）
+                        c.hwAutoHeart = { enabled: autoOn.checked, hours: hours >= 1 ? hours : 24, holidays: holidays.sort(), since: autoOn.checked && !wasOn ? Date.now() : (c.hwAutoHeart?.since ?? Date.now()) };
                         pendingAdds.length = 0;
                         await app.saveClass(c);
                         settingsModal.close(); render(c); app.notify('作業設定已儲存');

@@ -80,7 +80,8 @@ export const sceneSVG = (world, { decorLevel = 0, label = '' } = {}) => {
 export const placeInScene = (layer, creature, idx, { title = '', onClick = null } = {}) => {
     const [x, y, s] = SLOTS[idx % SLOTS.length];
     const size = 120 * s;
-    const g = el('g', { class: 'scene-actor', transform: `translate(${x - size / 2} ${y - size})`, tabindex: onClick ? 0 : null, role: onClick ? 'button' : null, 'aria-label': title || null, style: `--i:${idx}` });
+    const g = el('g', { class: 'scene-actor', transform: `translate(${x - size / 2} ${y - size})`, tabindex: onClick ? 0 : null, role: onClick ? 'button' : null, 'aria-label': title || null });
+    g.style.setProperty('--i', String(idx));   // 用 CSSOM 設定（學生頁面的 CSP 不允許 style 屬性）
     creature.setAttribute('width', size); creature.setAttribute('height', size);
     const wrap = el('g', { class: 'actor-bob' }); wrap.append(creature);
     g.append(wrap);
