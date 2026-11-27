@@ -212,6 +212,7 @@ Inaccurate documentation the review found (server-side nonce, "only once", 30/IP
   - Crash and close diagnostics are printed to the CI log, and the reduced-motion experiment and per-component measurements run in CI as evidence only.
   - No timeout was lengthened, no retry was added, and no assertion or test was removed.
 - **STATUS**: CI green twice in a row (45942204051, 45943929716; every earlier WebKit run had failed). In the stress diagnostic, 2 of 24 normal-motion measurements across those two runs still crashed WebKit, so the crash is **reduced but not eliminated**. The 45-test gate passes. Root cause: **partly confirmed** (WebKit renderer crash, linked to continuous animation); WebKit stability **NOT_VERIFIED** until it stays green over more runs.
+- **Recurrence (2026-11-27, run 45998651373, commit 564b43b, P2 UI)**: the WebKit E2E job failed 46/47. One `PAGE CRASH` on the teacher page (`url=/`) failed the v5.1 test "daily settlement snapshot and day CSV". That test and page were not changed by P2. Both new P2 tests passed on WebKit CI. The same job's reduced-motion run passed 47/47, and the stress diagnostic had 0 crashes in 12 measurements. Chrome, Firefox and verify passed. This matches BUG-032: crashes are less frequent, not gone. Nothing was re-run to get a green result; WebKit CI is **FAIL** for this commit.
 
 ## v6.2 test-writing mistakes caught by the suite (not product bugs)
 - Test helper's default new password contained the username → the server correctly refused it as weak.
