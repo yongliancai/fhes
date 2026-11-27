@@ -494,6 +494,84 @@ test('P3 student: QR link (#join=) survives sign-in and leaves the address bar; 
     await S.context.close();
 });
 
+test('P4 student: one student in three classes — each class shows its own name, group and animals; care counts per class; the 小老師 tab exists only in the class that granted it', async () => {
+    const { url } = await setup();
+    const A = await startApi(url.replace(/\/$/, ''));
+    // 三個班的同學名字都加上班別，才分得出畫面上的資料是哪一班的
+    const tag = (t) => (fx) => { for (const s of fx.students) s.name = `${s.name}${t}`; return fx; };
+    const c1 = await seedViaApi(A, tag('甲'), { name: '合成一班-P4' });
+    const c2 = await seedViaApi(A, tag('乙'), { name: '合成二班-P4' });
+    const c3 = await seedViaApi(A, tag('丙'), { name: '合成三班-P4' });
+    const acc = c1.accounts.get('cls-a-s1');                                     // 一班：第 1 組（陸地 2 隻）
+    const code2 = await claimCodeFor(c2, 'cls-a-s4');                            // 二班：第 2 組（海洋 2 隻）
+    const code3 = await claimCodeFor(c3, 'cls-a-s6');                            // 三班：第 3 組（1 隻）
+    await c1.call('POST', `/api/teacher/classes/${c1.classKey}/accounts/${acc.accountId}/helper`, { helper: true }, c1.token);
+
+    const S = await openStudent(A);
+    // 斷言失敗時也要關掉瀏覽器：不然開著的連線會讓測試伺服器關不掉，整個測試卡住而不是失敗
+    try {
+        await studentLogin(S.page, acc.username, acc.initialPassword);
+        await changePassword(S.page, acc.initialPassword, 'Three-Rivers-41');
+        await S.page.waitForFunction(() => document.querySelector('h2')?.textContent === '測試王小明甲，你好！');
+        for (const code of [code2, code3]) {
+            await S.page.click('#stu-classes-btn');
+            await S.page.fill('#stu-code', code);
+            await S.page.click('#stu-join button[type="submit"]');
+            await S.page.waitForFunction((n) => document.querySelectorAll('#stu-class option').length === n, code === code2 ? 2 : 3);
+        }
+        const m = { 1: acc.accountId, 2: memberOf(A, c2, 'cls-a-s4'), 3: memberOf(A, c3, 'cls-a-s6') };
+        const want = {
+            1: { hello: '測試王小明甲，你好！', animals: 2, helper: 1 },
+            2: { hello: '測試林小強乙，你好！', animals: 2, helper: 0 },
+            3: { hello: '測試黃小龍丙，你好！', animals: 1, helper: 0 },
+        };
+        const feed = async () => {
+            await S.page.evaluate(() => document.querySelector('.stu-care-panel .stu-note')?.remove());
+            await S.page.click('.stu-care-actions button[data-action="feed"]');
+            await S.page.waitForSelector('.stu-care-panel .stu-note');
+            return S.page.textContent('.stu-care-panel .stu-note');
+        };
+        for (const k of [1, 2, 3]) {
+            await S.page.selectOption('#stu-class', m[k]);
+            await S.page.waitForFunction((h) => document.querySelector('h2')?.textContent === h, want[k].hello);
+            const page = await S.page.textContent('#stu-body');
+            for (const other of [1, 2, 3].filter(x => x !== k)) assert.ok(!page.includes(want[other].hello.replace('，你好！', '')), `class ${k} shows nothing of class ${other}`);
+            assert.equal(await S.page.locator('.stu-tab[data-tab="helper"]').count(), want[k].helper, `class ${k}: 小老師 tab`);
+            await S.page.click('.stu-tab[data-tab="zoo"]');
+            await S.page.waitForSelector(`#stu-body[data-member="${m[k]}"] .stu-scene svg .scene-actor`);
+            assert.equal(await S.page.locator('.scene-actor').count(), want[k].animals, `class ${k}: own group's animals`);
+            await S.page.focus('.scene-actor >> nth=0'); await S.page.keyboard.press('Enter');
+            // 一班用完 3 次（第 4 次不計入）；二班、三班仍然各有自己的 3 次
+            const notes = [];
+            for (let i = 0; i < (k === 1 ? 4 : 1); i++) notes.push(await feed());
+            if (k === 1) { assert.ok(notes.slice(0, 3).every(t => t.includes('+1')), notes.join(' | ')); assert.ok(notes[3].includes('不計入')); }
+            else assert.ok(notes[0].includes('+1'), `class ${k} still has its own actions after class 1 used all of its: ${notes[0]}`);
+            await S.page.click('.stu-tab[data-tab="growth"]');
+        }
+        const counted = (mm) => A.db.prepare('SELECT COUNT(*) n FROM group_care_events WHERE account_id = ? AND slot IS NOT NULL').get(mm).n;
+        assert.deepEqual([counted(m[1]), counted(m[2]), counted(m[3])], [3, 1, 1]);
+
+        // 小老師：只在一班。登記一位一班同學 → 只進一班的收件匣；停在小老師分頁時切到二班 → 回到一般分頁、沒有小老師分頁
+        await S.page.selectOption('#stu-class', m[1]);
+        await S.page.waitForFunction(() => document.querySelector('h2')?.textContent === '測試王小明甲，你好！');
+        await S.page.click('.stu-tab[data-tab="helper"]');
+        await S.page.waitForSelector('.stu-reg-list .stu-reg');
+        const helperText = await S.page.textContent('#stu-body');
+        assert.ok(helperText.includes('甲') && !/[乙丙]/.test(helperText.replace(/合成[一二三]班-P4/g, '')), 'the helper list is class 1 only');
+        await S.page.locator('.stu-reg').nth(1).locator('button[data-state="missing"]').click();
+        await S.page.waitForSelector('.stu-reg >> nth=1 >> .stu-badge:text("未繳交")');
+        const inbox = async (C) => (await C.call('GET', `/api/teacher/classes/${C.classKey}/homework-registrations`, undefined, C.token)).json.registrations.length;
+        assert.deepEqual([await inbox(c1), await inbox(c2), await inbox(c3)], [1, 0, 0]);
+        await S.page.selectOption('#stu-class', m[2]);
+        await S.page.waitForFunction(() => document.querySelector('h2')?.textContent === '測試林小強乙，你好！');
+        assert.equal(await S.page.locator('.stu-tab[data-tab="helper"]').count(), 0);
+        assert.equal(await S.page.locator('.stu-reg').count(), 0);
+        assert.deepEqual(await overflow(S.page), []);
+        await S.snap('v62-p4-three-classes');
+        assert.deepEqual(S.errors.filter(e => !/status of 401/.test(e)), []);
+    } finally { await S.context.close(); }
+});
+
 test('P3 Google (simulated, switch on): new student signs up with Google and joins with a claim code; a password student links Google, signs in with it and sets a forgotten password; only Google\'s sign-in is added to the CSP', async () => {
     const { url } = await setup();
     const A = await startApi(url.replace(/\/$/, ''), { google: true });
