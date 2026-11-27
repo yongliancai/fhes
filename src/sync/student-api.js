@@ -51,9 +51,25 @@ export const createStudentApi = ({ base, fetchFn = (...a) => fetch(...a), now = 
         async listAccounts(cls) { return call('GET', `/api/teacher/classes/${encodeURIComponent(await api.classKey(cls))}/accounts`); },
         async createAccounts(cls, studentIds) { return call('POST', `/api/teacher/classes/${encodeURIComponent(await api.classKey(cls))}/accounts`, { students: studentIds.map(id => ({ localStudentId: String(id) })) }); },
         async accountAction(cls, accountId, action) {
-            if (!['reset', 'disable', 'enable'].includes(action)) throw new Error('不明的動作');
+            if (!['reset', 'disable', 'enable', 'remove', 'reset-request'].includes(action)) throw new Error('不明的動作');
             return call('POST', `/api/teacher/classes/${encodeURIComponent(await api.classKey(cls))}/accounts/${encodeURIComponent(accountId)}/${action}`, {});
         },
+        // P2：邀請碼、加入申請、個別綁定碼（代碼原文只在建立時回傳一次；這裡不保存）
+        async listInvitations(cls) { return call('GET', `/api/teacher/classes/${encodeURIComponent(await api.classKey(cls))}/invitations`); },
+        async createInvitation(cls, { expiresInDays, maxUses } = {}) {
+            return call('POST', `/api/teacher/classes/${encodeURIComponent(await api.classKey(cls))}/invitations`, { ...(expiresInDays ? { expiresInDays } : {}), ...(maxUses ? { maxUses } : {}) });
+        },
+        async revokeInvitation(cls, id) { return call('POST', `/api/teacher/classes/${encodeURIComponent(await api.classKey(cls))}/invitations/${encodeURIComponent(id)}/revoke`, {}); },
+        async listJoinRequests(cls) { return call('GET', `/api/teacher/classes/${encodeURIComponent(await api.classKey(cls))}/join-requests`); },
+        async decideJoinRequest(cls, id, localStudentId) {
+            const key = encodeURIComponent(await api.classKey(cls));
+            return localStudentId == null
+                ? call('POST', `/api/teacher/classes/${key}/join-requests/${encodeURIComponent(id)}/reject`, {})
+                : call('POST', `/api/teacher/classes/${key}/join-requests/${encodeURIComponent(id)}/approve`, { localStudentId: String(localStudentId) });
+        },
+        async createClaimCodes(cls, studentIds) { return call('POST', `/api/teacher/classes/${encodeURIComponent(await api.classKey(cls))}/claim-codes`, { students: studentIds.map(id => ({ localStudentId: String(id) })) }); },
+        /** 學生加入班級的連結（QR 內容）：代碼放在 # 後面，不會出現在伺服器紀錄或 Referer */
+        joinLink(code) { return `${root}/student.html#join=${encodeURIComponent(code)}`; },
         async careSummary(cls) { return call('GET', `/api/teacher/classes/${encodeURIComponent(await api.classKey(cls))}/care-summary`); },
         async setHelper(cls, accountId, helper) { return call('POST', `/api/teacher/classes/${encodeURIComponent(await api.classKey(cls))}/accounts/${encodeURIComponent(accountId)}/helper`, { helper: !!helper }); },
         /** 收取小老師登記（after 之後的全部；分頁自動接續）。回傳 { registrations, next } */

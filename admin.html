@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="zh-Hant-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="referrer" content="no-referrer">
+<meta name="robots" content="noindex, nofollow">
+<title>學生系統管理</title>
+<link rel="stylesheet" href="src/admin/admin.css">
+</head>
+<body>
+<main id="auth-gate" class="adm-gate" aria-labelledby="adm-title">
+    <h1 id="adm-title">學生系統管理</h1>
+    <p class="adm-muted">只有平台管理員能使用。處理老師送來的「忘記密碼」重設申請、老師停權，以及查看稽核紀錄。</p>
+    <div id="gsi-button" class="adm-gsi"></div>
+    <p id="auth-status" class="adm-status" role="status"></p>
+</main>
+<main id="adm-app" class="adm-app" hidden>
+    <header class="adm-head">
+        <h1>學生系統管理</h1>
+        <button id="adm-logout" type="button" class="adm-btn">登出</button>
+    </header>
+    <p id="adm-msg" class="adm-msg" role="status"></p>
+    <section aria-labelledby="adm-resets-title">
+        <h2 id="adm-resets-title">重設密碼申請</h2>
+        <div id="adm-resets"></div>
+    </section>
+    <section aria-labelledby="adm-teachers-title">
+        <h2 id="adm-teachers-title">老師</h2>
+        <div id="adm-teachers"></div>
+    </section>
+    <section aria-labelledby="adm-audit-title">
+        <h2 id="adm-audit-title">稽核紀錄（最近 200 筆）</h2>
+        <div id="adm-audit"></div>
+    </section>
+</main>
+<script type="module" src="src/admin/admin-app.js"></script>
+</body>
+</html>

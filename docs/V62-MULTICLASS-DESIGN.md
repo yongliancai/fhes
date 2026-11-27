@@ -431,6 +431,15 @@ CREATE UNIQUE INDEX reset_pending ON password_reset_requests (member_id) WHERE s
 - **Gate**：資料契約測試 PASS；舊帳號登入、改密碼、照顧、小老師功能沒有倒退；**CI 三個瀏覽器的結果寫清楚**（或附 BLOCKED 證據）。
 
 ### P2：教師自助開班與邀請
+
+**實作紀錄（2026-11-27）**：伺服器、教師端畫面、管理頁和測試都完成，見 ADR-028。和上面設計不同的地方：
+
+- 資料庫 v4：`sessions` 為了 `kind='admin'` 重建，但既有的工作階段保留（不登出）。`password_credentials.first_login_at` 是 D3 的判斷依據；舊資料由最後登入時間或「已改過密碼」推得。
+- 「移出」和「退出」不會登出學生：下一個請求那一班就是 404，其他班照常。只剩退出或移除的班級時，仍然可以登入，但看不到任何班級資料，留給 P3 的「加入班級」使用。
+- 管理頁 `admin.html` 放在教師端網站（已經載入 Google 登入），學生網站的 CSP 不用放寬。
+- QR 的內容是 `學生網站/student.html#join=代碼`。學生頁讀取 `#join=` 放在 P3；在那之前學生只能透過 API 加入。
+- 每天開班上限超過時回 429（總數上限仍是 409）。
+
 1. `FHES_TEACHER_SIGNUP` 開關、`teachers.status`、停權 CLI、開班限流。
 2. 邀請（建立、列出、撤銷）、加入申請（列出、核准、拒絕）、個別綁定碼、移出本班。
 3. 重設密碼新規則（D3）：

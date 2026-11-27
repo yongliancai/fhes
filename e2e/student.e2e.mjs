@@ -6,7 +6,7 @@ import { setup, teardown, openApp, createClass, shot, overflow, axe, OUT, ENGINE
 import { buildApp } from '../server/src/app.mjs';
 import { openDb } from '../server/src/db.mjs';
 import { GOOGLE_CLIENT_ID } from '../src/config.js';
-import { signJwt, basePayload, TEACHER_B } from '../tests/helpers/fake-google.mjs';
+import { signJwt, basePayload, TEACHER_B, TEACHER_A, ADMIN } from '../tests/helpers/fake-google.mjs';
 import { buildClassProjection, projectionHash } from '../src/core/student-projection.js';
 import { buildFixture, classData } from '../tests/helpers/v62-fixture.mjs';
 import { ROOT } from './helpers.mjs';
@@ -18,7 +18,7 @@ let api = null;
 const startApi = async (teacherOrigin) => {
     if (api) return api;
     const { keys } = await setup();
-    const config = { clientId: GOOGLE_CLIENT_ID, teacherOrigins: [teacherOrigin], teacherAllow: ['@example.test'], studentOrigins: [], ipSalt: 'e2e-salt-0123456789', cookieSecure: true, staticRoot: ROOT };
+    const config = { clientId: GOOGLE_CLIENT_ID, teacherOrigins: [teacherOrigin], teacherAllow: ['@example.test'], studentOrigins: [], ipSalt: 'e2e-salt-0123456789', cookieSecure: true, staticRoot: ROOT, adminEmails: [ADMIN.email] };
     const db = openDb(':memory:');
     // HTTPS（自簽）：和正式環境一樣用 __Host- + Secure Cookie；WebKit 在 http 不保存 Secure Cookie
     const app = buildApp({ db, config, jwks: async () => keys.jwks, https: testTls() });
@@ -49,7 +49,7 @@ const seedViaApi = async (A, mutate = (fx) => fx) => {
     const created = (await call('POST', `/api/teacher/classes/${classKey}/accounts`, { students: projection.students.map(s => ({ localStudentId: s.studentId })) }, token)).json.created;
     const pub = await call('PUT', `/api/teacher/classes/${classKey}/projection`, { version: Date.now(), hash: await projectionHash(projection), projection }, token);
     assert.equal(pub.status, 200);
-    return { accounts: new Map(created.map(a => [a.localStudentId, a])), classKey, token };
+    return { accounts: new Map(created.map(a => [a.localStudentId, a])), classKey, token, call };
 };
 
 /** 學生端：獨立的瀏覽器 context（不同的人、不同的裝置） */
@@ -270,6 +270,120 @@ test('小老師: teacher marks a helper, the helper registers a classmate on a p
     assert.deepEqual(S.errors.filter(e => !/status of (401|403)/.test(e)), []);
     assert.deepEqual(t.errors, []);
     await S.context.close(); await t.close();
+});
+
+/** Node 端扮演學生（帶 Cookie、CSRF、Origin）；只信任這次的自簽憑證 */
+const studentClient = (A) => {
+    let cookie = ''; let csrf = '';
+    const call = (method, path, body) => new Promise((ok, bad) => {
+        const req = httpsRequest(A.url + path, { method, ca: testTls().cert, headers: { 'content-type': 'application/json', origin: A.url, ...(cookie ? { cookie } : {}), ...(csrf ? { 'x-fhes-csrf': csrf } : {}) } }, (res) => {
+            const sc = res.headers['set-cookie']?.find(c => c.startsWith('__Host-fhes_sid=')); if (sc) cookie = sc.split(';')[0];
+            let data = ''; res.setEncoding('utf8'); res.on('data', (c) => { data += c; });
+            res.on('end', () => { const json = JSON.parse(data || '{}'); if (json.csrf) csrf = json.csrf; ok({ status: res.statusCode, json }); });
+        });
+        req.on('error', bad); if (body) req.write(JSON.stringify(body)); req.end();
+    });
+    return { call, async signInAndChange(username, password, next) { await call('POST', '/api/student/login', { username, password }); const r = await call('POST', '/api/student/password', { currentPassword: password, newPassword: next }); assert.equal(r.status, 200, JSON.stringify(r.json)); } };
+};
+
+test('P2 teacher: invitation with QR; a join request is approved by choosing the local student; D3 reset buttons; remove from class', async () => {
+    const { url } = await setup();
+    const A = await startApi(url.replace(/\/$/, ''));
+    const t = await openApp({ studentApi: A.url });
+    const { page } = t;
+    await createClass(page, '合成邀請班', 3);
+    await page.click('#student-system-btn');
+    await page.waitForSelector('#student-status[data-status="ok"]', { timeout: 10000 });
+    await page.click('#stu-create-all');
+    await page.waitForSelector('.stu-new');
+    const slips = await page.$$eval('.stu-new tbody tr', rows => rows.map(r => [...r.children].map(td => td.textContent)));
+    // 1 號登入過（D3：老師只能送重設申請）；2 號還沒（老師可以重發）
+    const s1 = studentClient(A); await s1.signInAndChange(slips[0][2], slips[0][3], 'Comet-Field-41');
+    await page.click('#student-modal .modal-actions .btn');
+    await page.click('#student-system-btn');
+    const row = (n) => page.locator('.stu-accounts tbody tr').nth(n);
+    await row(0).locator('button[data-action="reset-request"]').waitFor();
+    assert.equal(await row(0).locator('button[data-action="reset"]').count(), 0, 'no direct reset after the first sign-in');
+    assert.equal(await row(1).locator('button[data-action="reset"]').count(), 1);
+    await row(0).locator('button[data-action="reset-request"]').click();
+    await page.waitForFunction(() => /已送出重設申請/.test(document.body.textContent));
+    const m1 = A.db.prepare('SELECT user_id FROM password_credentials WHERE username = ?').get(slips[0][2]).user_id;
+    assert.equal(A.db.prepare("SELECT COUNT(*) n FROM password_reset_requests r JOIN student_accounts m ON m.id = r.member_id WHERE m.user_id = ? AND r.status = 'pending'").get(m1).n, 1);
+    // 3 號被移出本班；他的帳號還在，但看不到本班
+    await row(2).locator('button[data-action="remove"]').click();
+    await page.waitForFunction(() => document.querySelectorAll('.stu-accounts tbody tr')[2]?.textContent.includes('未建立'));
+    const s3 = studentClient(A); await s3.signInAndChange(slips[2][2], slips[2][3], 'River-Stone-58');
+    assert.deepEqual((await s3.call('GET', '/api/student/me')).json.classes, []);
+    // 邀請碼＋QR：只顯示一次
+    await page.click('#stu-invite-create');
+    await page.waitForSelector('#stu-invite-code');
+    const code = await page.textContent('#stu-invite-code');
+    assert.match(code, /^[a-z2-9]{5}-[a-z2-9]{5}$/);
+    assert.ok((await page.getAttribute('svg.stu-qr path', 'd')).length > 200, 'QR code is drawn');
+    await shot(page, 'v62-teacher-invite');
+    // 學生用邀請碼申請（名字含 HTML：老師畫面只當文字）
+    const j = await s3.call('POST', '/api/student/join', { code, displayName: '<b>三號</b>', seatHint: 3 });
+    assert.equal(j.status, 200); assert.equal(j.json.status, 'pending');
+    assert.deepEqual((await s3.call('GET', '/api/student/me')).json.classes, [], 'a request alone gives no access');
+    await page.click('#student-modal .modal-actions .btn');
+    assert.equal(await page.locator('#stu-invite-code').count(), 0, 'the code is gone after closing');
+    await page.click('#student-system-btn');
+    const req = page.locator('.stu-requests tbody tr').first();
+    await req.waitFor();
+    assert.equal(await req.locator('td').first().textContent(), '<b>三號</b>');
+    assert.equal(await page.locator('.stu-requests b').count(), 0, 'no HTML is rendered from the student’s text');
+    const options = await req.locator('select option').allTextContents();
+    assert.deepEqual(options.length, 2, `only the unbound student is offered: ${options}`);
+    await req.locator('select').selectOption({ index: 1 });
+    await req.locator('button:text("核准")').click();
+    await page.waitForFunction(() => !document.querySelector('.stu-requests') && document.querySelectorAll('.stu-accounts tbody tr')[2]?.textContent.includes('使用中'));
+    assert.equal((await s3.call('GET', '/api/student/me')).json.classes.length, 1, 'approved → the student now has this class');
+    assert.deepEqual(t.errors, []);
+    await t.close();
+});
+
+test('P2 admin page: only the platform owner gets in; approves a reset request (new password shown once) and suspends a teacher', async () => {
+    const { url } = await setup();
+    const A = await startApi(url.replace(/\/$/, ''));
+    const B = await seedViaApi(A);
+    const [acc] = [...B.accounts.values()];
+    const st = studentClient(A); await st.signInAndChange(acc.username, acc.initialPassword, 'Harbor-Light-36');
+    const rq = await B.call('POST', `/api/teacher/classes/${B.classKey}/accounts/${acc.accountId}/reset-request`, {}, B.token);
+    assert.equal(rq.status, 200);
+    const t = await openApp({ studentApi: A.url, signIn: false, query: 'admin.html', waitFor: '#fake-gsi-btn' });
+    const { page } = t;
+    // 一般老師（在名單上）不是管理員
+    await page.evaluate((a) => { Object.assign(window.__fakeGoogle, { account: a, mode: 'ok' }); }, TEACHER_A);
+    await page.click('#fake-gsi-btn');
+    await page.waitForFunction(() => /管理權限/.test(document.querySelector('#auth-status')?.textContent || ''));
+    assert.equal(await page.isVisible('#adm-app'), false);
+    await page.evaluate((a) => { Object.assign(window.__fakeGoogle, { account: a, mode: 'ok' }); }, ADMIN);
+    await page.click('#fake-gsi-btn');
+    // 其他測試可能留下別的待處理申請：只處理這一筆
+    const mine = page.locator(`#adm-pending tbody tr[data-request="${rq.json.requestId}"]`);
+    await mine.waitFor();
+    assert.equal(await mine.locator('td.mono').textContent(), acc.username);
+    await mine.locator('button:text("核准並產生新密碼")').click();
+    await page.waitForSelector('#adm-initial-password');
+    const pw = await page.textContent('#adm-initial-password');
+    assert.match(pw, /^[a-z2-9]{5}-[a-z2-9]{5}$/);
+    assert.equal((await st.call('GET', '/api/student/me')).status, 401, 'the student was signed out everywhere');
+    const again = studentClient(A);
+    assert.equal((await again.call('POST', '/api/student/login', { username: acc.username, password: pw })).json.mustChangePassword, true);
+    await shot(page, 'v62-admin');
+    // 停權老師乙：他的工作階段立即失效；恢復
+    const tB = A.db.prepare('SELECT teacher_id FROM classes WHERE id = ?').get(B.classKey).teacher_id;
+    const tr = page.locator(`#adm-teachers tr[data-teacher="${tB}"]`);
+    await tr.locator('button:text("停權")').click();
+    await tr.locator('text=已停權').waitFor();
+    assert.equal((await B.call('GET', `/api/teacher/classes/${B.classKey}/accounts`, undefined, B.token)).status, 401);
+    await tr.locator('button:text("恢復")').click();
+    await tr.locator('text=使用中').waitFor();
+    // 管理工作階段沒有寫進任何儲存空間
+    const stored = await page.evaluate(() => JSON.stringify({ ls: { ...localStorage }, ss: { ...sessionStorage }, ck: document.cookie }));
+    assert.ok(!/token|Bearer/i.test(stored.replace(/fhes_google_client_id/g, '')), stored);
+    assert.deepEqual(t.errors.filter(e => !/40[13]/.test(e)), []);
+    await t.close();
 });
 
 test('student page accessibility (axe) on desktop and login screen', async () => {

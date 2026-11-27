@@ -4,6 +4,19 @@ import { h, fill, makeModal, $ } from './dom.js';
 import { createStudentApi, StudentApiError } from '../sync/student-api.js';
 import { CARE_BADGES } from '../core/care.js';
 import { registrationsToEvents } from '../core/hw-helper.js';
+import { encodeQr, qrPath } from '../vendor/qr.js';
+
+const SVG_NS = 'http://www.w3.org/2000/svg';
+/** QR 用 DOM API 畫成 SVG（不經過 innerHTML） */
+const qrSvg = (text, label) => {
+    const { d, viewBox } = qrPath(encodeQr(text));
+    const svg = document.createElementNS(SVG_NS, 'svg');
+    svg.setAttribute('viewBox', viewBox); svg.setAttribute('class', 'stu-qr'); svg.setAttribute('role', 'img'); svg.setAttribute('aria-label', label);
+    const bg = document.createElementNS(SVG_NS, 'rect'); bg.setAttribute('width', '100%'); bg.setAttribute('height', '100%'); bg.setAttribute('fill', '#fff');
+    const p = document.createElementNS(SVG_NS, 'path'); p.setAttribute('d', d); p.setAttribute('fill', '#000');
+    svg.append(bg, p);
+    return svg;
+};
 
 const LS_AUTO = 'fhes.studentAutoPublish.v1';
 const AUTO_DELAY_MS = 30_000;
@@ -21,7 +34,7 @@ export const initStudentAdminUI = ({ app, base, handoff, fetchFn }) => {
     if (!base) { if (btn) btn.hidden = true; return { markDirty() {}, api: null, ready: Promise.resolve() }; }
     if (btn) btn.hidden = false;
     const api = createStudentApi({ base, fetchFn });
-    const state = { status: 'connecting', message: '正在連線學生系統…', dirty: new Set(), published: new Map(), stale: null, slips: [] };
+    const state = { status: 'connecting', message: '正在連線學生系統…', dirty: new Set(), published: new Map(), stale: null, slips: [], invite: null };
     let timer = null;
 
     const ready = (async () => {
@@ -66,7 +79,7 @@ export const initStudentAdminUI = ({ app, base, handoff, fetchFn }) => {
 
     const modal = makeModal('student-modal', { wide: true, label: '學生系統' });
     /** 初始密碼只能出現一次：不論怎麼關閉（按鈕、點背景、Esc），都從記憶體與 DOM 清掉 */
-    const wipeSlips = () => { state.slips = []; $('student-slips')?.remove(); fill(modal.card); };
+    const wipeSlips = () => { state.slips = []; state.invite = null; $('student-slips')?.remove(); fill(modal.card); };
     new MutationObserver(() => { if (!modal.el.classList.contains('visible')) wipeSlips(); }).observe(modal.el, { attributes: true, attributeFilter: ['class'] });
     const close = () => modal.close();
 
@@ -109,14 +122,33 @@ export const initStudentAdminUI = ({ app, base, handoff, fetchFn }) => {
             const byStudent = new Map(accounts.map(a => [a.localStudentId, a]));
             const students = app.studentsOf(cls.id);
             const missing = students.filter(s => !byStudent.has(String(s.id)));
-            const act = (a, action, label) => h('button', { class: 'btn btn-secondary btn-sm', type: 'button', text: label, onclick: async () => {
-                if (action !== 'enable' && !confirm(action === 'reset' ? `重設 ${a.username} 的密碼？學生要用新的初始密碼登入，舊的登入會被登出。` : `停用 ${a.username}？學生會立即被登出、不能再登入。`)) return;
+            const CONFIRM = {
+                reset: (a) => `重發 ${a.username} 的初始密碼？學生還沒登入過，舊的帳號單會作廢。`,
+                disable: (a) => `停用 ${a.username || '這位學生'}？學生在這個班級的畫面會立即失效。`,
+                remove: (a) => `把 ${a.username || '這位學生'} 移出本班？他在本班的畫面立即失效（他的帳號和其他班級不受影響），之後可以用綁定碼或邀請碼重新加入。`,
+                'reset-request': () => '學生已經登入過，老師不能直接重設密碼。要送出「重設申請」給管理員嗎？核准後管理員會給你新的初始密碼。',
+            };
+            const act = (a, action, label) => h('button', { class: 'btn btn-secondary btn-sm', type: 'button', text: label, dataset: { action }, onclick: async () => {
+                if (CONFIRM[action] && !confirm(CONFIRM[action](a))) return;
                 try {
                     const r = await api.accountAction(cls, a.accountId, action);
                     if (action === 'reset') { const s = students.find(x => String(x.id) === a.localStudentId); state.slips = [{ seat: s?.seat, name: s?.name || '', username: r.username, password: r.initialPassword }]; }
+                    if (action === 'reset-request') { app.notify(r.replay ? '這位學生的重設申請還在等管理員處理' : '已送出重設申請，等管理員核准'); return; }
                     render();
                 } catch (e) { say(e.message, 'error'); }
             } });
+            /** D3：還沒登入過、本班發的帳密 → 老師可以重發；其他情況只能送申請給管理員 */
+            const resetBtn = (a) => a.username && a.signedInBefore === false ? act(a, 'reset', '重發密碼') : act(a, 'reset-request', '重設申請');
+            const statusText = (a) => a.status === 'disabled' ? '已停用' : a.username && !a.signedInBefore ? '等待首次登入' : a.mustChangePassword ? '等待改密碼' : '使用中';
+            const claimBtn = missing.length ? h('button', { id: 'stu-claim-codes', class: 'btn btn-secondary btn-sm', type: 'button', text: `為 ${missing.length} 位學生產生綁定碼`,
+                title: '給已經有學生系統帳號（例如在別的班級）的學生：輸入綁定碼就直接成為本班的這位學生', onclick: async () => {
+                    try {
+                        const r = await api.createClaimCodes(cls, missing.map(s => s.id));
+                        const byId = new Map(students.map(s => [String(s.id), s]));
+                        state.slips = r.codes.map(c => ({ seat: byId.get(c.localStudentId)?.seat, name: byId.get(c.localStudentId)?.name || '', code: c.code, expiresAt: c.expiresAt }));
+                        render();
+                    } catch (e) { say(e.message, 'error'); }
+                } }) : null;
             fill(box,
                 h('div', { class: 'stu-row' },
                     h('strong', { text: `學生帳號（${accounts.length}/${students.length}）` }),
@@ -127,7 +159,7 @@ export const initStudentAdminUI = ({ app, base, handoff, fetchFn }) => {
                             state.slips = r.created.map(c => ({ seat: byId.get(c.localStudentId)?.seat, name: byId.get(c.localStudentId)?.name || '', username: c.username, password: c.initialPassword }));
                             render();
                         } catch (e) { say(e.message, 'error'); }
-                    } }) : null),
+                    } }) : null, claimBtn),
                 h('p', { class: 'muted small', text: '小老師可以在學生系統登記全班作業（繳交、未繳交、未訂正、已訂正），但不能登記自己的；看不到分數和愛心。登記每 5 分鐘自動收到這台電腦。' }),
                 h('table', { class: 'stu-table' },
                     h('thead', {}, h('tr', {}, h('th', { text: '座號' }), h('th', { text: '姓名' }), h('th', { text: '帳號' }), h('th', { text: '狀態' }), h('th', { text: '小老師' }), h('th', { text: '操作' }))),
@@ -135,16 +167,66 @@ export const initStudentAdminUI = ({ app, base, handoff, fetchFn }) => {
                         const a = byStudent.get(String(s.id));
                         return h('tr', { dataset: { sid: s.id } },
                             h('td', { text: s.seat ?? '' }), h('td', { class: 'left', text: s.name }),
-                            h('td', { class: 'mono', text: a?.username || '—' }),
-                            h('td', { text: !a ? '未建立' : a.status === 'disabled' ? '已停用' : a.mustChangePassword ? '等待首次登入' : '使用中' }),
+                            h('td', { class: 'mono', text: a ? (a.username || '（自己的帳號）') : '—' }),
+                            h('td', { text: !a ? '未建立' : statusText(a) }),
                             h('td', {}, a ? h('input', { type: 'checkbox', class: 'stu-helper', 'aria-label': `${s.name} 是小老師`, checked: a.helper ? true : null, onchange: async (e) => {
                                 const on = e.target.checked;
                                 try { await api.setHelper(cls, a.accountId, on); app.notify(on ? `${s.name} 設為小老師` : `${s.name} 不再是小老師`); }
                                 catch (err) { e.target.checked = !on; say(err.message, 'error'); }
                             } }) : null),
-                            h('td', {}, a ? [act(a, 'reset', '重設密碼'), a.status === 'disabled' ? act(a, 'enable', '啟用') : act(a, 'disable', '停用')] : null));
+                            h('td', {}, a ? [resetBtn(a), a.status === 'disabled' ? act(a, 'enable', '啟用') : act(a, 'disable', '停用'), act(a, 'remove', '移出')] : null));
                     }))));
         } catch (e) { fill(box, h('p', { class: 'error-text', text: e.message || '讀取帳號失敗' })); }
+        return box;
+    };
+
+    /** 邀請碼（QR）與加入申請：學生用邀請碼只會送出申請，由老師在這裡選定是哪一位學生（T25） */
+    const joinSection = async (cls) => {
+        const box = h('div', { class: 'stu-join' });
+        try {
+            const [{ invitations }, { requests }, { accounts }] = await Promise.all([api.listInvitations(cls), api.listJoinRequests(cls), api.listAccounts(cls)]);
+            const bound = new Set(accounts.map(a => a.localStudentId));
+            const free = app.studentsOf(cls.id).filter(s => !bound.has(String(s.id)));
+            const live = invitations.filter(i => i.active);
+            const inv = state.invite?.classId === cls.id ? state.invite : null;
+            fill(box,
+                h('div', { class: 'stu-row' },
+                    h('strong', { text: `邀請碼（有效 ${live.length}/3）` }),
+                    h('button', { id: 'stu-invite-create', class: 'btn btn-secondary btn-sm', type: 'button', text: '＋ 建立邀請碼（7 天）', disabled: live.length >= 3 || null, onclick: async () => {
+                        try { const r = await api.createInvitation(cls); state.invite = { classId: cls.id, code: r.code, link: api.joinLink(r.code), expiresAt: r.expiresAt }; render(); }
+                        catch (e) { say(e.message, 'error'); }
+                    } })),
+                h('p', { class: 'muted small', text: '學生用邀請碼只能「申請」加入；你要在下面選定他是名單上的哪一位，他才看得到本班資料。邀請碼不要貼在公開的地方。' }),
+                inv ? h('div', { id: 'stu-invite-new', class: 'stu-new stu-invite' },
+                    qrSvg(inv.link, `加入 ${cls.name} 的 QR Code`),
+                    h('div', {},
+                        h('p', { class: 'warn-text', text: '邀請碼只會顯示這一次（關閉視窗後就看不到了）。' }),
+                        h('p', {}, '邀請碼：', h('span', { id: 'stu-invite-code', class: 'mono big', text: inv.code })),
+                        h('p', { class: 'muted small', text: `到期：${fmt(inv.expiresAt)}。學生用手機相機掃 QR，或在學生系統輸入邀請碼。` }))) : null,
+                live.length ? h('ul', { class: 'stu-invite-list' }, live.map(i => h('li', {},
+                    `建立於 ${fmt(i.createdAt)}，到期 ${fmt(i.expiresAt)}，已用 ${i.usedCount}/${i.maxUses} 次 `,
+                    h('button', { class: 'btn btn-secondary btn-sm', type: 'button', text: '關閉', dataset: { invite: i.id }, onclick: async () => {
+                        try { await api.revokeInvitation(cls, i.id); render(); } catch (e) { say(e.message, 'error'); }
+                    } })))) : null,
+                h('strong', { text: `加入申請（${requests.length}）` }),
+                requests.length ? h('table', { class: 'stu-table stu-requests' },
+                    h('thead', {}, h('tr', {}, h('th', { text: '學生填的名字' }), h('th', { text: '座號（學生填的）' }), h('th', { text: '時間' }), h('th', { text: '他是名單上的…' }), h('th', { text: '操作' }))),
+                    h('tbody', {}, requests.map(r => {
+                        const sel = h('select', { class: 'stu-select', 'aria-label': `${r.displayName} 是名單上的哪一位` },
+                            h('option', { value: '', text: '請選擇' }), free.map(s => h('option', { value: String(s.id), text: `${s.seat ?? ''} 號 ${s.name}` })));
+                        return h('tr', { dataset: { request: r.id } },
+                            h('td', { class: 'left', text: r.displayName }), h('td', { text: r.seatHint ?? '' }), h('td', { text: fmt(r.createdAt) }), h('td', {}, sel),
+                            h('td', {},
+                                h('button', { class: 'btn btn-primary btn-sm', type: 'button', text: '核准', onclick: async () => {
+                                    if (!sel.value) { say('請先選擇他是名單上的哪一位學生', 'error'); return; }
+                                    try { await api.decideJoinRequest(cls, r.id, sel.value); app.notify('已加入本班'); render(); } catch (e) { say(e.message, 'error'); }
+                                } }),
+                                h('button', { class: 'btn btn-secondary btn-sm', type: 'button', text: '拒絕', onclick: async () => {
+                                    if (!confirm(`拒絕「${r.displayName}」的加入申請？`)) return;
+                                    try { await api.decideJoinRequest(cls, r.id, null); render(); } catch (e) { say(e.message, 'error'); }
+                                } })));
+                    }))) : h('p', { class: 'muted small', text: '目前沒有待確認的申請。' }));
+        } catch (e) { fill(box, h('p', { class: 'muted', text: e.message || '讀取邀請失敗' })); }
         return box;
     };
 
@@ -163,18 +245,25 @@ export const initStudentAdminUI = ({ app, base, handoff, fetchFn }) => {
 
     const slipsView = () => {
         if (!state.slips.length) return null;
+        const claim = !!state.slips[0].code;
         const slips = h('div', { id: 'student-slips', class: 'stu-slips' },
             state.slips.map(s => h('div', { class: 'stu-slip' },
                 h('div', { class: 'stu-slip-name', text: `${s.seat ?? ''} 號 ${s.name}` }),
-                h('div', {}, '帳號：', h('span', { class: 'mono', text: s.username })),
-                h('div', {}, '初始密碼：', h('span', { class: 'mono', text: s.password })),
-                h('div', { class: 'stu-slip-note', text: '第一次登入後要改成自己的密碼。不要把密碼告訴別人。' }))));
+                s.code ? [
+                    h('div', {}, '班級綁定碼：', h('span', { class: 'mono', text: s.code })),
+                    h('div', { class: 'stu-slip-note', text: `用你自己的學生帳號登入後，在「加入班級」輸入這個綁定碼。只能用一次，${app.localDate(s.expiresAt)} 到期。` }),
+                ] : [
+                    h('div', {}, '帳號：', h('span', { class: 'mono', text: s.username })),
+                    h('div', {}, '初始密碼：', h('span', { class: 'mono', text: s.password })),
+                    h('div', { class: 'stu-slip-note', text: '第一次登入後要改成自己的密碼。不要把密碼告訴別人。' }),
+                ])));
         const old = $('student-slips'); if (old) old.remove();
         document.body.appendChild(slips);
         return h('div', { class: 'stu-new' },
-            h('p', { class: 'warn-text', text: `新的帳號密碼（${state.slips.length} 位）只會顯示這一次。請現在列印或抄下來，關閉視窗後就看不到了。` }),
-            h('table', { class: 'stu-table' }, h('tbody', {}, state.slips.map(s => h('tr', {}, h('td', { text: s.seat ?? '' }), h('td', { class: 'left', text: s.name }), h('td', { class: 'mono', text: s.username }), h('td', { class: 'mono', text: s.password }))))),
-            h('button', { class: 'btn btn-secondary', type: 'button', text: '🖨️ 列印帳號單', onclick: () => window.print() }));
+            h('p', { class: 'warn-text', text: `新的${claim ? '綁定碼' : '帳號密碼'}（${state.slips.length} 位）只會顯示這一次。請現在列印或抄下來，關閉視窗後就看不到了。` }),
+            h('table', { class: 'stu-table' }, h('tbody', {}, state.slips.map(s => h('tr', {}, h('td', { text: s.seat ?? '' }), h('td', { class: 'left', text: s.name }),
+                s.code ? h('td', { class: 'mono', text: s.code }) : [h('td', { class: 'mono', text: s.username }), h('td', { class: 'mono', text: s.password })])))),
+            h('button', { class: 'btn btn-secondary', type: 'button', text: claim ? '🖨️ 列印綁定碼' : '🖨️ 列印帳號單', onclick: () => window.print() }));
     };
 
     const render = async () => {
@@ -205,6 +294,7 @@ export const initStudentAdminUI = ({ app, base, handoff, fetchFn }) => {
                         ' 這台電腦：資料變更 30 秒後自動發布（只發布本次已手動發布過的班級）')),
                 slipsView(),
                 await accountsSection(cls),
+                await joinSection(cls),
                 await careSection(cls),
                 h('div', { class: 'modal-actions' }, h('button', { class: 'btn btn-secondary', type: 'button', text: '關閉', onclick: close })),
             ]);

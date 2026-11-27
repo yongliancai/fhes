@@ -124,6 +124,7 @@ export const reloadAndSignIn = async (page, account = TEACHER_A) => {
  * 開新頁面：自動接受 confirm/alert，回答 prompt（依佇列），收集 console error / pageerror。
  * opts.viewport、opts.reducedMotion、opts.query、opts.emu（Sheets 模擬器）
  * opts.signIn（預設 true：以合成老師帳號登入）、opts.account、opts.clientId（null = 不預設 Client ID）
+ * opts.waitFor（signIn: false 時等待的元素，預設 #auth-gate）
  */
 export const openApp = async (opts = {}) => {
     const { url, browser } = await setup();
@@ -186,7 +187,7 @@ export const openApp = async (opts = {}) => {
         // 等到 App 真的跑起來（「新增班級」卡片由模組腳本產生）；腳本壞掉時立即失敗並附上錯誤
         try { await signIn(page, opts.account || TEACHER_A); }
         catch { throw new Error(`App did not start: ${errors.join(' | ') || 'no page error captured'}`); }
-    } else await page.waitForSelector('#auth-gate', { timeout: 10000 });
+    } else await page.waitForSelector(opts.waitFor || '#auth-gate', { timeout: 10000 });
     const close = async () => {
         closingOnPurpose = true;
         if (DIAG) {

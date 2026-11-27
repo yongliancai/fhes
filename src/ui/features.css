@@ -253,3 +253,11 @@ body.locked .app-screen, body.locked .modal, body.locked .record-overlay, body.l
     .stu-slip-name { font-weight: 700; margin-bottom: 3mm; }
     .stu-slip-note { font-size: 10pt; margin-top: 3mm; }
 }
+
+/* v6.2 多班級 P2：邀請碼、加入申請 */
+.stu-join { display: grid; gap: 8px; margin: 18px 0; }
+.stu-invite { display: flex; flex-wrap: wrap; gap: 16px; align-items: center; }
+.stu-qr { width: 168px; height: 168px; border-radius: 6px; flex: none; }
+.stu-invite .big { font-size: 1.4em; }
+.stu-invite-list { margin: 0 0 0 1.2em; }
+.stu-table td .btn { margin: 2px; }

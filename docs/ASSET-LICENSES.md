@@ -21,3 +21,9 @@ Every visual asset shipped by the app is listed here with its origin and licence
 1. Record artist / tool, creation date, licence (or work-for-hire agreement) for each file in this table.
 2. If generative AI tools are used, record the tool, prompt and the tool's commercial-use terms; check the result does not imitate an existing franchise character.
 3. Keep stable item IDs (`land-01` …); only the art reference changes.
+
+## Bundled code
+
+| Code | Location | Origin | Licence |
+|---|---|---|---|
+| QR Code encoder (byte mode, error correction level M, versions 1–10) | `src/vendor/qr.js` | Written for this project (2026-11-27) from the ISO/IEC 18004 algorithm. Its structure (Reed–Solomon divisor and remainder, block interleaving, function patterns, mask penalty) follows Project Nayuki's "QR Code generator library". It is bundled because the teacher page's CSP does not load scripts from a CDN. | Project Nayuki's library is MIT-licensed: "Copyright © Project Nayuki. Permission is hereby granted, free of charge, to any person obtaining a copy of this software… THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND." (MIT License, https://www.nayuki.io/page/qr-code-generator-library). Tested by `tests/qr.test.mjs` (round trip through an independent reader + published reference values). |

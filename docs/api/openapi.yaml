@@ -16,6 +16,7 @@ components:
     teacherBearer: { type: http, scheme: bearer, description: "POST /api/teacher/session 換得；只放記憶體，8 小時" }
     studentCookie: { type: apiKey, in: cookie, name: __Host-fhes_sid, description: "HttpOnly、Secure、SameSite=Strict；閒置 2 小時、最長 12 小時" }
     csrf: { type: apiKey, in: header, name: X-FHES-CSRF }
+    adminBearer: { type: http, scheme: bearer, description: "POST /api/admin/session 換得；只放記憶體，4 小時；只有 platform_admins" }
   schemas:
     Error:
       type: object
@@ -99,7 +100,7 @@ paths:
       security: [{ teacherBearer: [] }]
       summary: 建立（或取得）本機班級對應的 classKey；同一位教師同一個本機班級只會有一個
       requestBody: { required: true, content: { application/json: { schema: { type: object, additionalProperties: false, required: [localClassId, name], properties: { localClassId: { type: string, maxLength: 64 }, name: { type: string, maxLength: 60 } } } } } }
-      responses: { "200": { description: "{ classKey }" }, "401": { description: 未登入 }, "409": { description: 超過每位老師 30 個班級 } }
+      responses: { "200": { description: "{ classKey }" }, "401": { description: 未登入 }, "409": { description: 超過每位老師 30 個班級 }, "429": { description: 一天最多連結 10 個新班級 } }
   /api/teacher/classes/{classKey}/accounts:
     parameters: [{ name: classKey, in: path, required: true, schema: { type: string } }]
     get:
@@ -112,7 +113,11 @@ paths:
       requestBody: { required: true, content: { application/json: { schema: { type: object, additionalProperties: false, required: [students], properties: { students: { type: array, maxItems: 80, items: { type: object, additionalProperties: false, required: [localStudentId], properties: { localStudentId: { type: string } } } } } } } } }
       responses: { "200": { description: "{ created: [{accountId, localStudentId, username, initialPassword}], existing: [localStudentId] }" }, "404": { description: 不是你的班級 }, "409": { description: 超過每班 80 個帳號 } }
   /api/teacher/classes/{classKey}/accounts/{accountId}/reset:
-    post: { security: [{ teacherBearer: [] }], summary: "重設密碼（新初始密碼、須再改密碼、該生所有 Session 失效）。v3：只能重設本班發的帳密，而且該生不能在別位老師的班上（D3）", responses: { "200": { description: "{ accountId, username, initialPassword }" }, "403": { description: "not_issuer（不是本班發的帳密）或 other_teacher（也在別位老師的班上）" }, "404": { description: 不是你的班級或帳號 } } }
+    post: { security: [{ teacherBearer: [] }], summary: "重發初始密碼（D3：只限本班發的、還沒有人登入過的帳密，而且該生不能在別位老師的班上）", responses: { "200": { description: "{ accountId, username, initialPassword }" }, "403": { description: "not_issuer（不是本班發的帳密）、other_teacher（也在別位老師的班上）或 already_used（已經登入過；請改用 reset-request）" }, "404": { description: 不是你的班級或帳號 } } }
+  /api/teacher/classes/{classKey}/accounts/{accountId}/reset-request:
+    post: { security: [{ teacherBearer: [] }], summary: "替本班學生向平台管理員送出重設密碼申請（同一位學生同時只有一筆待審）", responses: { "200": { description: "{ requestId, status: pending, replay }" }, "400": { description: "no_password：這位學生沒有帳號密碼" }, "404": { description: 不是你的班級或帳號 } } }
+  /api/teacher/classes/{classKey}/accounts/{accountId}/remove:
+    post: { security: [{ teacherBearer: [] }], summary: "移出本班（成員資格立即失效；user、帳密與其他班級不受影響）", responses: { "200": { description: "{ accountId, status: removed }" }, "404": { description: 不是你的班級或帳號 } } }
   /api/teacher/classes/{classKey}/accounts/{accountId}/disable:
     post: { security: [{ teacherBearer: [] }], summary: "停用本班的成員資格（只影響本班；如果這是他唯一有效的班級，已登入的裝置立即登出）", responses: { "200": { description: OK }, "404": { description: 不是你的班級或帳號 } } }
   /api/teacher/classes/{classKey}/accounts/{accountId}/enable:
@@ -138,6 +143,66 @@ paths:
       responses: { "200": { description: "{ version, publishedAt, unchanged, students, groups }" }, "400": { description: 格式或雜湊錯誤 }, "404": { description: 不是你的班級 }, "409": { description: 版本衝突 }, "413": { description: 太大 } }
   /api/teacher/classes/{classKey}/care-summary:
     get: { security: [{ teacherBearer: [] }], summary: 各小組照顧彙總（唯讀）, responses: { "200": { description: "{ groups: [{groupId, name, care: CareSummary}] }" }, "404": { description: 不是你的班級 } } }
+  /api/teacher/classes/{classKey}/invitations:
+    get: { security: [{ teacherBearer: [] }], summary: "邀請碼清單（最近 60 天；不含代碼原文）", responses: { "200": { description: "{ invitations: [{ id, createdAt, expiresAt, maxUses, usedCount, revoked, active }] }" }, "404": { description: 不是你的班級 } } }
+    post:
+      security: [{ teacherBearer: [] }]
+      summary: 建立邀請碼；代碼只在這次回應出現（每班同時最多 3 個有效）
+      requestBody: { required: false, content: { application/json: { schema: { type: object, additionalProperties: false, properties: { expiresInDays: { type: integer, minimum: 1, maximum: 30, default: 7 }, maxUses: { type: integer, minimum: 1, maximum: 200, default: 60 } } } } } }
+      responses: { "200": { description: "{ id, code, createdAt, expiresAt, maxUses, usedCount, revoked, active }" }, "404": { description: 不是你的班級 }, "409": { description: 已有 3 個有效的邀請碼 } }
+  /api/teacher/classes/{classKey}/invitations/{invitationId}/revoke:
+    post: { security: [{ teacherBearer: [] }], summary: 關閉邀請碼（立即失效）, responses: { "200": { description: 邀請碼資料 }, "404": { description: 不是你的班級或邀請碼 } } }
+  /api/teacher/classes/{classKey}/join-requests:
+    get: { security: [{ teacherBearer: [] }], summary: "待確認的加入申請（只有學生填的名字、座號提示與時間；30 天自動過期）", responses: { "200": { description: "{ requests: [{ id, displayName, seatHint, createdAt }] }" }, "404": { description: 不是你的班級 } } }
+  /api/teacher/classes/{classKey}/join-requests/{requestId}/approve:
+    post:
+      security: [{ teacherBearer: [] }]
+      summary: 核准，並指定他是名單上的哪一位本機學生（交易內建立成員資格）
+      requestBody: { required: true, content: { application/json: { schema: { type: object, additionalProperties: false, required: [localStudentId], properties: { localStudentId: { type: string, maxLength: 64 } } } } } }
+      responses: { "200": { description: 新成員的帳號資料 }, "404": { description: 不是你的班級或申請 }, "409": { description: "not_pending、already_bound（這位學生已綁定其他帳號）、already_member、quota" } }
+  /api/teacher/classes/{classKey}/join-requests/{requestId}/reject:
+    post: { security: [{ teacherBearer: [] }], summary: 拒絕, responses: { "200": { description: OK }, "404": { description: 找不到待審的申請 } } }
+  /api/teacher/classes/{classKey}/claim-codes:
+    post:
+      security: [{ teacherBearer: [] }]
+      summary: 為指定的本機學生產生一次性綁定碼（30 天；同一位學生的舊代碼作廢；代碼只在這次回應出現）
+      requestBody: { required: true, content: { application/json: { schema: { type: object, additionalProperties: false, required: [students], properties: { students: { type: array, minItems: 1, maxItems: 80, items: { type: object, additionalProperties: false, required: [localStudentId], properties: { localStudentId: { type: string } } } } } } } } }
+      responses: { "200": { description: "{ codes: [{ localStudentId, code, expiresAt }], existing: [localStudentId] }" }, "404": { description: 不是你的班級 } }
+  /api/student/join:
+    post:
+      security: [{ studentCookie: [], csrf: [] }]
+      summary: 用邀請碼申請加入（只產生申請；要等老師選定是哪一位學生）
+      requestBody: { required: true, content: { application/json: { schema: { type: object, additionalProperties: false, required: [code, displayName], properties: { code: { type: string, maxLength: 32 }, displayName: { type: string, description: "1～20 個字，只給老師參考" }, seatHint: { type: integer, minimum: 1, maximum: 99 } } } } } }
+      responses: { "200": { description: "{ status: pending, className, message }（重送同一個申請也是 200）" }, "400": { description: bad_name }, "404": { description: "invalid_code（打錯、過期、用完、已關閉，或老師被停權）" }, "409": { description: "already_member、too_many_requests" }, "429": { description: "代碼輸入錯誤太多次（每個 user 10 次、每個 IP 50 次／15 分鐘）" } }
+  /api/student/claim:
+    post:
+      security: [{ studentCookie: [], csrf: [] }]
+      summary: 用個別綁定碼直接成為那一班的那一位學生（一次性）
+      requestBody: { required: true, content: { application/json: { schema: { type: object, additionalProperties: false, required: [code], properties: { code: { type: string, maxLength: 32 } } } } } }
+      responses: { "200": { description: "{ id（我在這一班的代號）, className }" }, "404": { description: invalid_code }, "409": { description: "already_bound、already_member、quota" }, "429": { description: 同 /api/student/join } }
+  /api/student/classes/{memberId}/leave:
+    post: { security: [{ studentCookie: [], csrf: [] }], summary: 自己退出這一班（立即失效）, parameters: [{ name: memberId, in: path, required: true, schema: { type: string } }], responses: { "200": { description: OK }, "404": { description: 不是你的班級 } } }
+  /api/admin/session:
+    post:
+      summary: "平台管理員用 Google ID token 登入（只有 platform_admins；第一次由 FHES_ADMIN_EMAIL 建立 owner，之後只認身分）。沒設定管理員時 404"
+      requestBody: { required: true, content: { application/json: { schema: { type: object, additionalProperties: false, required: [credential, nonce], properties: { credential: { type: string }, nonce: { type: string } } } } } }
+      responses: { "200": { description: "{ token, expiresAt }（4 小時）" }, "401": { description: "invalid_token 或 replayed" }, "403": { description: not_admin }, "404": { description: 管理 API 未啟用 }, "429": { description: 嘗試太多次 } }
+  /api/admin/logout:
+    post: { security: [{ adminBearer: [] }], summary: 登出, responses: { "200": { description: OK } } }
+  /api/admin/reset-requests:
+    get: { security: [{ adminBearer: [] }], summary: "待處理與最近 50 筆的重設申請（14 天未處理自動作廢）", responses: { "200": { description: "{ pending: [ResetRequest], recent: [ResetRequest] }；ResetRequest = { id, status, createdAt, decidedAt, requestedBy, className, memberStatus, username, issuedByThisClass, teacherCount }" } } }
+  /api/admin/reset-requests/{requestId}/approve:
+    post: { security: [{ adminBearer: [] }], summary: "核准：產生一次性初始密碼（只在這次回應出現），學生所有 Session 失效、必須改密碼、記入稽核", responses: { "200": { description: "{ username, initialPassword }" }, "404": { description: 找不到 }, "409": { description: "not_pending、stale（學生已不在該班）、no_password" } } }
+  /api/admin/reset-requests/{requestId}/reject:
+    post: { security: [{ adminBearer: [] }], summary: 拒絕, responses: { "200": { description: OK }, "404": { description: 找不到待審的申請 } } }
+  /api/admin/teachers:
+    get: { security: [{ adminBearer: [] }], summary: "老師名單（不存 email：id、狀態、註冊方式、班級名稱）", responses: { "200": { description: "{ teachers: [{ id, status, signup, createdAt, classes: [name] }] }" } } }
+  /api/admin/teachers/{teacherId}/suspend:
+    post: { security: [{ adminBearer: [] }], summary: 停權（立即登出；他的邀請碼與綁定碼失效）, responses: { "200": { description: "{ id, status }" }, "404": { description: 找不到 } } }
+  /api/admin/teachers/{teacherId}/unsuspend:
+    post: { security: [{ adminBearer: [] }], summary: 恢復, responses: { "200": { description: "{ id, status }" }, "404": { description: 找不到 } } }
+  /api/admin/audit:
+    get: { security: [{ adminBearer: [] }], summary: "最近 200 筆稽核（不含 IP 雜湊）", parameters: [{ name: before, in: query, required: false, schema: { type: string, pattern: "^[0-9]{1,15}$" } }], responses: { "200": { description: "{ events: [{ id, ts, actorKind, actorId, action, target, detail }] }" } } }
   /api/student/login:
     post:
       summary: 學生登入；成功時發新的 Session Cookie（防 session 固定）

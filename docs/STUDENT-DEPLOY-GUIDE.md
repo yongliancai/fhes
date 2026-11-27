@@ -30,7 +30,11 @@ cd /srv/fhes-student/app && sudo -u fhes npm ci --omit=dev
 
 | 變數 | 填什麼 | 例子 |
 |---|---|---|
-| `FHES_TEACHER_ALLOW` | 可以使用學生系統的老師。寫完整 email，或 `@學校網域`（該網域所有已驗證帳號）。多個用逗號隔開。**不在名單上的 Google 帳號一律被拒絕** | `wang@school.edu.tw,@school.edu.tw` |
+| `FHES_TEACHER_SIGNUP` | `allowlist`（預設：只有下一列名單裡的老師）或 `open`（任何 email 已驗證的 Google 帳號都能自助註冊成老師；只拿得到自己開的班）。改成 `open` 前，Google Cloud 的 OAuth 同意畫面要是「正式版、外部」。要收回就改回 `allowlist` 再重新啟動 | `allowlist` |
+| `FHES_TEACHER_ALLOW` | 可以使用學生系統的老師。寫完整 email，或 `@學校網域`（該網域所有已驗證帳號）。多個用逗號隔開。allowlist 模式下**不在名單上的 Google 帳號一律被拒絕**；open 模式可以留空 | `wang@school.edu.tw,@school.edu.tw` |
+| `FHES_ADMIN_EMAIL` | 平台管理員（處理忘記密碼的重設申請、老師停權、看稽核）。只寫你自己的 Google 帳號；第一次登入 `admin.html` 後只認這個帳號的身分。留空＝管理功能關閉 | `owner@school.edu.tw` |
+| `FHES_ADMIN_ORIGINS` | 選填：管理頁的來源；預設和 `FHES_TEACHER_ORIGINS` 相同（`admin.html` 和教師端在同一個網站） | |
+| `FHES_CODE_PEPPER` | 選填：邀請碼與綁定碼 HMAC 的金鑰；不設就由 `FHES_IP_SALT` 分開推導 | |
 | `FHES_TEACHER_ORIGINS` | 教師端網頁的來源（現在是 GitHub Pages） | `https://yongliancai.github.io` |
 | `FHES_STUDENT_ORIGINS` | 學生頁面的子網域 | `https://fhes.school.edu.tw` |
 | `FHES_TRUST_PROXY` | 在 nginx 後面設 `1`；沒有 nginx、直接對外設 `0`。用正式網域時**必須明確設定**，不設就拒絕啟動 | `1` |
@@ -90,3 +94,17 @@ curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:8790/student.html   # 
 | E. 完全移除 | `pm2 delete fhes-student && pm2 save`；移除 nginx 子網域設定（還原備份的設定檔）並 reload；依學校規定保留或刪除 `/srv/fhes-student` | 學生系統消失；教師端先做 A |
 
 教師端備份格式沒有改（仍是 v6，`dataVersion` 6）；v6.2 只在班級物件多了 `studentSystem.nameMode`，v6.1 匯入時會忽略，所以教師端可以直接回到 v6.1。
+
+## 管理備援（主機 CLI）
+
+只在網頁管理頁（`admin.html`）不能用時使用。資料庫版本 4（v6.2 多班級 P2）之後才有。
+
+```
+sudo -u fhes FHES_DB_PATH=/srv/fhes-student/data/fhes-student.db node server/admin.mjs list-teachers
+sudo -u fhes FHES_DB_PATH=/srv/fhes-student/data/fhes-student.db node server/admin.mjs suspend t_xxxxxxxx
+sudo -u fhes FHES_DB_PATH=/srv/fhes-student/data/fhes-student.db node server/admin.mjs unsuspend t_xxxxxxxx
+```
+
+- 停權會立即登出該老師，他的邀請碼和綁定碼也同時失效；學生資料不會被刪除。
+- 每個動作都記入稽核（`actor_kind = cli`）。
+- CLI 不提供重設學生密碼：那一定要經過老師送出申請、管理員在網頁上核准。

@@ -146,8 +146,26 @@ The app requests only `https://www.googleapis.com/auth/drive.file` (files the ap
   - The design proposed the teacher-side `classKey` here instead. It was changed because student responses have never contained a classKey, and the existing security test enforces that.
   - The old single-class paths keep working when the user has exactly one active class. With several classes they return 409 `choose_class`; they never silently pick the first one.
   - Disabling a membership affects only that class. The student is logged out only if it was their last active class.
-  - Teachers can reset only passwords that their class issued, and only if the student is not in another teacher's class (D3; the full admin-reset flow comes in P2).
+  - Teachers can reset only passwords that their class issued, and only if the student is not in another teacher's class (D3; P2 narrows this further, see ADR-028).
   - A suspended teacher (`teachers.status`) is refused at sign-in and on every request.
+
+## ADR-028 — Teacher self-signup, invitations, claim codes and admin-approved password resets (2026-11-27, P2)
+- **Context**: the multi-class plan lets any teacher open classes and lets students join several teachers' classes. Decisions D3, D3a, D4 and D5 in `docs/V62-MULTICLASS-DESIGN.md` §11.
+- **Decision**:
+  - `FHES_TEACHER_SIGNUP=allowlist` (default) or `open`. Open mode accepts any Google account with a verified email and creates an empty teacher (`teachers.signup='self'`). It gives no access to anyone else's class. Switching back to allowlist takes access away again at the next sign-in.
+  - A teacher can link at most 10 new classes per day (30 in total). Teachers can be suspended from the admin page or the host CLI (`server/admin.mjs`). Suspension signs them out at once and stops their invitation and claim codes.
+  - **Invitation codes** only create a *join request*. The teacher chooses which local student the request is; the student's typed name and seat are hints, never used for matching. At most 3 live codes per class, 7 days by default, with a use limit; codes can be revoked.
+  - **Claim codes** are one-time codes for one specific local student, printed by the teacher; 30 days. Regenerating a code for the same student voids the old one.
+  - Codes are 10 characters from a 31-character alphabet (about 2^49), stored only as an HMAC and shown once. Wrong codes are limited to 10 per user and 50 per IP per 15 minutes.
+  - **Remove from class** and **leave class** end that membership on the next request. The user, their password and their other classes are untouched. Rejoining the same class reuses the same membership row.
+  - Removed or left memberships no longer block sign-in. A user with no live class can sign in but sees no class data.
+  - **D3**: a teacher can reissue a password only if their class issued it and nobody has signed in with it yet (`password_credentials.first_login_at`). Otherwise the teacher sends a reset request. Only the platform owner can approve it; approval creates a one-time initial password shown once, signs the student out everywhere and is audited.
+  - **D3a**: the platform owner is bootstrapped from `FHES_ADMIN_EMAIL` (verified email, only while no owner exists). After that only the identity hash counts. The admin API uses Bearer tokens (no cookies), 4-hour sessions, audit for every action. The API is off when no admin email is configured. School admins are not in this version.
+  - The admin page (`admin.html`) lives on the teacher site, because that site already loads Google sign-in; the student site's CSP stays unchanged.
+- **Consequences**:
+  - Database v4 (new tables; `sessions` rebuilt only to allow `kind='admin'`). Existing sessions are kept.
+  - The teacher UI gets invitation codes with a QR code (`src/vendor/qr.js`, no CDN), join-request approval, claim-code slips, "remove" and the D3 reset buttons.
+  - The student page's own "join class" screen and the `#join=` link handling come in P3; until then a student can only use the API.
 
 ## ADR-021 — 小老師 (student helpers) register homework through the student system (2026-11-26)
 - Decided by the user (multiple-choice discussion): helpers use the student system, may register **all** homework of their class, and the teacher app receives registrations **automatically** (every 5 minutes, before each publish, or on demand).
