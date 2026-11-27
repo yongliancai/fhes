@@ -129,7 +129,8 @@ export const openApp = async (opts = {}) => {
     const { url, browser } = await setup();
     // ignoreHTTPSErrors：只為了接受測試用學生系統 API 的自簽憑證（testTls）；教師頁本身仍是 http://127.0.0.1
     const context = await browser.newContext({ acceptDownloads: true, ignoreHTTPSErrors: true, viewport: opts.viewport || { width: 1280, height: 800 },
-        reducedMotion: opts.reducedMotion || 'no-preference', locale: 'zh-TW', timezoneId: 'Asia/Taipei', ...(opts.context || {}) });
+        // E2E_REDUCED_MOTION=1：只給 CI 的對照實驗用（BUG-032），預設一律是一般動態效果
+        reducedMotion: opts.reducedMotion || (process.env.E2E_REDUCED_MOTION === '1' ? 'reduce' : 'no-preference'), locale: 'zh-TW', timezoneId: 'Asia/Taipei', ...(opts.context || {}) });
     // 外部網路一律擋掉（字型等）；Google 相關端點由假 Google／模擬器回應
     await context.route(/^https?:\/\/(?!127\.0\.0\.1)/, r => r.abort());
     const { revoked } = await wireFakeGoogle(context);

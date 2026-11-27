@@ -11,7 +11,14 @@ import { setup, teardown, openApp, createClass, ENGINE } from './helpers.mjs';
 const SECONDS = Number(process.env.DIAG_SECONDS || 30);
 const say = (s) => console.log(`[diag ${ENGINE}] ${s}`);
 
-const measure = async (label, reducedMotion) => {
+/** 逐一關掉單一個持續繪製的元件（只用 CSSOM 改 style，頁面的 CSP 不受影響），找出是哪一個造成負擔 */
+const VARIANTS = {
+    'canvas-off': () => { document.getElementById('particle-canvas').style.display = 'none'; },
+    'sweep-off': () => { document.getElementById('scan-sweep').style.display = 'none'; },
+    'mascot-off': () => { document.querySelectorAll('.mascot-avatar').forEach(e => { e.style.animation = 'none'; e.style.filter = 'none'; }); },
+    'blur-off': () => { for (const e of document.querySelectorAll('body *')) if (getComputedStyle(e).backdropFilter !== 'none' || getComputedStyle(e).webkitBackdropFilter !== 'none') { e.style.backdropFilter = 'none'; e.style.webkitBackdropFilter = 'none'; } },
+};
+const measure = async (label, reducedMotion, variant) => {
     const app = await openApp({ reducedMotion });
     const { page } = app;
     let closed = false; let crashed = false;
@@ -20,6 +27,7 @@ const measure = async (label, reducedMotion) => {
     try {
         await createClass(page, '診斷班', 20);
         await page.click('#back-to-dashboard-btn');
+        if (variant) await page.evaluate(VARIANTS[variant]);
         await page.evaluate(() => { window.__frames = 0; const tick = () => { window.__frames++; requestAnimationFrame(tick); }; requestAnimationFrame(tick); });
         const lat = []; let timeouts = 0; let lastFrames = 0; const fps = [];
         const end = Date.now() + SECONDS * 1000; let i = 0;
@@ -50,5 +58,6 @@ try {
     for (let round = 1; round <= Number(process.env.DIAG_ROUNDS || 2); round++) {
         await measure(`round ${round} normal`, 'no-preference');
         await measure(`round ${round} reduced-motion`, 'reduce');
+        for (const v of (process.env.DIAG_VARIANTS ?? Object.keys(VARIANTS).join(',')).split(',').filter(Boolean)) await measure(`round ${round} ${v}`, 'no-preference', v);
     }
 } finally { await teardown(); }

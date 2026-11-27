@@ -2112,11 +2112,24 @@
         class Star {
             constructor() { this.reset(true); }
             reset(initial) { this.x = Math.random() * canvas.width; this.y = initial ? Math.random() * canvas.height : canvas.height + 5; this.size = Math.random() * 2 + 0.4; this.speedY = Math.random() * 0.4 + 0.08; this.twinkle = Math.random() * Math.PI * 2; }
-            update() { this.y -= this.speedY; this.twinkle += 0.03; if (this.y < -5) this.reset(false); }
+            update(k) { this.y -= this.speedY * k; this.twinkle += 0.03 * k; if (this.y < -5) this.reset(false); }
             draw() { const o = 0.4 + Math.sin(this.twinkle) * 0.3; ctx.fillStyle = `rgba(0, 229, 255, ${Math.max(0.1, o)})`; ctx.beginPath(); ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2); ctx.fill(); }
         }
         const initParticles = () => { particles = []; const num = window.innerWidth / 14; for (let i = 0; i < num; i++) particles.push(new Star()); };
-        const animateParticles = () => { ctx.clearRect(0, 0, canvas.width, canvas.height); particles.forEach(p => { p.update(); p.draw(); }); requestAnimationFrame(animateParticles); };
+        // BUG-032：星空在毛玻璃（backdrop-filter）面板底下，每重畫一次，上面的模糊都要重算。
+        // - 每秒最多重畫 30 次（移動量依經過時間計算，看起來速度不變）；
+        // - 「減少動態效果」時畫布本來就隱藏，完全不畫（之前仍在背景每一格重畫）；
+        // - 分頁在背景時 requestAnimationFrame 本來就會暫停。
+        const STAR_FRAME_MS = 1000 / 30;
+        let starLast = 0;
+        const animateParticles = (t = performance.now()) => {
+            requestAnimationFrame(animateParticles);
+            if (reducedMotion()) { starLast = 0; return; }
+            if (starLast && t - starLast < STAR_FRAME_MS) return;
+            const k = starLast ? Math.min(4, (t - starLast) / (1000 / 60)) : 1;   // 以 60 fps 為基準的倍數；切回前景時不會一次跳很遠
+            starLast = t;
+            ctx.clearRect(0, 0, canvas.width, canvas.height); particles.forEach(p => { p.update(k); p.draw(); });
+        };
         window.addEventListener('resize', () => { resizeCanvas(); initParticles(); });
 
         // ---------- v6.2 作業逾期自動愛心（規則在 src/core/hw-hearts.js；id 固定，重複執行不會重複加） ----------
