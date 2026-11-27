@@ -211,7 +211,7 @@ Inaccurate documentation the review found (server-side nonce, "only once", 30/IP
   - The sync test (test 43) had its own race: it trusted a stale 「已同步」 badge. It now waits for A's rename to reach the sheet (`e2e/sync.e2e.mjs`).
   - Crash and close diagnostics are printed to the CI log, and the reduced-motion experiment and per-component measurements run in CI as evidence only.
   - No timeout was lengthened, no retry was added, and no assertion or test was removed.
-- **STATUS**: CI green once (45942204051). Root cause: **partly confirmed** (WebKit renderer crash, linked to continuous animation); WebKit stability **NOT_VERIFIED** until it stays green over more runs.
+- **STATUS**: CI green twice in a row (45942204051, 45943929716; every earlier WebKit run had failed). In the stress diagnostic, 2 of 24 normal-motion measurements across those two runs still crashed WebKit, so the crash is **reduced but not eliminated**. The 45-test gate passes. Root cause: **partly confirmed** (WebKit renderer crash, linked to continuous animation); WebKit stability **NOT_VERIFIED** until it stays green over more runs.
 
 ## v6.2 test-writing mistakes caught by the suite (not product bugs)
 - Test helper's default new password contained the username → the server correctly refused it as weak.
