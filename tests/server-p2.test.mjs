@@ -101,7 +101,7 @@ test('invitation: the code is shown once and stored only as a hash; joining only
     assert.equal((await join_(H, X, inv.code, '小明', { localStudentId: 'cls-a-s4' })).statusCode, 400);
     const j = await join_(H, X, ` ${inv.code.toUpperCase()} `, '  小明\u202e  ');
     assert.equal(j.statusCode, 200);
-    assert.deepEqual(Object.keys(j.json()).sort(), ['className', 'message', 'status']);
+    assert.deepEqual(Object.keys(j.json()).sort(), ['className', 'kind', 'message', 'status']);
     for (const s of B.projection.students) assert.ok(!j.body.includes(s.name), 'no roster in the answer');
     assert.equal((await join_(H, X, inv.code, '小明')).statusCode, 200, 'sending twice is idempotent');
     assert.equal(H.db.prepare('SELECT used_count FROM class_invitations').get().used_count, 1);

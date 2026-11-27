@@ -459,6 +459,16 @@ CREATE UNIQUE INDEX reset_pending ON password_reset_requests (member_id) WHERE s
 - **Gate**：靠 Email、網域或邀請碼都拿不到別人班級的權限。
 
 ### P3：學生多班介面與 Google 登入
+
+**實作紀錄（2026-11-28）**：學生頁、伺服器和測試都完成，見 ADR-029。和上面設計不同的地方：
+
+- 學生頁只有一個「代碼」欄位（`POST /api/student/redeem`）：先找個別綁定碼，再找邀請碼。邀請碼沒有名字時回 `need_name`，不算輸入錯誤。
+- 沒連結過的 Google 帳號不會自動建立新帳號：第一次回 `not_linked`，頁面說明「有老師給的帳號請先用帳密登入再連結」，學生再按一次才建立（避免同一個學生不小心變成兩個帳號，之後又不能合併）。
+- 「最近 10 分鐘內重新驗證」改成「這個動作本身要重新驗證」：連結要目前的密碼＋剛拿到的 Google 憑證；解除要密碼；用 Google 設新密碼要剛拿到的 Google 憑證。不需要在 Session 記錄驗證時間。
+- 資料庫 v5：`users.kind`（student／staff）。老師或管理員的 Google 帳號不能進學生頁；學生用過的 Google 帳號不能變成老師或管理員。
+- 開關打開時，學生頁的 `Cross-Origin-Opener-Policy` 改成 `same-origin-allow-popups`（Google 登入用彈出視窗）；API 回應不變。
+- Google 新帳號限流改成「每個網路 15 分鐘 60 個」：一整班在同一個學校網路同時建立也夠用；每個帳號都需要真的 Google 帳號。
+
 1. 我的班級、切換、加入、綁定碼、退出；request generation；空狀態與待審狀態。
 2. Google 登入與綁定、解除（開關預設關閉）；學生頁 CSP 依開關放寬。
 3. **測試**：

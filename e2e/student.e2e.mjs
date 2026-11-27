@@ -6,7 +6,7 @@ import { setup, teardown, openApp, createClass, shot, overflow, axe, OUT, ENGINE
 import { buildApp } from '../server/src/app.mjs';
 import { openDb } from '../server/src/db.mjs';
 import { GOOGLE_CLIENT_ID } from '../src/config.js';
-import { signJwt, basePayload, TEACHER_B, TEACHER_A, ADMIN } from '../tests/helpers/fake-google.mjs';
+import { signJwt, basePayload, fakeGisScript, TEACHER_B, TEACHER_A, ADMIN } from '../tests/helpers/fake-google.mjs';
 import { buildClassProjection, projectionHash } from '../src/core/student-projection.js';
 import { buildFixture, classData } from '../tests/helpers/v62-fixture.mjs';
 import { ROOT } from './helpers.mjs';
@@ -14,24 +14,26 @@ import { join } from 'node:path';
 import { webcrypto } from 'node:crypto';
 import { request as httpsRequest } from 'node:https';
 
-let api = null;
-const startApi = async (teacherOrigin) => {
-    if (api) return api;
+const apis = {};
+/** google：P3 學生 Google 登入打開的另一台 API（其他測試用的預設 API 維持關閉，CSP 不變） */
+const startApi = async (teacherOrigin, { google = false } = {}) => {
+    const name = google ? 'google' : 'plain';
+    if (apis[name]) return apis[name];
     const { keys } = await setup();
-    const config = { clientId: GOOGLE_CLIENT_ID, teacherOrigins: [teacherOrigin], teacherAllow: ['@example.test'], studentOrigins: [], ipSalt: 'e2e-salt-0123456789', cookieSecure: true, staticRoot: ROOT, adminEmails: [ADMIN.email] };
+    const config = { clientId: GOOGLE_CLIENT_ID, teacherOrigins: [teacherOrigin], teacherAllow: ['@example.test'], studentOrigins: [], ipSalt: 'e2e-salt-0123456789', cookieSecure: true, staticRoot: ROOT, adminEmails: [ADMIN.email], studentGoogle: google };
     const db = openDb(':memory:');
     // HTTPS（自簽）：和正式環境一樣用 __Host- + Secure Cookie；WebKit 在 http 不保存 Secure Cookie
     const app = buildApp({ db, config, jwks: async () => keys.jwks, https: testTls() });
     await app.listen({ host: '127.0.0.1', port: 0 });
     const url = `https://127.0.0.1:${app.server.address().port}`;
     config.studentOrigins.push(url);
-    api = { app, db, url, keys };
-    return api;
+    apis[name] = { app, db, url, keys };
+    return apis[name];
 };
-after(async () => { await api?.app.close(); await teardown(); });
+after(async () => { for (const a of Object.values(apis)) await a.app.close(); await teardown(); });
 
 /** 用測試金鑰簽一張「老師乙」的 Google ID token，直接呼叫 API 發布含有惡意字串的合成班級（測 XSS 與園區） */
-const seedViaApi = async (A, mutate = (fx) => fx) => {
+const seedViaApi = async (A, mutate = (fx) => fx, { name = '合成甲班' } = {}) => {
     const priv = await webcrypto.subtle.importKey('jwk', A.keys.goodPrivateJwk, { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' }, false, ['sign']);
     const nonce = `e2e-nonce-${Date.now()}`;
     const credential = await signJwt(priv, basePayload({ account: TEACHER_B, clientId: GOOGLE_CLIENT_ID, nonce }));
@@ -44,7 +46,8 @@ const seedViaApi = async (A, mutate = (fx) => fx) => {
     });
     const { json: { token } } = await call('POST', '/api/teacher/session', { credential, nonce });
     const fx = mutate(buildFixture());
-    const { json: { classKey } } = await call('POST', '/api/teacher/classes', { localClassId: `cls-a-${Date.now()}`, name: '合成甲班' }, token);
+    fx.classes.find(c => c.id === 'cls-a').name = name;          // 發布時班名以投影為準
+    const { json: { classKey } } = await call('POST', '/api/teacher/classes', { localClassId: `cls-a-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, name }, token);
     const projection = buildClassProjection(classData(fx, 'cls-a'), { today: new Intl.DateTimeFormat('sv', { timeZone: 'Asia/Taipei' }).format(new Date()) });
     const created = (await call('POST', `/api/teacher/classes/${classKey}/accounts`, { students: projection.students.map(s => ({ localStudentId: s.studentId })) }, token)).json.created;
     const pub = await call('PUT', `/api/teacher/classes/${classKey}/projection`, { version: Date.now(), hash: await projectionHash(projection), projection }, token);
@@ -53,12 +56,14 @@ const seedViaApi = async (A, mutate = (fx) => fx) => {
 };
 
 /** 學生端：獨立的瀏覽器 context（不同的人、不同的裝置） */
-const openStudent = async (A, { viewport = { width: 390, height: 844 }, bypassCSP = false } = {}) => {
+const openStudent = async (A, { viewport = { width: 390, height: 844 }, bypassCSP = false, hash = '', gis = false } = {}) => {
     const { browser } = await setup();
     // Firefox 沒有手機模擬（isMobile 會直接丟錯）：一樣用手機尺寸的視窗檢查版面，只是不開 isMobile
     const mobile = viewport.width < 600;
     const context = await browser.newContext({ ignoreHTTPSErrors: true, viewport, locale: 'zh-TW', timezoneId: 'Asia/Taipei', bypassCSP, hasTouch: mobile, ...(ENGINE === 'firefox' ? {} : { isMobile: mobile }) });
     await context.route(/^https?:\/\/(?!127\.0\.0\.1)/, r => r.abort());
+    // P3：假的 Google 登入元件（在瀏覽器裡用本次測試的金鑰簽 ID token；伺服器照樣驗簽、nonce、防重放）。後註冊的路由優先
+    if (gis) { const { keys } = await setup(); await context.route('https://accounts.google.com/gsi/client', r => r.fulfill({ status: 200, contentType: 'text/javascript', body: fakeGisScript(keys) })); }
     const page = await context.newPage();
     const errors = [];
     // WebKit：Playwright 截圖時會注入一段 <style>，被頁面的嚴格 CSP 擋下並印出「Refused to apply a stylesheet」。
@@ -71,7 +76,7 @@ const openStudent = async (A, { viewport = { width: 390, height: 844 }, bypassCS
         errors.push(`console: ${m.text()}`);
     });
     const snap = async (name) => { shooting = true; try { await shot(page, name); await page.waitForTimeout(100); } finally { shooting = false; } };
-    await page.goto(`${A.url}/student.html`);
+    await page.goto(`${A.url}/student.html${hash}`);
     return { page, context, errors, snap };
 };
 const studentLogin = async (page, username, password) => {
@@ -386,6 +391,173 @@ test('P2 admin page: only the platform owner gets in; approves a reset request (
     await t.close();
 });
 
+/** 老師端（Node）：把某位本機學生原本的帳號移出本班，再印一張他的個別綁定碼 */
+const claimCodeFor = async (C, localStudentId) => {
+    await C.call('POST', `/api/teacher/classes/${C.classKey}/accounts/${C.accounts.get(localStudentId).accountId}/remove`, {}, C.token);
+    const r = await C.call('POST', `/api/teacher/classes/${C.classKey}/claim-codes`, { students: [{ localStudentId }] }, C.token);
+    assert.equal(r.status, 200); return r.json.codes[0].code;
+};
+const memberOf = (A, C, localStudentId) => A.db.prepare("SELECT id FROM student_accounts WHERE class_id = ? AND local_student_id = ? AND status = 'active'").get(C.classKey, localStudentId)?.id;
+
+test('P3 student: QR link (#join=) survives sign-in and leaves the address bar; one code box (invitation → pending, claim → joined); switching classes drops a late answer from the old class; leave; removed → back to another class; logout leaves nothing', async () => {
+    const { url } = await setup();
+    const A = await startApi(url.replace(/\/$/, ''));
+    const c1 = await seedViaApi(A, undefined, { name: '合成一班-P3' });
+    const c2 = await seedViaApi(A, undefined, { name: '合成二班-P3' });
+    const c3 = await seedViaApi(A, undefined, { name: '合成三班-P3' });
+    const acc = c1.accounts.get('cls-a-s1');
+    const claim2 = await claimCodeFor(c2, 'cls-a-s2');
+    const inv3 = (await c3.call('POST', `/api/teacher/classes/${c3.classKey}/invitations`, {}, c3.token)).json.code;
+
+    // 1. 還沒登入就打開 QR 連結 → 提示 → 登入、改密碼後，代碼已經填好，網址列沒有代碼
+    const S = await openStudent(A, { hash: `#join=${inv3}` });
+    await S.page.waitForSelector('text=登入後就會幫你填好班級邀請碼');
+    assert.ok(!S.page.url().includes('#join'), `the code left the address bar: ${S.page.url()}`);
+    await studentLogin(S.page, acc.username, acc.initialPassword);
+    await changePassword(S.page, acc.initialPassword, 'Maple-Cloud-73');
+    await S.page.waitForSelector('#stu-join');
+    assert.equal(await S.page.inputValue('#stu-code'), inv3);
+    assert.equal(await S.page.locator('.stu-class').count(), 1, 'already in class 1');
+    assert.deepEqual(await overflow(S.page), [], 'my classes fits at 390px');
+    // 邀請碼沒寫名字 → 提示要寫名字（不算錯誤）
+    await S.page.click('#stu-join button[type="submit"]');
+    await S.page.waitForSelector('#stu-join-msg >> text=請輸入你的名字');
+    await S.page.fill('#stu-join-name', '<b>小明</b>');
+    await S.page.click('#stu-join button[type="submit"]');
+    await S.page.waitForSelector('text=已經送出申請到「合成三班-P3」');
+    assert.match(await S.page.textContent('#stu-pending'), /合成三班-P3/);
+    await S.snap('v62-p3-my-classes');
+
+    // 2. 同一個欄位輸入個別綁定碼 → 直接進入二班（顯示二班的自己）
+    await S.page.fill('#stu-code', claim2.toUpperCase());
+    await S.page.click('#stu-join button[type="submit"]');
+    await S.page.waitForFunction(() => document.querySelector('h2')?.textContent === '測試李小華，你好！');
+    assert.equal(await S.page.locator('#stu-class option').count(), 2);
+
+    // 3. 老師核准三班的申請 → 我的班級出現三個班，待確認消失
+    const reqs = (await c3.call('GET', `/api/teacher/classes/${c3.classKey}/join-requests`, undefined, c3.token)).json.requests;
+    await c3.call('POST', `/api/teacher/classes/${c3.classKey}/accounts/${c3.accounts.get('cls-a-s3').accountId}/remove`, {}, c3.token);
+    assert.equal((await c3.call('POST', `/api/teacher/classes/${c3.classKey}/join-requests/${reqs[0].id}/approve`, { localStudentId: 'cls-a-s3' }, c3.token)).status, 200);
+    await S.page.click('#stu-classes-btn');
+    await S.page.waitForFunction(() => document.querySelectorAll('.stu-class').length === 3);
+    assert.equal(await S.page.locator('#stu-pending').count(), 0);
+
+    // 4. 切換班級：一班的回應故意晚到；學生先切到一班又馬上切回二班 → 晚到的一班回應不能影響二班的畫面。
+    //    晚到的是錯誤（例如網路很慢、最後伺服器忙）：沒有 request generation 的話，錯誤畫面會蓋掉已經顯示好的二班
+    const m1 = memberOf(A, c1, 'cls-a-s1'); const m2 = memberOf(A, c2, 'cls-a-s2'); const m3 = memberOf(A, c3, 'cls-a-s3');
+    await S.page.click(`.stu-class[data-member="${m2}"] button[data-action="open"]`);
+    await S.page.waitForFunction(() => document.querySelector('h2')?.textContent === '測試李小華，你好！');
+    let release; const held = new Promise(r => { release = r; });
+    await S.page.route(new RegExp(`/api/student/classes/${m1}/dashboard$`), async (r) => { await held; await r.fulfill({ status: 500, contentType: 'application/json', body: '{"error":"server_error","message":"伺服器忙"}' }); });
+    const late = S.page.waitForResponse(r => r.url().endsWith(`/classes/${m1}/dashboard`));
+    await S.page.selectOption('#stu-class', m1);
+    await S.page.waitForSelector(`#stu-body[data-member="${m1}"] .stu-loading`);
+    await S.page.selectOption('#stu-class', m2);
+    await S.page.waitForFunction(() => document.querySelector('h2')?.textContent === '測試李小華，你好！');
+    release(); await late;
+    await S.page.waitForTimeout(300);
+    assert.equal(await S.page.textContent('h2'), '測試李小華，你好！');
+    assert.ok(!(await S.page.textContent('body')).includes('伺服器忙'), 'the late error from class 1 did not replace the class 2 screen');
+    assert.ok(!(await S.page.textContent('body')).includes('王小明'), 'nothing from class 1 on the class 2 screen');
+    assert.equal(await S.page.getAttribute('#stu-body', 'data-member'), m2);
+    await S.page.unroute(new RegExp(`/api/student/classes/${m1}/dashboard$`));
+    await S.page.selectOption('#stu-class', m1);
+    await S.page.waitForFunction(() => document.querySelector('h2')?.textContent === '測試王小明，你好！');
+
+    // 5. 退出三班（要按兩次確認）
+    await S.page.click('#stu-classes-btn');
+    await S.page.click(`.stu-class[data-member="${m3}"] button[data-action="leave"]`);
+    await S.page.click(`.stu-class[data-member="${m3}"] button[data-confirm="leave"]`);
+    await S.page.waitForSelector('text=已經退出「合成三班-P3」');
+    assert.equal(await S.page.locator('.stu-class').count(), 2);
+
+    // 6. 老師把學生移出二班，學生正在看二班 → 下一個操作回到還能用的一班
+    await S.page.click(`.stu-class[data-member="${m2}"] button[data-action="open"]`);
+    await S.page.waitForFunction(() => document.querySelector('h2')?.textContent === '測試李小華，你好！');
+    await c2.call('POST', `/api/teacher/classes/${c2.classKey}/accounts/${m2}/remove`, {}, c2.token);
+    await S.page.click('.stu-tab[data-tab="homework"]');
+    await S.page.waitForSelector('text=你已經不在這個班級了');
+    await S.page.waitForSelector(`#stu-body[data-member="${m1}"] .stu-hw`);              // 同一個分頁（作業），換成還能用的一班
+    assert.equal(await S.page.textContent('#stu-class-name'), '合成一班-P3');
+    assert.equal(await S.page.locator('#stu-class').count(), 0, 'only one class left → no switcher');
+
+    // 7. 登出（共用裝置）：畫面上沒有任何班級或姓名，瀏覽器沒有任何資料
+    await S.page.click('#stu-logout');
+    await S.page.waitForSelector('#stu-user');
+    const text = await S.page.textContent('body');
+    for (const x of ['合成一班-P3', '合成二班-P3', '王小明', '李小華']) assert.ok(!text.includes(x), x);
+    const storage = await S.page.evaluate(async () => ({ ls: localStorage.length, ss: sessionStorage.length, ck: document.cookie, idb: (await indexedDB.databases?.())?.length || 0 }));
+    assert.deepEqual(storage, { ls: 0, ss: 0, ck: '', idb: 0 });
+    assert.deepEqual(await S.context.cookies(), [], 'the session cookie is cleared');
+    assert.equal(await S.page.evaluate(() => window.__pwned), undefined);
+    assert.deepEqual(S.errors.filter(e => !/status of (400|401|404|500)/.test(e)), [], 'only the expected 400 (name needed), 401 (not signed in yet), 404 (removed from class), 500 (the simulated late error)');
+    await S.context.close();
+});
+
+test('P3 Google (simulated, switch on): new student signs up with Google and joins with a claim code; a password student links Google, signs in with it and sets a forgotten password; only Google\'s sign-in is added to the CSP', async () => {
+    const { url } = await setup();
+    const A = await startApi(url.replace(/\/$/, ''), { google: true });
+    const C = await seedViaApi(A, undefined, { name: '合成谷歌班-P3' });
+    const NEW = { sub: '210000000000000000001', email: 'new.kid@example.test', name: '合成新同學' };
+    const LINK = { sub: '210000000000000000002', email: 'linked.kid@example.test', name: '合成連結同學' };
+    const claim = await claimCodeFor(C, 'cls-a-s5');
+    const S = await openStudent(A, { gis: true });
+    const pick = (a) => S.page.evaluate((x) => { Object.assign(window.__fakeGoogle, { account: x, mode: 'ok' }); }, a);
+    await S.page.waitForSelector('#fake-gsi-btn');
+    // 新同學：第一次按 → 說明「還沒有學生帳號」；再按一次（建立）→ 帳號建立好了、沒有班級
+    await pick(NEW);
+    await S.page.click('#fake-gsi-btn');
+    await S.page.waitForSelector('text=這個 Google 帳號還沒有學生帳號');
+    assert.equal(A.db.prepare("SELECT COUNT(*) n FROM users WHERE kind = 'student' AND id NOT IN (SELECT user_id FROM password_credentials)").get().n, 0, 'not created on the first click');
+    await S.page.click('#fake-gsi-btn');
+    await S.page.waitForSelector('text=帳號建立好了');
+    await S.page.fill('#stu-code', claim);
+    await S.page.click('#stu-join button[type="submit"]');
+    await S.page.waitForFunction(() => document.querySelector('h2')?.textContent === '測試張小芳，你好！');
+    await S.page.click('#stu-account-btn');
+    await S.page.waitForSelector('text=這個帳號是用 Google 建立的');
+    assert.equal(await S.page.locator('#stu-unlink').count(), 0, 'Google is the only way in: no unlink');
+    await S.page.click('#stu-logout');
+    await S.page.waitForSelector('#stu-user');
+
+    // 有帳密的同學：連結 Google（要先輸入目前的密碼）
+    const acc = C.accounts.get('cls-a-s1');
+    await studentLogin(S.page, acc.username, acc.initialPassword);
+    await changePassword(S.page, acc.initialPassword, 'Pine-Harbor-64');
+    await S.page.waitForSelector('.stu-stats');
+    await S.page.click('#stu-account-btn');
+    await S.page.waitForSelector('#stu-link #fake-gsi-btn');
+    await pick(LINK);
+    await S.page.click('#fake-gsi-btn');
+    await S.page.waitForSelector('#stu-account-msg >> text=請先輸入目前的密碼');
+    await S.page.fill('#stu-acct-pw', 'Pine-Harbor-64');
+    await S.page.click('#fake-gsi-btn');
+    await S.page.waitForSelector('text=已經連結 Google。');
+    await S.snap('v62-p3-account-google');
+    await S.page.click('#stu-logout');
+    await S.page.waitForSelector('#fake-gsi-btn');
+    // 用 Google 登入 → 同一個人、同一個班
+    await pick(LINK);
+    await S.page.click('#fake-gsi-btn');
+    await S.page.waitForFunction(() => document.querySelector('h2')?.textContent === '測試王小明，你好！');
+    // 忘記密碼：用 Google 設新密碼
+    await S.page.click('#stu-account-btn');
+    await S.page.waitForSelector('#stu-g-reset #fake-gsi-btn');
+    await S.page.fill('#stu-g-new', 'Night-Lantern-85'); await S.page.fill('#stu-g-new2', 'Night-Lantern-85');
+    await S.page.click('#fake-gsi-btn');
+    await S.page.waitForSelector('text=新密碼設定好了');
+    await S.page.click('#stu-logout');
+    await studentLogin(S.page, acc.username, 'Night-Lantern-85');
+    await S.page.waitForFunction(() => document.querySelector('h2')?.textContent === '測試王小明，你好！');
+    // Email、姓名不在資料庫裡；CSP 只多了 Google 登入元件
+    const dump = JSON.stringify(A.db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all().map(t => A.db.prepare(`SELECT * FROM "${t.name}"`).all()));
+    for (const x of [NEW.email, LINK.email, NEW.name, LINK.name]) assert.ok(!dump.includes(x), x);
+    assert.deepEqual(S.errors.filter(e => /Content Security Policy|Refused to/.test(e)), [], 'the Google sign-in script loads under the CSP');
+    assert.deepEqual(S.errors.filter(e => !/status of (401|404)/.test(e)), []);
+    assert.deepEqual(await overflow(S.page), []);
+    await S.context.close();
+});
+
 test('student page accessibility (axe) on desktop and login screen', async () => {
     const { url } = await setup();
     const A = await startApi(url.replace(/\/$/, ''));
@@ -402,6 +574,12 @@ test('student page accessibility (axe) on desktop and login screen', async () =>
     await S.page.waitForSelector('.stu-scene');
     assert.deepEqual(await axe(S.page), [], 'zoo');
     await S.snap('v62-student-zoo-desktop');
+    await S.page.click('#stu-classes-btn');
+    await S.page.waitForSelector('#stu-join');
+    assert.deepEqual(await axe(S.page), [], 'my classes');
+    await S.page.click('#stu-account-btn');
+    await S.page.waitForSelector('#stu-change-pw');
+    assert.deepEqual(await axe(S.page), [], 'account');
     await S.context.close();
     assert.ok(OUT && join);
 });

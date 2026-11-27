@@ -180,6 +180,33 @@ paths:
       summary: 用個別綁定碼直接成為那一班的那一位學生（一次性）
       requestBody: { required: true, content: { application/json: { schema: { type: object, additionalProperties: false, required: [code], properties: { code: { type: string, maxLength: 32 } } } } } }
       responses: { "200": { description: "{ id（我在這一班的代號）, className }" }, "404": { description: invalid_code }, "409": { description: "already_bound、already_member、quota" }, "429": { description: 同 /api/student/join } }
+  /api/student/redeem:
+    post:
+      security: [{ studentCookie: [], csrf: [] }]
+      summary: "P3：學生頁的單一代碼欄位。先找個別綁定碼（直接加入），再找班級邀請碼（送出申請）"
+      requestBody: { required: true, content: { application/json: { schema: { type: object, additionalProperties: false, required: [code], properties: { code: { type: string, maxLength: 32 }, displayName: { type: string, maxLength: 60 }, seatHint: { type: integer, minimum: 1, maximum: 99 } } } } } }
+      responses: { "200": { description: "綁定碼：{ kind: claim, id, className }；邀請碼：{ kind: invite, status: pending, className, message }" }, "400": { description: "need_name：是邀請碼但沒有名字（不算輸入錯誤）" }, "404": { description: "invalid_code（計入錯誤次數）" }, "409": { description: "already_member、already_bound、quota、too_many_requests" }, "429": { description: 同 /api/student/join } }
+  /api/student/config:
+    get: { summary: "P3：學生頁要不要顯示 Google 登入（Client ID 本來就是公開的）", responses: { "200": { description: "{ google: { clientId } | null }" } } }
+  /api/student/google:
+    post:
+      summary: "P3（FHES_STUDENT_GOOGLE=on）：學生用 Google 登入。沒連結過的 Google 帳號回 not_linked；create: true 才建立沒有任何班級的新帳號"
+      requestBody: { required: true, content: { application/json: { schema: { type: object, additionalProperties: false, required: [credential, nonce], properties: { credential: { type: string, maxLength: 4096 }, nonce: { type: string, minLength: 8, maxLength: 128 }, create: { type: boolean } } } } } }
+      responses: { "200": { description: "{ created, csrf } ＋ Set-Cookie（HttpOnly、Secure、SameSite=Strict）" }, "401": { description: "invalid_token、replayed" }, "403": { description: "origin、staff_account（老師或管理員的 Google 帳號）、disabled" }, "404": { description: "not_linked；開關關閉時也是 404" }, "429": { description: "錯誤太多次，或同一個網路 15 分鐘內建立超過 60 個新帳號" } }
+  /api/student/identities/google:
+    post:
+      security: [{ studentCookie: [], csrf: [] }]
+      summary: "P3：連結 Google（要目前的密碼＋剛拿到的 Google 憑證）。已經屬於別人 → 409，不合併"
+      requestBody: { required: true, content: { application/json: { schema: { type: object, additionalProperties: false, required: [credential, nonce, currentPassword], properties: { credential: { type: string }, nonce: { type: string }, currentPassword: { type: string, maxLength: 128 } } } } } }
+      responses: { "200": { description: OK }, "400": { description: "wrong_password、no_password" }, "401": { description: "invalid_token、replayed、未登入" }, "403": { description: "staff_account、csrf、origin" }, "409": { description: "identity_taken、already_linked" }, "429": { description: 密碼錯太多次 } }
+  /api/student/identities/google/unlink:
+    post: { security: [{ studentCookie: [], csrf: [] }], summary: "P3：解除 Google（要目前的密碼；只用 Google 建立、沒有密碼的帳號不能解除）", requestBody: { required: true, content: { application/json: { schema: { type: object, additionalProperties: false, required: [currentPassword], properties: { currentPassword: { type: string, maxLength: 128 } } } } } }, responses: { "200": { description: OK }, "400": { description: wrong_password }, "409": { description: last_method } } }
+  /api/student/password/google-reset:
+    post:
+      security: [{ studentCookie: [], csrf: [] }]
+      summary: "P3（D3）：連結過 Google 的學生忘記密碼時，用剛拿到的 Google 憑證證明本人後設定新密碼；其他 Session 全部失效"
+      requestBody: { required: true, content: { application/json: { schema: { type: object, additionalProperties: false, required: [credential, nonce, newPassword], properties: { credential: { type: string }, nonce: { type: string }, newPassword: { type: string, maxLength: 128 } } } } } }
+      responses: { "200": { description: "{ ok, csrf } ＋ 新的 Set-Cookie" }, "400": { description: "weak_password、no_password" }, "403": { description: "not_linked（不是連結到這個帳號的 Google）" } }
   /api/student/classes/{memberId}/leave:
     post: { security: [{ studentCookie: [], csrf: [] }], summary: 自己退出這一班（立即失效）, parameters: [{ name: memberId, in: path, required: true, schema: { type: string } }], responses: { "200": { description: OK }, "404": { description: 不是你的班級 } } }
   /api/admin/session:
@@ -221,7 +248,7 @@ paths:
       requestBody: { required: true, content: { application/json: { schema: { type: object, additionalProperties: false, required: [currentPassword, newPassword], properties: { currentPassword: { type: string }, newPassword: { type: string } } } } } }
       responses: { "200": { description: "{ ok, csrf }" }, "400": { description: 目前密碼錯誤或新密碼太弱 } }
   /api/student/me:
-    get: { security: [{ studentCookie: [] }], summary: "目前登入狀態（含 CSRF token）與自己有效的班級", description: "classes[].id 是「我在這一班的代號」（自己的成員 id），用在 /api/student/classes/{memberId}/…；學生端永遠不會收到教師端的 classKey。helper 只在只有一個班級時有意義（舊版學生頁）。", responses: { "200": { description: "{ username, mustChangePassword, csrf, helper, classes: [{ id, className, helper }] }" }, "401": { description: 未登入或已失效 } } }
+    get: { security: [{ studentCookie: [] }], summary: "目前登入狀態（含 CSRF token）與自己有效的班級", description: "classes[].id 是「我在這一班的代號」（自己的成員 id），用在 /api/student/classes/{memberId}/…；學生端永遠不會收到教師端的 classKey。helper 只在只有一個班級時有意義（舊版學生頁）。", responses: { "200": { description: "{ username（只用 Google 建立的帳號是 null）, mustChangePassword, csrf, hasPassword, google（是否連結 Google）, helper, classes: [{ id, className, helper }], pending: [{ className, since }]（等老師確認的申請，P3） }" }, "401": { description: 未登入或已失效 } } }
   /api/student/classes/{memberId}/dashboard:
     get: { security: [{ studentCookie: [] }], summary: "多班級（v3）：與 /api/student/dashboard 相同，但指定班級", description: "memberId 必須是登入者自己、仍然有效的成員資格，否則一律 404（不透露是否存在）。同樣的 /classes/{memberId}/ 前綴也適用於 homework、zoo、care、helper、helper/register，內容與對應的舊路徑相同。", parameters: [{ name: memberId, in: path, required: true, schema: { type: string, pattern: "^s_[A-Za-z0-9_-]{8,64}$" } }], responses: { "200": { description: 同舊路徑 }, "404": { description: 不是你的班級 } } }
   /api/student/dashboard:

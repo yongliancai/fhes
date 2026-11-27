@@ -23,6 +23,8 @@ export const LIMITS = Object.freeze({
     classesPerDay: 10, invitesPerClass: 3, inviteDefaultDays: 7, inviteMaxDays: 30, inviteDefaultUses: 60,
     pendingPerClass: 100, codeUserFails: 10, codeIpFails: 50, claimDays: 30, joinKeepDays: 30,
     adminAbsMs: 4 * 3600_000, resetRequestDays: 14, auditPage: 200,
+    // P3：用 Google 建立新的學生帳號，每個 IP 每 15 分鐘最多 60 個（一整班在同一個學校網路也夠用；每個都要有真的 Google 帳號）
+    googleNewPerIp: 60,
 });
 const DAY = 86400_000;
 const STALE_SEEN_MS = 60_000;      // last_seen 最多每分鐘更新一次
@@ -37,6 +39,9 @@ const safeEq = (a, b) => {
 
 const STATIC_TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.webp': 'image/webp', '.png': 'image/png' };
 const CSP = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; font-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
+/** P3：學生 Google 登入打開時，學生頁面（不含 API）只多允許 Google 登入元件需要的網址（Google 官方 CSP 說明列出的四項） */
+const GSI = 'https://accounts.google.com/gsi/';
+const CSP_GOOGLE = `default-src 'self'; script-src 'self' ${GSI}client; style-src 'self' ${GSI}style; frame-src ${GSI}; img-src 'self' data:; connect-src 'self' ${GSI}; font-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'`;
 
 /** 沒有參數的 querystring：多帶任何欄位（例如 ?studentId=）都回 400 */
 const NO_QUERY = { type: 'object', additionalProperties: false, properties: {} };
@@ -58,6 +63,7 @@ export const buildApp = ({ db, config, jwks, now = () => Date.now(), https }) =>
     if (!config?.clientId) throw new Error('缺少 Google OAuth Client ID');
     if (!config.ipSalt || config.ipSalt.length < 16) throw new Error('ipSalt 至少 16 個字元');
     const signupMode = config.teacherSignup ?? 'allowlist';
+    const studentGoogle = config.studentGoogle === true;          // P3（D6）：學生 Google 登入，預設關閉
     if (!['allowlist', 'open'].includes(signupMode)) throw new Error('teacherSignup 只能是 allowlist 或 open');
     const cookieSecure = config.cookieSecure !== false;
     const COOKIE = cookieSecure ? '__Host-fhes_sid' : 'fhes_sid';
@@ -122,8 +128,10 @@ export const buildApp = ({ db, config, jwks, now = () => Date.now(), https }) =>
         reply.header('X-Content-Type-Options', 'nosniff');
         reply.header('Referrer-Policy', 'no-referrer');
         reply.header('X-Frame-Options', 'DENY');
-        reply.header('Cross-Origin-Opener-Policy', 'same-origin');
-        reply.header('Content-Security-Policy', CSP);
+        // Google 登入用彈出視窗：開關打開時學生頁面改成 same-origin-allow-popups（Google 的建議），API 回應不變
+        const gPage = studentGoogle && !req.url.startsWith('/api/');
+        reply.header('Cross-Origin-Opener-Policy', gPage ? 'same-origin-allow-popups' : 'same-origin');
+        reply.header('Content-Security-Policy', gPage ? CSP_GOOGLE : CSP);
         if (cookieSecure) reply.header('Strict-Transport-Security', 'max-age=31536000');
         if (req.url.startsWith('/api/')) reply.header('Cache-Control', 'no-store');
         return payload;
@@ -182,12 +190,14 @@ export const buildApp = ({ db, config, jwks, now = () => Date.now(), https }) =>
         try { db.prepare('INSERT INTO used_id_tokens (token_hash, expires_at) VALUES (?, ?)').run(tokenHash, id.exp + 120_000); return true; }
         catch { return false; }
     };
-    /** 同一個 Google 身分只會有一個 user（不依 Email 合併）；沒有就建立。要在交易內呼叫 */
-    const userForIdentity = (subjectHash, t) => {
-        const ident = db.prepare("SELECT user_id FROM auth_identities WHERE provider = 'google' AND subject_hash = ?").get(subjectHash);
-        if (ident) return ident.user_id;
+    /** 這個 Google 身分屬於哪個 user（含 kind：student／staff）；沒有就是 null */
+    const identityUser = (subjectHash) => db.prepare("SELECT u.id, u.kind FROM auth_identities a JOIN users u ON u.id = a.user_id WHERE a.provider = 'google' AND a.subject_hash = ?").get(subjectHash) || null;
+    /** 同一個 Google 身分只會有一個 user（不依 Email 合併）；沒有就建立（kind：老師／管理員＝staff，學生＝student）。要在交易內呼叫 */
+    const userForIdentity = (subjectHash, t, kind = 'staff') => {
+        const ident = identityUser(subjectHash);
+        if (ident) return ident.id;
         const userId = `u_${newToken().slice(0, 20)}`;
-        db.prepare("INSERT INTO users (id, status, created_at, updated_at) VALUES (?, 'active', ?, ?)").run(userId, t, t);
+        db.prepare("INSERT INTO users (id, status, kind, created_at, updated_at) VALUES (?, 'active', ?, ?, ?)").run(userId, kind, t, t);
         db.prepare("INSERT INTO auth_identities (id, user_id, provider, subject_hash, created_at) VALUES (?, ?, 'google', ?, ?)").run(`ai_${newToken().slice(0, 20)}`, userId, subjectHash, t);
         return userId;
     };
@@ -241,7 +251,7 @@ export const buildApp = ({ db, config, jwks, now = () => Date.now(), https }) =>
         const s = liveSession(req.cookies?.[COOKIE], 'student');
         if (!s) return null;
         const u = db.prepare('SELECT * FROM users WHERE id = ?').get(s.subject_id);
-        if (!canUse(u)) { revokeAllOf('student', s.subject_id); return null; }
+        if (!canUse(u) || u.kind === 'staff') { revokeAllOf('student', s.subject_id); return null; }
         const cred = db.prepare('SELECT * FROM password_credentials WHERE user_id = ?').get(u.id) || null;
         return { session: s, user: u, cred };
     };
@@ -302,6 +312,12 @@ export const buildApp = ({ db, config, jwks, now = () => Date.now(), https }) =>
         if (!consumeIdToken(credential, id)) { ipFail(ipKey); return fail(reply, 401, 'replayed', '這個登入憑證已經用過，請重新登入'); }
         const accountHash = sha256(`https://accounts.google.com|${id.sub}`);
         let t = db.prepare('SELECT * FROM teachers WHERE account_hash = ?').get(accountHash);
+        if (!t && identityUser(accountHash)?.kind === 'student') {
+            // P3：學生用 Google 登入過的身分不能變成老師（反過來，老師的身分也不能進學生頁）
+            ipFail(ipKey);
+            audit(req, 'anonymous', null, 'teacher.session.student');
+            return fail(reply, 403, 'student_account', '這個 Google 帳號已經是學生帳號，不能當老師帳號使用');
+        }
         if (!t) {
             // v3：老師也是平台 user（同一個 Google 身分只會有一個 user；不依 Email 合併）。signup 記錄是名單內還是自助註冊
             t = { id: `t_${newToken().slice(0, 16)}`, status: 'active' };
@@ -374,7 +390,7 @@ export const buildApp = ({ db, config, jwks, now = () => Date.now(), https }) =>
             // 老師發的帳號＝新的平台 user＋本班發的帳密＋本班成員資格（同一個交易）
             try {
                 db.transaction(() => {
-                    db.prepare("INSERT INTO users (id, status, created_at, updated_at) VALUES (?, 'active', ?, ?)").run(userId, t, t);
+                    db.prepare("INSERT INTO users (id, status, kind, created_at, updated_at) VALUES (?, 'active', 'student', ?, ?)").run(userId, t, t);
                     db.prepare('INSERT INTO password_credentials (user_id, username, password_hash, must_change, issued_by_class_id, created_at, updated_at) VALUES (?,?,?,1,?,?,?)').run(userId, username, hash, c.id, t, t);
                     db.prepare("INSERT INTO student_accounts (id, class_id, user_id, local_student_id, status, is_helper, joined_via, created_at, updated_at) VALUES (?,?,?,?,'active',0,'teacher',?,?)").run(id, c.id, userId, localStudentId, t, t);
                 }).immediate();
@@ -699,11 +715,144 @@ export const buildApp = ({ db, config, jwks, now = () => Date.now(), https }) =>
 
     app.get('/api/student/me', { preHandler: studentGuard({ allowPwChange: true }), schema: { querystring: NO_QUERY } }, async (req, reply) => {
         const { user: u, cred, session: s } = req.student;
-        const ms = s.scope === 'full' ? activeMembers(u.id) : [];
+        const full = s.scope === 'full';
+        const ms = full ? activeMembers(u.id) : [];
+        // P3：等老師確認中的申請（只有班級名稱和時間）
+        const pending = full ? db.prepare(`SELECT c.name AS class_name, j.created_at FROM join_requests j JOIN classes c ON c.id = j.class_id
+            WHERE j.user_id = ? AND j.status = 'pending' AND c.status = 'active' AND j.created_at > ? ORDER BY j.created_at, j.id`).all(u.id, now() - LIMITS.joinKeepDays * DAY) : [];
+        const google = !!db.prepare("SELECT 1 FROM auth_identities WHERE provider = 'google' AND user_id = ?").get(u.id);
         // classes：只有自己有效的班級（自己在該班的代號、班級名稱、是不是小老師）；沒有 classKey、名冊或其他成員的資料
         // helper：舊版學生頁用（只有一個班級時才有意義）
-        return json(reply, 200, { username: cred?.username ?? null, mustChangePassword: s.scope !== 'full', csrf: s.csrf,
-            helper: ms.length === 1 && !!ms[0].is_helper, classes: ms.map(m => ({ id: m.id, className: m.class_name, helper: !!m.is_helper })) });
+        return json(reply, 200, { username: cred?.username ?? null, mustChangePassword: !full, csrf: s.csrf,
+            hasPassword: !!cred, google,
+            helper: ms.length === 1 && !!ms[0].is_helper, classes: ms.map(m => ({ id: m.id, className: m.class_name, helper: !!m.is_helper })),
+            pending: pending.map(r => ({ className: r.class_name, since: r.created_at })) });
+    });
+
+    // ------------------------------------------------------------ P3：學生 Google 登入（D6；FHES_STUDENT_GOOGLE，預設關閉）
+    // 只存身分雜湊 SHA256(iss|sub)，不存 Email 或姓名。不用 Email 合併帳號。帳密登入永遠可用（學校可能不讓學生用 Google）。
+    const STAFF_MSG = '這是老師或管理員的 Google 帳號，學生頁不能使用。請用學生自己的帳號。';
+    const GOOGLE_BODY = { credential: { type: 'string', maxLength: 4096 }, nonce: { type: 'string', minLength: 8, maxLength: 128 } };
+    const googleOff = (reply) => fail(reply, 404, 'not_found', '找不到');
+    /** 驗證並用掉一張學生端的 Google ID token；成功回身分雜湊，失敗回 null（已經回覆錯誤） */
+    const studentIdToken = async (req, reply) => {
+        const ipKey = `sg-ip:${ipHash(req)}`;
+        if (ipFailures(ipKey) >= LIMITS.teacherIpFailLimit) { fail(reply, 429, 'rate_limited', '嘗試太多次，請稍後再試'); return null; }
+        let id;
+        try { id = await verifyIdToken(req.body.credential, req.body.nonce); }
+        catch (e) {
+            ipFail(ipKey);
+            audit(req, 'anonymous', null, 'student.google.fail', null, { code: e instanceof IdTokenError ? e.code : 'error' });
+            fail(reply, 401, 'invalid_token', '無法驗證 Google 登入，請再試一次'); return null;
+        }
+        if (!consumeIdToken(req.body.credential, id)) { ipFail(ipKey); fail(reply, 401, 'replayed', '這個登入憑證已經用過，請再按一次 Google 登入'); return null; }
+        return sha256(`https://accounts.google.com|${id.sub}`);
+    };
+    /** 敏感動作前重新輸入密碼（連結、解除 Google）。錯誤次數和登入共用鎖定 */
+    const recheckPassword = async (reply, cred, password) => {
+        const userKey = `user:${cred.username}`;
+        if (userLockedFor(userKey) > 0) { fail(reply, 429, 'rate_limited', '嘗試太多次，請過幾分鐘再試'); return false; }
+        userFail(userKey);
+        if (!await verifyPassword(cred.password_hash, password)) { fail(reply, 400, 'wrong_password', '目前的密碼不正確'); return false; }
+        rlReset(userKey); return true;
+    };
+
+    /** 學生頁要不要顯示 Google 按鈕（Client ID 本來就是公開的） */
+    app.get('/api/student/config', { schema: { querystring: NO_QUERY } }, async (req, reply) =>
+        json(reply, 200, { google: studentGoogle ? { clientId: config.clientId } : null }));
+
+    /** Google 登入。沒連結過的 Google 帳號：預設回 not_linked；學生明確選「建立新帳號」（create:true）才建立沒有任何班級的新帳號 */
+    app.post('/api/student/google', {
+        schema: { body: { type: 'object', additionalProperties: false, required: ['credential', 'nonce'], properties: { ...GOOGLE_BODY, create: { type: 'boolean' } } } },
+    }, async (req, reply) => {
+        if (!studentGoogle) return googleOff(reply);
+        if (!studentOriginOk(req.headers.origin)) return fail(reply, 403, 'origin', '不允許的來源');
+        const subjectHash = await studentIdToken(req, reply); if (!subjectHash) return;
+        const t = now();
+        let found = identityUser(subjectHash); let created = false;
+        if (!found) {
+            if (req.body.create !== true) return fail(reply, 404, 'not_linked', '這個 Google 帳號還沒有連結學生帳號');
+            const newKey = `sg-new:${ipHash(req)}`;
+            if (ipFailures(newKey) >= LIMITS.googleNewPerIp) { reply.header('Retry-After', String(LIMITS.ipWindowMs / 1000)); return fail(reply, 429, 'rate_limited', '這個網路建立太多新帳號了，請過 15 分鐘再試'); }
+            found = db.transaction(() => {
+                const again = identityUser(subjectHash);
+                if (again) return again;
+                created = true; userForIdentity(subjectHash, t, 'student');
+                return identityUser(subjectHash);
+            }).immediate();
+            if (created) ipFail(newKey);
+        }
+        if (found.kind !== 'student') { audit(req, 'anonymous', null, 'student.google.staff'); return fail(reply, 403, 'staff_account', STAFF_MSG); }
+        const u = db.prepare('SELECT * FROM users WHERE id = ?').get(found.id);
+        if (!canUse(u)) { audit(req, 'student', found.id, 'student.login.fail'); return fail(reply, 403, 'disabled', '這個帳號目前不能使用，請找老師'); }
+        revokeSession(req.cookies?.[COOKIE]);                                    // 防 session 固定
+        const s = createSession('student', u.id, 'full');
+        db.prepare("UPDATE student_accounts SET last_login_at = ? WHERE user_id = ? AND status = 'active'").run(t, u.id);
+        db.prepare("UPDATE auth_identities SET last_used_at = ? WHERE provider = 'google' AND subject_hash = ?").run(t, subjectHash);
+        audit(req, 'student', u.id, created ? 'student.signup.google' : 'student.login.google');
+        setStudentCookie(reply, s.token);
+        return json(reply, 200, { created, csrf: s.csrf });
+    });
+
+    /** 連結 Google：要重新輸入密碼＋一張剛拿到的 Google 憑證。已經屬於別人的 Google 身分 → 409，不合併 */
+    app.post('/api/student/identities/google', {
+        preHandler: studentGuard({ write: true }),
+        schema: { body: { type: 'object', additionalProperties: false, required: ['credential', 'nonce', 'currentPassword'], properties: { ...GOOGLE_BODY, currentPassword: { type: 'string', maxLength: 128 } } } },
+    }, async (req, reply) => {
+        if (!studentGoogle) return googleOff(reply);
+        const { user: u, cred } = req.student;
+        if (!cred) return fail(reply, 400, 'no_password', '這個帳號沒有設定密碼');
+        if (!await recheckPassword(reply, cred, req.body.currentPassword)) return;
+        const subjectHash = await studentIdToken(req, reply); if (!subjectHash) return;
+        const out = db.transaction(() => {
+            const owner = identityUser(subjectHash);
+            if (owner) {
+                if (owner.id === u.id) return { code: 200, linked: false };
+                return owner.kind === 'student' ? { code: 409, error: 'identity_taken', message: '這個 Google 帳號已經連結到另一個學生帳號' } : { code: 403, error: 'staff_account', message: STAFF_MSG };
+            }
+            if (db.prepare("SELECT 1 FROM auth_identities WHERE provider = 'google' AND user_id = ?").get(u.id)) return { code: 409, error: 'already_linked', message: '你已經連結了另一個 Google 帳號，要換請先解除' };
+            db.prepare("INSERT INTO auth_identities (id, user_id, provider, subject_hash, created_at) VALUES (?, ?, 'google', ?, ?)").run(`ai_${newToken().slice(0, 20)}`, u.id, subjectHash, now());
+            return { code: 200, linked: true };
+        }).immediate();
+        if (out.code !== 200) { audit(req, 'student', u.id, 'student.google.link.denied', null, { error: out.error }); return fail(reply, out.code, out.error, out.message); }
+        if (out.linked) audit(req, 'student', u.id, 'student.google.link');
+        return json(reply, 200, { ok: true });
+    });
+
+    /** 解除 Google：要重新輸入密碼；沒有密碼的帳號（只用 Google 建立的）不能解除，否則就沒有任何登入方式 */
+    app.post('/api/student/identities/google/unlink', {
+        preHandler: studentGuard({ write: true }),
+        schema: { body: { type: 'object', additionalProperties: false, required: ['currentPassword'], properties: { currentPassword: { type: 'string', maxLength: 128 } } } },
+    }, async (req, reply) => {
+        if (!studentGoogle) return googleOff(reply);
+        const { user: u, cred } = req.student;
+        if (!cred) return fail(reply, 409, 'last_method', 'Google 是你唯一的登入方式，不能解除');
+        if (!await recheckPassword(reply, cred, req.body.currentPassword)) return;
+        const r = db.prepare("DELETE FROM auth_identities WHERE provider = 'google' AND user_id = ?").run(u.id);
+        if (r.changes) audit(req, 'student', u.id, 'student.google.unlink');
+        return json(reply, 200, { ok: true });
+    });
+
+    /** 忘記密碼（D3）：連結過 Google 的學生，用 Google 再驗證一次就能自己設新密碼；其他裝置全部登出 */
+    app.post('/api/student/password/google-reset', {
+        preHandler: studentGuard({ write: true }),
+        schema: { body: { type: 'object', additionalProperties: false, required: ['credential', 'nonce', 'newPassword'], properties: { ...GOOGLE_BODY, newPassword: { type: 'string', maxLength: 128 } } } },
+    }, async (req, reply) => {
+        if (!studentGoogle) return googleOff(reply);
+        const { user: u, cred } = req.student;
+        if (!cred) return fail(reply, 400, 'no_password', '這個帳號沒有設定密碼');
+        const problem = passwordProblem(req.body.newPassword, { username: cred.username });
+        if (problem) return fail(reply, 400, 'weak_password', problem);
+        const subjectHash = await studentIdToken(req, reply); if (!subjectHash) return;
+        if (identityUser(subjectHash)?.id !== u.id) { audit(req, 'student', u.id, 'student.password.google.denied'); return fail(reply, 403, 'not_linked', '要用你自己連結過的 Google 帳號'); }
+        const t = now();
+        db.prepare('UPDATE password_credentials SET password_hash = ?, must_change = 0, first_login_at = COALESCE(first_login_at, ?), updated_at = ? WHERE user_id = ?').run(await hashPassword(req.body.newPassword), t, t, u.id);
+        rlReset(`user:${cred.username}`);
+        revokeAllOf('student', u.id);
+        const s = createSession('student', u.id, 'full');
+        audit(req, 'student', u.id, 'student.password.google');
+        setStudentCookie(reply, s.token);
+        return json(reply, 200, { ok: true, csrf: s.csrf });
     });
 
     // ------------------------------------------------------------ P2：學生用邀請碼申請加入、用綁定碼直接綁定、自己退出
@@ -714,48 +863,34 @@ export const buildApp = ({ db, config, jwks, now = () => Date.now(), https }) =>
         return fail(reply, 404, 'invalid_code', '這個代碼不能用：可能打錯、過期，或已經被老師關閉');
     };
     const rateLimitedCode = (reply) => { reply.header('Retry-After', String(LIMITS.ipWindowMs / 1000)); return fail(reply, 429, 'rate_limited', '輸入錯誤太多次，請過 15 分鐘再試'); };
+    const BAD_CODE_MSG = '這個代碼不能用：可能打錯、過期，或已經被老師關閉';
+    const findInvite = (code) => code ? db.prepare(`SELECT i.*, c.name AS class_name FROM class_invitations i JOIN classes c ON c.id = i.class_id JOIN teachers t ON t.id = c.teacher_id
+        WHERE i.code_hash = ? AND c.status = 'active' AND t.status = 'active'`).get(codeHash(code)) : null;
+    const findClaim = (code) => code ? db.prepare(`SELECT k.*, c.name AS class_name FROM claim_codes k JOIN classes c ON c.id = k.class_id JOIN teachers t ON t.id = c.teacher_id
+        WHERE k.code_hash = ? AND c.status = 'active' AND t.status = 'active'`).get(codeHash(code)) : null;
+    const claimUsable = (cc) => !!cc && !cc.used_at && !cc.revoked_at && cc.expires_at > now();
     /** 邀請碼只會產生「申請」：不給任何班級資料、名冊或成員資格；要等老師選定是哪一位學生才算加入（T25） */
-    app.post('/api/student/join', {
-        preHandler: studentGuard({ write: true }),
-        schema: { body: { type: 'object', additionalProperties: false, required: ['code', 'displayName'], properties: { ...CODE_BODY, displayName: { type: 'string', maxLength: 60 }, seatHint: { type: 'integer', minimum: 1, maximum: 99 } } } },
-    }, async (req, reply) => {
-        const u = req.student.user;
-        if (codeLimited(req, u.id)) return rateLimitedCode(reply);
-        const displayName = cleanName(req.body.displayName);
-        if (!displayName) return fail(reply, 400, 'bad_name', '請輸入你的名字（1～20 個字）');
-        const code = normalizeCode(req.body.code);
-        const inv = code && db.prepare(`SELECT i.*, c.name AS class_name FROM class_invitations i JOIN classes c ON c.id = i.class_id JOIN teachers t ON t.id = c.teacher_id
-            WHERE i.code_hash = ? AND c.status = 'active' AND t.status = 'active'`).get(codeHash(code));
-        if (!inv || !inviteLive(inv)) return badCode(req, reply, u.id, 'join');
+    const joinWith = (req, reply, u, inv, displayName, seatHint) => {
         const out = db.transaction(() => {
             if (liveMember(inv.class_id, u.id)) return { code: 409, error: 'already_member', message: '你已經在這個班級了' };
             if (db.prepare("SELECT 1 FROM join_requests WHERE class_id = ? AND user_id = ? AND status = 'pending'").get(inv.class_id, u.id)) return { code: 200, replay: true };
             const fresh = db.prepare('SELECT * FROM class_invitations WHERE id = ?').get(inv.id);
-            if (!inviteLive(fresh)) return { code: 404, error: 'invalid_code', message: '這個代碼不能用：可能打錯、過期，或已經被老師關閉' };
+            if (!inviteLive(fresh)) return { code: 404, error: 'invalid_code', message: BAD_CODE_MSG };
             if (db.prepare("SELECT COUNT(*) n FROM join_requests WHERE class_id = ? AND status = 'pending'").get(inv.class_id).n >= LIMITS.pendingPerClass) return { code: 409, error: 'too_many_requests', message: '這個班級待確認的申請太多了，請找老師' };
             db.prepare("INSERT INTO join_requests (id, class_id, user_id, invitation_id, display_name, seat_hint, status, created_at) VALUES (?,?,?,?,?,?,'pending',?)")
-                .run(`jr_${newToken().slice(0, 20)}`, inv.class_id, u.id, inv.id, displayName, req.body.seatHint ?? null, now());
+                .run(`jr_${newToken().slice(0, 20)}`, inv.class_id, u.id, inv.id, displayName, seatHint ?? null, now());
             db.prepare('UPDATE class_invitations SET used_count = used_count + 1 WHERE id = ?').run(inv.id);
             return { code: 200, replay: false };
         }).immediate();
         if (out.code !== 200) return fail(reply, out.code, out.error, out.message);
         if (!out.replay) audit(req, 'student', u.id, 'join.request', inv.class_id);
-        return json(reply, 200, { status: 'pending', className: inv.class_name, message: '已送出，等老師確認' });
-    });
+        return json(reply, 200, { kind: 'invite', status: 'pending', className: inv.class_name, message: '已送出，等老師確認' });
+    };
     /** 個別綁定碼：老師印給某位學生的一次性代碼 → 直接成為那一班的那一位學生 */
-    app.post('/api/student/claim', {
-        preHandler: studentGuard({ write: true }),
-        schema: { body: { type: 'object', additionalProperties: false, required: ['code'], properties: CODE_BODY } },
-    }, async (req, reply) => {
-        const u = req.student.user;
-        if (codeLimited(req, u.id)) return rateLimitedCode(reply);
-        const code = normalizeCode(req.body.code);
-        const cc = code && db.prepare(`SELECT k.*, c.name AS class_name FROM claim_codes k JOIN classes c ON c.id = k.class_id JOIN teachers t ON t.id = c.teacher_id
-            WHERE k.code_hash = ? AND c.status = 'active' AND t.status = 'active'`).get(codeHash(code));
-        if (!cc || cc.used_at || cc.revoked_at || cc.expires_at <= now()) return badCode(req, reply, u.id, 'claim');
+    const claimWith = (req, reply, u, cc) => {
         const out = db.transaction(() => {
             const fresh = db.prepare('SELECT used_at, revoked_at FROM claim_codes WHERE id = ?').get(cc.id);
-            if (fresh.used_at || fresh.revoked_at) return { code: 404, error: 'invalid_code', message: '這個代碼不能用：可能打錯、過期，或已經被老師關閉' };
+            if (fresh.used_at || fresh.revoked_at) return { code: 404, error: 'invalid_code', message: BAD_CODE_MSG };
             const b = bindMember(cc.class_id, u.id, cc.local_student_id, 'claim');
             if (!b.memberId) return b;
             db.prepare('UPDATE claim_codes SET used_at = ?, used_by_user_id = ? WHERE id = ?').run(now(), u.id, cc.id);
@@ -764,7 +899,50 @@ export const buildApp = ({ db, config, jwks, now = () => Date.now(), https }) =>
         }).immediate();
         if (out.code !== 200) return fail(reply, out.code, out.error, out.message);
         audit(req, 'student', u.id, 'claim.use', out.memberId);
-        return json(reply, 200, { id: out.memberId, className: cc.class_name });
+        return json(reply, 200, { kind: 'claim', id: out.memberId, className: cc.class_name });
+    };
+    app.post('/api/student/join', {
+        preHandler: studentGuard({ write: true }),
+        schema: { body: { type: 'object', additionalProperties: false, required: ['code', 'displayName'], properties: { ...CODE_BODY, displayName: { type: 'string', maxLength: 60 }, seatHint: { type: 'integer', minimum: 1, maximum: 99 } } } },
+    }, async (req, reply) => {
+        const u = req.student.user;
+        if (codeLimited(req, u.id)) return rateLimitedCode(reply);
+        const displayName = cleanName(req.body.displayName);
+        if (!displayName) return fail(reply, 400, 'bad_name', '請輸入你的名字（1～20 個字）');
+        const inv = findInvite(normalizeCode(req.body.code));
+        if (!inv || !inviteLive(inv)) return badCode(req, reply, u.id, 'join');
+        return joinWith(req, reply, u, inv, displayName, req.body.seatHint);
+    });
+    app.post('/api/student/claim', {
+        preHandler: studentGuard({ write: true }),
+        schema: { body: { type: 'object', additionalProperties: false, required: ['code'], properties: CODE_BODY } },
+    }, async (req, reply) => {
+        const u = req.student.user;
+        if (codeLimited(req, u.id)) return rateLimitedCode(reply);
+        const cc = findClaim(normalizeCode(req.body.code));
+        if (!claimUsable(cc)) return badCode(req, reply, u.id, 'claim');
+        return claimWith(req, reply, u, cc);
+    });
+    /**
+     * P3：學生頁只有一個「輸入代碼」欄位。先找個別綁定碼，再找班級邀請碼。
+     * 邀請碼沒有附名字 → 400 need_name（代碼是對的，不算輸入錯誤）；兩種都不是 → 和其他代碼錯誤一樣計數、限流。
+     */
+    app.post('/api/student/redeem', {
+        preHandler: studentGuard({ write: true }),
+        schema: { body: { type: 'object', additionalProperties: false, required: ['code'], properties: { ...CODE_BODY, displayName: { type: 'string', maxLength: 60 }, seatHint: { type: 'integer', minimum: 1, maximum: 99 } } } },
+    }, async (req, reply) => {
+        const u = req.student.user;
+        if (codeLimited(req, u.id)) return rateLimitedCode(reply);
+        const code = normalizeCode(req.body.code);
+        const cc = findClaim(code);
+        if (claimUsable(cc)) return claimWith(req, reply, u, cc);
+        const inv = findInvite(code);
+        if (inv && inviteLive(inv)) {
+            const displayName = cleanName(req.body.displayName);
+            if (!displayName) return fail(reply, 400, 'need_name', '這是班級邀請碼：請輸入你的名字（1～20 個字），讓老師認得你');
+            return joinWith(req, reply, u, inv, displayName, req.body.seatHint);
+        }
+        return badCode(req, reply, u.id, 'redeem');
     });
     /** 自己退出某一班：立即失效；照顧紀錄留在那一班（老師端的統計不變） */
     app.route({ method: 'POST', url: '/api/student/classes/:memberId/leave', preHandler: [studentGuard({ write: true }), withMember], schema: { params: MEMBER_PARAMS, body: NO_BODY },
@@ -955,8 +1133,9 @@ export const buildApp = ({ db, config, jwks, now = () => Date.now(), https }) =>
         if (!consumeIdToken(credential, id)) { ipFail(ipKey); return fail(reply, 401, 'replayed', '這個登入憑證已經用過，請重新登入'); }
         const subjectHash = sha256(`https://accounts.google.com|${id.sub}`);
         const userId = db.transaction(() => {
-            const ident = db.prepare("SELECT user_id FROM auth_identities WHERE provider = 'google' AND subject_hash = ?").get(subjectHash);
-            if (ident && db.prepare('SELECT 1 FROM platform_admins WHERE user_id = ?').get(ident.user_id)) return ident.user_id;
+            const ident = identityUser(subjectHash);
+            if (ident && db.prepare('SELECT 1 FROM platform_admins WHERE user_id = ?').get(ident.id)) return ident.id;
+            if (ident?.kind === 'student') return null;                       // 學生的 Google 身分不能變成管理員
             const bootstrap = id.emailVerified && adminEmails.includes(String(id.email || '').toLowerCase()) && !db.prepare("SELECT 1 FROM platform_admins WHERE role = 'owner'").get();
             if (!bootstrap) return null;
             const uid = userForIdentity(subjectHash, now());

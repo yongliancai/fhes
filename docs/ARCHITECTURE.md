@@ -40,7 +40,7 @@
 | `src/ui/student-admin-ui.js` | ui | v6.2: 「學生系統」 dialog (accounts, one-time slips, publish, care summary); hidden when `STUDENT_API_BASE` is empty |
 | `src/art/student-art.js` | art | v6.2: approved-art lookup by catalog ID with SVG fallback |
 | `src/data/art-manifest.js` | data | approved art list (empty on this branch; generated on the art branch) |
-| `student.html`, `src/student/*` | student page | v6.2: student learning centre, served same-origin by the API under a strict CSP |
+| `student.html`, `src/student/*` | student page | v6.2: student learning centre, served same-origin by the API under a strict CSP. P3: my classes / class switcher / one code box, `#join=` links; `student-google.js` loads Google sign-in only when the server's switch is on (ADR-029) |
 | `server/` | backend | v6.2: Fastify + better-sqlite3 + Argon2id API (`docs/STUDENT-SYSTEM.md`, `docs/api/openapi.yaml`) |
 
 Dependency direction: `ui → sync → auth/core/data`; `auth` depends on nothing else. `core`/`data` are pure (no browser globals). Enforced by `scripts/guardrails.mjs`.

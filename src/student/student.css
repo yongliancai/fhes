@@ -74,3 +74,16 @@ input:focus-visible, button:focus-visible { outline: 3px solid var(--accent); ou
 .stu-reg-actions { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }
 .stu-reg-btn { min-height: 44px; padding: 6px 4px; font-size: 0.95rem; }
 @media (max-width: 380px) { .stu-reg-actions { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+
+/* P3：多班級（班級切換、我的班級、加入班級）與 Google 登入 */
+.stu-classbar { display: flex; align-items: center; gap: 8px; margin: 4px 0 8px; }
+.stu-classbar label { font-weight: 700; white-space: nowrap; }
+.stu-classbar select { flex: 1 1 auto; min-width: 0; padding: 8px 10px; }
+.stu-class-list { list-style: none; margin: 8px 0; padding: 0; display: grid; gap: 10px; }
+.stu-class { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 12px 14px; display: grid; gap: 8px; }
+.stu-class > div:first-child { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.stu-class-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.stu-class-actions .stu-btn { flex: 1 1 120px; }
+.stu-google { display: grid; gap: 8px; justify-items: center; margin-top: 8px; }
+.stu-or { color: var(--muted); margin: 0; }
+.stu-gsi { display: flex; justify-content: center; min-height: 48px; }

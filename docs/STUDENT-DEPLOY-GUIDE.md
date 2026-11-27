@@ -35,6 +35,7 @@ cd /srv/fhes-student/app && sudo -u fhes npm ci --omit=dev
 | `FHES_ADMIN_EMAIL` | 平台管理員（處理忘記密碼的重設申請、老師停權、看稽核）。只寫你自己的 Google 帳號；第一次登入 `admin.html` 後只認這個帳號的身分。留空＝管理功能關閉 | `owner@school.edu.tw` |
 | `FHES_ADMIN_ORIGINS` | 選填：管理頁的來源；預設和 `FHES_TEACHER_ORIGINS` 相同（`admin.html` 和教師端在同一個網站） | |
 | `FHES_CODE_PEPPER` | 選填：邀請碼與綁定碼 HMAC 的金鑰；不設就由 `FHES_IP_SALT` 分開推導 | |
+| `FHES_STUDENT_GOOGLE` | 學生 Google 登入：`off`（預設）或 `on`。打開前要先做到：①學校的 Google Workspace 管理員把本 App 設成「信任」（未滿 18 歲的學生預設不能登入第三方 App）；②Google Cloud 的 OAuth 用戶端把學生網站加進「已授權的 JavaScript 來源」。打開後學生頁面的 CSP 只多允許 `https://accounts.google.com/gsi/`。帳密登入一直可以用 | `off` |
 | `FHES_TEACHER_ORIGINS` | 教師端網頁的來源（現在是 GitHub Pages） | `https://yongliancai.github.io` |
 | `FHES_STUDENT_ORIGINS` | 學生頁面的子網域 | `https://fhes.school.edu.tw` |
 | `FHES_TRUST_PROXY` | 在 nginx 後面設 `1`；沒有 nginx、直接對外設 `0`。用正式網域時**必須明確設定**，不設就拒絕啟動 | `1` |

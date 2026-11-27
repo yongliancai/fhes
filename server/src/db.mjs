@@ -2,7 +2,7 @@
 // 不存：明文密碼、session id 原文、教師 email 或 Google sub 原文。
 import Database from 'better-sqlite3';
 
-export const SCHEMA_VERSION = 4;
+export const SCHEMA_VERSION = 5;
 
 const MIGRATIONS = [
     // v1
@@ -273,6 +273,14 @@ const MIGRATIONS = [
         decided_by TEXT REFERENCES users(id)
     );
     CREATE UNIQUE INDEX reset_pending ON password_reset_requests (member_id) WHERE status = 'pending';
+    `,
+    // v5（P3）：學生也可以用 Google 登入，所以 user 要分「學生」和「老師／管理員」。
+    // 同一個 Google 身分不能同時當老師和學生（不讓學生的 Google 帳號變成老師，也不讓老師的帳號進入學生頁）。
+    // 舊資料：老師與管理員是 staff；有帳密、班級成員或加入申請的是 student。
+    `
+    ALTER TABLE users ADD COLUMN kind TEXT CHECK (kind IN ('student', 'staff'));
+    UPDATE users SET kind = 'staff' WHERE id IN (SELECT user_id FROM teachers WHERE user_id IS NOT NULL) OR id IN (SELECT user_id FROM platform_admins);
+    UPDATE users SET kind = 'student' WHERE kind IS NULL AND (id IN (SELECT user_id FROM password_credentials) OR id IN (SELECT user_id FROM student_accounts) OR id IN (SELECT user_id FROM join_requests));
     `,
 ];
 

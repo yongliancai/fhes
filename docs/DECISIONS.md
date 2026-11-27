@@ -165,7 +165,25 @@ The app requests only `https://www.googleapis.com/auth/drive.file` (files the ap
 - **Consequences**:
   - Database v4 (new tables; `sessions` rebuilt only to allow `kind='admin'`). Existing sessions are kept.
   - The teacher UI gets invitation codes with a QR code (`src/vendor/qr.js`, no CDN), join-request approval, claim-code slips, "remove" and the D3 reset buttons.
-  - The student page's own "join class" screen and the `#join=` link handling come in P3; until then a student can only use the API.
+  - The student page's own "join class" screen and the `#join=` link handling come in P3 (done, see ADR-029).
+
+## ADR-029 — Student multi-class screens and optional student Google sign-in (2026-11-28, P3)
+- **Context**: decision D6 (students may sign in with Google) and the P3 work package in `docs/V62-MULTICLASS-DESIGN.md` §10.
+- **Decision**:
+  - The student page shows "My classes": one class opens directly, two or more get a class switcher, none shows the join form. Every request uses `/api/student/classes/{memberId}/…`.
+  - Switching class clears the screen. A request generation counter drops answers (and errors) that arrive after the student switched away (T30). Nothing is written to browser storage; the class list and the selected class live only in memory.
+  - One code box: `POST /api/student/redeem` tries claim codes first, then invitation codes. An invitation code without a name returns `need_name`, which is not counted as a wrong code.
+  - QR links `student.html#join=<code>` are read into memory and removed from the address bar with `history.replaceState`. If the student is not signed in, the code waits until sign-in.
+  - Student Google sign-in is off by default (`FHES_STUDENT_GOOGLE=on` turns it on). Only then does the student page's CSP add `https://accounts.google.com/gsi/` (script `gsi/client`, style `gsi/style`, frame and connect), and its `Cross-Origin-Opener-Policy` becomes `same-origin-allow-popups`. API responses keep the strict headers.
+  - A Google account that is not linked yet is **not** turned into a new account automatically: the server answers `not_linked`, the page explains that students with a teacher-issued account should sign in with their password and link Google there, and only a second, explicit click creates a new account with no class (`create: true`). At most 60 new Google accounts per network per 15 minutes.
+  - Linking needs the current password and a fresh Google sign-in. A Google account that already belongs to another user is refused (409), never merged. Unlinking needs the password; an account created with Google has no password and cannot unlink.
+  - Forgotten password (D3): a student who linked Google signs in with Google and sets a new password after another fresh Google sign-in. All other sessions are signed out. Memberships are unchanged.
+  - Users now have a kind (`student` or `staff`). A teacher's or the admin's Google account cannot be used on the student page, and a Google account used by a student cannot become a teacher or the admin.
+  - Only the hash of `iss|sub` is stored; no email or name.
+- **Consequences**:
+  - Database v5 adds `users.kind` (backfilled: teachers and the admin are staff; users with a password, a membership or a join request are students).
+  - Turning the switch on needs work outside this repo: the school's Google Workspace admin must trust the app for students under 18, and the OAuth client must list the student site as a JavaScript origin. Password sign-in always stays available.
+  - The fake Google library used in browser tests now also covers the student page. Real Google and real Safari are not verified.
 
 ## ADR-021 — 小老師 (student helpers) register homework through the student system (2026-11-26)
 - Decided by the user (multiple-choice discussion): helpers use the student system, may register **all** homework of their class, and the teacher app receives registrations **automatically** (every 5 minutes, before each publish, or on demand).
