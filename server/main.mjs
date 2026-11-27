@@ -31,7 +31,11 @@ export const configFromEnv = (env = process.env) => {
     const cfg = {
         clientId: env.FHES_GOOGLE_CLIENT_ID || GOOGLE_CLIENT_ID,
         teacherOrigins: list(env.FHES_TEACHER_ORIGINS),
+        teacherSignup: env.FHES_TEACHER_SIGNUP || 'allowlist',             // allowlist（預設）或 open（任何 email 已驗證的 Google 帳號都能註冊老師，D5）
         teacherAllow: list(env.FHES_TEACHER_ALLOW),                         // 允許的老師：完整 email 或 @學校網域
+        adminEmails: list(env.FHES_ADMIN_EMAIL),                            // 平台管理員（第一次登入後只認身分雜湊）；沒設定＝管理 API 關閉
+        adminOrigins: env.FHES_ADMIN_ORIGINS ? list(env.FHES_ADMIN_ORIGINS) : undefined,   // 預設＝教師來源
+        codePepper: env.FHES_CODE_PEPPER || undefined,                      // 選用：邀請碼／綁定碼 HMAC 的金鑰（預設由 FHES_IP_SALT 分開推導）
         studentOrigins: list(env.FHES_STUDENT_ORIGINS),
         ipSalt: env.FHES_IP_SALT || '',
         cookieSecure: env.FHES_COOKIE_SECURE !== '0',
@@ -47,7 +51,8 @@ export const configFromEnv = (env = process.env) => {
     if (cfg.ipSalt.length < 16) missing.push('FHES_IP_SALT（至少 16 個字元的亂數）');
     if (!cfg.teacherOrigins.length) missing.push('FHES_TEACHER_ORIGINS');
     if (!cfg.studentOrigins.length) missing.push('FHES_STUDENT_ORIGINS');
-    if (!cfg.teacherAllow.length) missing.push('FHES_TEACHER_ALLOW（允許的老師 email 或 @網域）');
+    if (!['allowlist', 'open'].includes(cfg.teacherSignup)) throw new Error('FHES_TEACHER_SIGNUP 只能是 allowlist 或 open');
+    if (cfg.teacherSignup === 'allowlist' && !cfg.teacherAllow.length) missing.push('FHES_TEACHER_ALLOW（允許的老師 email 或 @網域；或設定 FHES_TEACHER_SIGNUP=open）');
     const local = cfg.studentOrigins.every(o => /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(o));
     if (!local && !['0', '1'].includes(env.FHES_TRUST_PROXY)) missing.push('FHES_TRUST_PROXY（在 nginx 後面請設 1，直接對外請設 0）');
     if (missing.length) throw new Error(`缺少設定：${missing.join('、')}`);

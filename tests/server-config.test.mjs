@@ -16,6 +16,17 @@ test('production config: refuses to start without DB path, salt or origins; inse
     assert.match(c.clientId, /apps\.googleusercontent\.com$/);
 });
 
+test('P2 config: FHES_TEACHER_SIGNUP=open needs no allowlist; anything else is refused; admin API only with FHES_ADMIN_EMAIL', () => {
+    assert.equal(configFromEnv(ok).teacherSignup, 'allowlist', 'default stays allowlist');
+    const open = configFromEnv({ ...ok, FHES_TEACHER_ALLOW: '', FHES_TEACHER_SIGNUP: 'open' });
+    assert.equal(open.teacherSignup, 'open');
+    assert.throws(() => configFromEnv({ ...ok, FHES_TEACHER_SIGNUP: 'everyone' }), /FHES_TEACHER_SIGNUP/);
+    assert.throws(() => configFromEnv({ ...ok, FHES_TEACHER_ALLOW: '', FHES_TEACHER_SIGNUP: 'allowlist' }), /FHES_TEACHER_ALLOW/);
+    assert.deepEqual(configFromEnv(ok).adminEmails, []);
+    assert.deepEqual(configFromEnv({ ...ok, FHES_ADMIN_EMAIL: 'owner@school.example.test' }).adminEmails, ['owner@school.example.test']);
+    assert.equal(configFromEnv(ok).adminOrigins, undefined, 'admin origins default to the teacher origins');
+});
+
 test('JWKS: always fetched from Google, cached by max-age, forced refresh at most once a minute', async () => {
     const urls = [];
     const fetchFn = async (u) => { urls.push(u); return { ok: true, headers: new Headers({ 'cache-control': 'public, max-age=3600' }), json: async () => ({ keys: [{ kid: String(urls.length) }] }) }; };

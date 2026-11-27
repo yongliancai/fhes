@@ -52,6 +52,16 @@ export const passwordProblem = (pw, { username = '', initial = '' } = {}) => {
     return null;
 };
 
+/**
+ * 邀請碼與個別綁定碼：10 碼、31 個不易混淆的字元（約 2^49 種），顯示成 5-5 兩段。
+ * normalizeCode：大小寫、空白、連字號都可以；格式不對回 null（不查資料庫）。
+ */
+export const generateCode = () => `${pick(PW_ALPHABET, 5)}-${pick(PW_ALPHABET, 5)}`;
+export const normalizeCode = (s) => {
+    const c = String(s ?? '').toLowerCase().replace(/[\s-]/g, '');
+    return c.length === 10 && [...c].every(ch => PW_ALPHABET.includes(ch)) ? c : null;
+};
+
 /** 不透明 token（256 bits）與它的 SHA-256 */
 export const newToken = () => randomBytes(32).toString('base64url');
 export const sha256 = (s) => createHash('sha256').update(String(s)).digest('hex');

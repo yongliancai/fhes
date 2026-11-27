@@ -2,7 +2,7 @@
 // 不存：明文密碼、session id 原文、教師 email 或 Google sub 原文。
 import Database from 'better-sqlite3';
 
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 4;
 
 const MIGRATIONS = [
     // v1
@@ -193,6 +193,87 @@ const MIGRATIONS = [
         if (members !== creds || members !== studentUsers) throw new Error(`v3 對帳失敗：成員 ${members}、帳密 ${creds}、學生 user ${studentUsers}`);
         if (n('SELECT COUNT(*) n FROM teachers WHERE user_id IS NULL')) throw new Error('v3 對帳失敗：有老師沒有對應的 user');
     } },
+    // v4（v6.2 多班級 P2）：教師自助註冊、班級邀請與加入申請、個別綁定碼、平台管理員與「重設密碼申請」（D3）。
+    // 代碼一律只存 HMAC；學生自己填的名字只給老師參考，30 天後清掉（T33）。sessions 重建只是為了讓 kind 多一個 'admin'。
+    `
+    ALTER TABLE teachers ADD COLUMN signup TEXT NOT NULL DEFAULT 'allowlist' CHECK (signup IN ('allowlist', 'self'));
+    -- D3：老師只能重發「還沒有人用它登入過」的帳密；以前登入過（或已經自己改過密碼）的都算用過
+    ALTER TABLE password_credentials ADD COLUMN first_login_at INTEGER;
+    UPDATE password_credentials SET first_login_at = COALESCE(
+        (SELECT MAX(m.last_login_at) FROM student_accounts m WHERE m.user_id = password_credentials.user_id),
+        CASE WHEN must_change = 0 THEN updated_at END);
+
+    CREATE TABLE sessions_v4 (
+        id_hash TEXT PRIMARY KEY,
+        kind TEXT NOT NULL CHECK (kind IN ('student', 'teacher', 'admin')),
+        subject_id TEXT NOT NULL,                       -- 學生＝users.id；老師＝teachers.id；管理員＝users.id
+        scope TEXT NOT NULL DEFAULT 'full' CHECK (scope IN ('full', 'pwchange')),
+        csrf TEXT,
+        created_at INTEGER NOT NULL,
+        last_seen INTEGER NOT NULL,
+        expires_at INTEGER NOT NULL,
+        revoked_at INTEGER
+    );
+    INSERT INTO sessions_v4 (id_hash, kind, subject_id, scope, csrf, created_at, last_seen, expires_at, revoked_at)
+        SELECT id_hash, kind, subject_id, scope, csrf, created_at, last_seen, expires_at, revoked_at FROM sessions;
+    DROP TABLE sessions;
+    ALTER TABLE sessions_v4 RENAME TO sessions;
+    CREATE INDEX sessions_subject ON sessions (kind, subject_id);
+
+    CREATE TABLE class_invitations (
+        id TEXT PRIMARY KEY,
+        class_id TEXT NOT NULL REFERENCES classes(id),
+        code_hash TEXT NOT NULL UNIQUE,                 -- HMAC；代碼原文只在建立時回傳一次
+        created_at INTEGER NOT NULL,
+        expires_at INTEGER NOT NULL,
+        max_uses INTEGER NOT NULL CHECK (max_uses BETWEEN 1 AND 200),
+        used_count INTEGER NOT NULL DEFAULT 0,
+        revoked_at INTEGER
+    );
+    CREATE INDEX invitations_class ON class_invitations (class_id);
+    CREATE TABLE join_requests (
+        id TEXT PRIMARY KEY,
+        class_id TEXT NOT NULL REFERENCES classes(id),
+        user_id TEXT NOT NULL REFERENCES users(id),
+        invitation_id TEXT REFERENCES class_invitations(id),
+        display_name TEXT NOT NULL,                     -- 學生自己填（≤20 字），只給老師參考、不可信；30 天後清空
+        seat_hint INTEGER,
+        status TEXT NOT NULL CHECK (status IN ('pending', 'approved', 'rejected', 'cancelled', 'expired')),
+        member_id TEXT REFERENCES student_accounts(id),
+        created_at INTEGER NOT NULL,
+        decided_at INTEGER
+    );
+    CREATE UNIQUE INDEX join_pending ON join_requests (class_id, user_id) WHERE status = 'pending';
+    CREATE INDEX join_class ON join_requests (class_id, status);
+    CREATE TABLE claim_codes (
+        id TEXT PRIMARY KEY,
+        class_id TEXT NOT NULL REFERENCES classes(id),
+        local_student_id TEXT NOT NULL,
+        code_hash TEXT NOT NULL UNIQUE,
+        created_at INTEGER NOT NULL,
+        expires_at INTEGER NOT NULL,
+        used_at INTEGER,
+        used_by_user_id TEXT REFERENCES users(id),
+        revoked_at INTEGER
+    );
+    CREATE INDEX claim_class ON claim_codes (class_id, local_student_id);
+    CREATE TABLE platform_admins (
+        user_id TEXT PRIMARY KEY REFERENCES users(id),
+        role TEXT NOT NULL DEFAULT 'owner' CHECK (role IN ('owner')),   -- 之後才加學校管理員（要先設計學校範圍）
+        scope TEXT,
+        created_at INTEGER NOT NULL
+    );
+    CREATE TABLE password_reset_requests (
+        id TEXT PRIMARY KEY,
+        member_id TEXT NOT NULL REFERENCES student_accounts(id),
+        requested_by TEXT NOT NULL REFERENCES teachers(id),
+        status TEXT NOT NULL CHECK (status IN ('pending', 'approved', 'rejected', 'expired')),
+        created_at INTEGER NOT NULL,
+        decided_at INTEGER,
+        decided_by TEXT REFERENCES users(id)
+    );
+    CREATE UNIQUE INDEX reset_pending ON password_reset_requests (member_id) WHERE status = 'pending';
+    `,
 ];
 
 export class SchemaTooNewError extends Error {}

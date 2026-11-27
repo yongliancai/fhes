@@ -98,10 +98,14 @@ test('session fixation, logout, idle and absolute timeout, teacher reset and dis
     const s3 = await H.login(s.username, s.password);
     for (let i = 0; i < 12; i++) { H.advance(3600_000); await H.s(s3, 'GET', '/api/student/me'); }
     assert.equal((await H.s(s3, 'GET', '/api/student/me')).statusCode, 401, 'absolute timeout');
-    // 教師重設
+    // 重設（D3）：學生登入過 → 老師不能直接重設；老師送出申請、管理員核准
     const s4 = await H.login(s.username, s.password);
     const tk = await H.teacherSession();                      // 教師的 8 小時工作階段在上面已經過期
-    const reset = (await H.t(tk, 'POST', `/api/teacher/classes/${A.classKey}/accounts/${a.accountId}/reset`, {})).json();
+    const direct = await H.t(tk, 'POST', `/api/teacher/classes/${A.classKey}/accounts/${a.accountId}/reset`, {});
+    assert.equal(direct.statusCode, 403); assert.equal(direct.json().error, 'already_used');
+    assert.equal((await H.s(s4, 'GET', '/api/student/me')).statusCode, 200, 'a refused reset changes nothing');
+    const { requestId } = (await H.t(tk, 'POST', `/api/teacher/classes/${A.classKey}/accounts/${a.accountId}/reset-request`, {})).json();
+    const reset = (await H.t(await H.adminSession(), 'POST', `/api/admin/reset-requests/${requestId}/approve`, {})).json();
     assert.equal((await H.s(s4, 'GET', '/api/student/me')).statusCode, 401, 'reset revokes sessions');
     assert.equal((await H.login(s.username, s.password)).res.statusCode, 401, 'old password gone');
     const s5 = await H.login(s.username, reset.initialPassword);

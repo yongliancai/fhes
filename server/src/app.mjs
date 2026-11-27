@@ -3,13 +3,13 @@ import Fastify from 'fastify';
 import cookie from '@fastify/cookie';
 import { readFile } from 'node:fs/promises';
 import { resolve, extname, sep } from 'node:path';
-import { timingSafeEqual, randomUUID } from 'node:crypto';
+import { timingSafeEqual, randomUUID, createHmac } from 'node:crypto';
 import { verifyGoogleIdToken, IdTokenError } from '../../src/auth/id-token.js';
 import { validateProjection, projectionHash } from '../../src/core/student-projection.js';
 import { summarizeCare, nextSlot, isCareAction, DAILY_CARE_LIMIT, CARE_BADGES } from '../../src/core/care.js';
 import { localDate } from '../../src/core/dates.js';
 import { simpleOf, isSimpleState } from '../../src/core/homework.js';
-import { generateUsername, generateInitialPassword, hashPassword, verifyPassword, dummyVerify, passwordProblem, newToken, sha256 } from './passwords.mjs';
+import { generateUsername, generateInitialPassword, generateCode, normalizeCode, hashPassword, verifyPassword, dummyVerify, passwordProblem, newToken, sha256 } from './passwords.mjs';
 
 export const LIMITS = Object.freeze({
     studentIdleMs: 2 * 3600_000, studentAbsMs: 12 * 3600_000, teacherAbsMs: 8 * 3600_000,
@@ -19,7 +19,12 @@ export const LIMITS = Object.freeze({
     classesPerTeacher: 30, accountsPerClass: 80, uncountedCarePerDay: 30,
     projectionBody: 2 * 1024 * 1024, defaultBody: 16 * 1024,
     helperRowsPerDay: 3000, inboxPage: 500, inboxKeepDays: 120,
+    // P2：自助開班、邀請、申請、綁定碼、管理員（docs/V62-MULTICLASS-DESIGN.md §7）
+    classesPerDay: 10, invitesPerClass: 3, inviteDefaultDays: 7, inviteMaxDays: 30, inviteDefaultUses: 60,
+    pendingPerClass: 100, codeUserFails: 10, codeIpFails: 50, claimDays: 30, joinKeepDays: 30,
+    adminAbsMs: 4 * 3600_000, resetRequestDays: 14, auditPage: 200,
 });
+const DAY = 86400_000;
 const STALE_SEEN_MS = 60_000;      // last_seen 最多每分鐘更新一次
 
 const json = (reply, code, body) => reply.code(code).type('application/json; charset=utf-8').send(body);
@@ -43,7 +48,8 @@ const KEY = { type: 'string', pattern: '^[A-Za-z0-9_-]{8,64}$' };
 const MEMBER_PARAMS = { type: 'object', additionalProperties: false, required: ['memberId'], properties: { memberId: { type: 'string', pattern: '^s_[A-Za-z0-9_-]{8,64}$' } } };
 
 /**
- * @param {{ db, config: { clientId, teacherOrigins: string[], studentOrigins: string[], cookieSecure?: boolean, ipSalt: string, staticRoot?: string, logger?: boolean },
+ * @param {{ db, config: { clientId, teacherOrigins: string[], studentOrigins: string[], cookieSecure?: boolean, ipSalt: string, staticRoot?: string, logger?: boolean,
+ *           teacherSignup?: 'allowlist'|'open', teacherAllow?: string[], adminEmails?: string[], adminOrigins?: string[], codePepper?: string },
  *           jwks: () => Promise<{keys: object[]}>, now?: () => number, https?: { key, cert } }} opts
  *   jwks：取得 Google 公開金鑰（正式環境＝Google 的 JWKS；測試＝測試金鑰）。驗證本身永遠執行。
  *   https：選用。正式環境由反向代理處理 TLS（不用）；E2E 用自簽憑證，讓 Secure Cookie 在每個瀏覽器都有效。
@@ -51,6 +57,8 @@ const MEMBER_PARAMS = { type: 'object', additionalProperties: false, required: [
 export const buildApp = ({ db, config, jwks, now = () => Date.now(), https }) => {
     if (!config?.clientId) throw new Error('缺少 Google OAuth Client ID');
     if (!config.ipSalt || config.ipSalt.length < 16) throw new Error('ipSalt 至少 16 個字元');
+    const signupMode = config.teacherSignup ?? 'allowlist';
+    if (!['allowlist', 'open'].includes(signupMode)) throw new Error('teacherSignup 只能是 allowlist 或 open');
     const cookieSecure = config.cookieSecure !== false;
     const COOKIE = cookieSecure ? '__Host-fhes_sid' : 'fhes_sid';
     const app = Fastify({
@@ -90,7 +98,7 @@ export const buildApp = ({ db, config, jwks, now = () => Date.now(), https }) =>
     const createSession = (kind, subjectId, scope = 'full') => {
         const token = newToken(); const t = now();
         const csrf = kind === 'student' ? newToken() : null;
-        const abs = kind === 'student' ? LIMITS.studentAbsMs : LIMITS.teacherAbsMs;
+        const abs = { student: LIMITS.studentAbsMs, teacher: LIMITS.teacherAbsMs, admin: LIMITS.adminAbsMs }[kind];
         db.prepare('INSERT INTO sessions (id_hash, kind, subject_id, scope, csrf, created_at, last_seen, expires_at) VALUES (?,?,?,?,?,?,?,?)')
             .run(sha256(token), kind, subjectId, scope, csrf, t, t, t + abs);
         return { token, csrf, expiresAt: t + abs };
@@ -129,19 +137,24 @@ export const buildApp = ({ db, config, jwks, now = () => Date.now(), https }) =>
     });
     app.setNotFoundHandler((req, reply) => fail(reply, 404, 'not_found', '找不到'));
 
-    // ------------------------------------------------------------ 教師：CORS（只允許設定的教師來源；Bearer，不用 Cookie）
+    // ------------------------------------------------------------ 教師與管理員：CORS（只允許設定的來源；Bearer，不用 Cookie）
     const teacherOriginOk = (o) => (config.teacherOrigins || []).includes(o);
-    // BUG-022：只有名單上的老師（完整 email 或 @網域，且 email 已驗證）可以使用；任何 Google 帳號都不能自動變成老師
+    const adminOriginOk = (o) => (config.adminOrigins || config.teacherOrigins || []).includes(o);
+    // BUG-022：allowlist 模式（預設）只有名單上的老師（完整 email 或 @網域）可以使用。
+    // open 模式（D5，FHES_TEACHER_SIGNUP=open）：任何 email 已驗證的 Google 帳號都可以自助註冊成老師；靠限流、停權、稽核管理（T29）。
+    // 兩種模式都要求 email_verified；老師只拿得到自己開的班，Email 或網域不會帶來任何別人班級的權限。
     const allow = (config.teacherAllow || []).map(x => String(x).trim().toLowerCase()).filter(Boolean);
-    const teacherAllowed = (id) => {
-        if (!id.emailVerified || !id.email) return false;
-        const email = id.email.toLowerCase();
-        return allow.some(a => a.startsWith('@') ? email.endsWith(a) : email === a);
+    const onAllowlist = (id) => {
+        const email = String(id.email || '').toLowerCase();
+        return !!email && allow.some(a => a.startsWith('@') ? email.endsWith(a) : email === a);
     };
+    const teacherAllowed = (id) => !!id.emailVerified && !!id.email && (signupMode === 'open' || onAllowlist(id));
+    const adminEmails = (config.adminEmails || []).map(x => String(x).trim().toLowerCase()).filter(Boolean);
     app.addHook('onRequest', async (req, reply) => {
-        if (!req.url.startsWith('/api/teacher/')) return;
+        const isTeacher = req.url.startsWith('/api/teacher/'); const isAdmin = req.url.startsWith('/api/admin/');
+        if (!isTeacher && !isAdmin) return;
         const origin = req.headers.origin;
-        if (origin !== undefined && !teacherOriginOk(origin)) return fail(reply, 403, 'origin', '不允許的來源');
+        if (origin !== undefined && !(isAdmin ? adminOriginOk(origin) : teacherOriginOk(origin))) return fail(reply, 403, 'origin', '不允許的來源');
         if (origin) { reply.header('Access-Control-Allow-Origin', origin); reply.header('Vary', 'Origin'); }
         if (req.method === 'OPTIONS') {
             reply.header('Access-Control-Allow-Methods', 'GET, POST, PUT');
@@ -151,6 +164,48 @@ export const buildApp = ({ db, config, jwks, now = () => Date.now(), https }) =>
         }
     });
     app.options('/api/teacher/*', async (req, reply) => reply.code(204).send());
+    app.options('/api/admin/*', async (req, reply) => reply.code(204).send());
+
+    /** Google ID token：驗簽、aud、iss、nonce、時效（找不到 kid 時強制重抓一次金鑰）。失敗丟 IdTokenError */
+    const verifyIdToken = async (credential, nonce) => {
+        const opts = { clientId: config.clientId, nonce, now: now() };
+        let id;
+        try { id = await verifyGoogleIdToken(credential, { ...opts, jwks: await jwks() }); }
+        catch (e) { if (e instanceof IdTokenError && e.code === 'kid') id = await verifyGoogleIdToken(credential, { ...opts, jwks: await jwks(true) }); else throw e; }
+        if (id.iat < now() - LIMITS.idTokenMaxAgeS * 1000) throw new IdTokenError('iat', '登入憑證太舊，請重新登入');
+        return id;
+    };
+    /** BUG-023 防重放：以「簽章涵蓋的內容」（header.payload）為鍵；同一張 token 不論用在老師或管理員登入都只能用一次 */
+    const consumeIdToken = (credential, id) => {
+        const tokenHash = sha256(credential.split('.').slice(0, 2).join('.'));
+        db.prepare('DELETE FROM used_id_tokens WHERE expires_at < ?').run(now());
+        try { db.prepare('INSERT INTO used_id_tokens (token_hash, expires_at) VALUES (?, ?)').run(tokenHash, id.exp + 120_000); return true; }
+        catch { return false; }
+    };
+    /** 同一個 Google 身分只會有一個 user（不依 Email 合併）；沒有就建立。要在交易內呼叫 */
+    const userForIdentity = (subjectHash, t) => {
+        const ident = db.prepare("SELECT user_id FROM auth_identities WHERE provider = 'google' AND subject_hash = ?").get(subjectHash);
+        if (ident) return ident.user_id;
+        const userId = `u_${newToken().slice(0, 20)}`;
+        db.prepare("INSERT INTO users (id, status, created_at, updated_at) VALUES (?, 'active', ?, ?)").run(userId, t, t);
+        db.prepare("INSERT INTO auth_identities (id, user_id, provider, subject_hash, created_at) VALUES (?, ?, 'google', ?, ?)").run(`ai_${newToken().slice(0, 20)}`, userId, subjectHash, t);
+        return userId;
+    };
+
+    // 邀請碼／綁定碼只存 HMAC（金鑰和 IP 雜湊的鹽分開推導；也可以用 codePepper 另外指定）
+    const codeKey = sha256(`fhes-code-v1|${config.codePepper || config.ipSalt}`);
+    const codeHash = (code) => createHmac('sha256', codeKey).update(code).digest('hex');
+    /** 輸入代碼錯誤的限流：每個 user 10 次、每個 IP 50 次／15 分鐘（T26） */
+    const codeKeys = (req, userId) => [`code-u:${userId}`, `code-ip:${ipHash(req)}`];
+    const codeLimited = (req, userId) => { const [u, i] = codeKeys(req, userId); return ipFailures(u) >= LIMITS.codeUserFails || ipFailures(i) >= LIMITS.codeIpFails; };
+    const codeFail = (req, userId) => codeKeys(req, userId).forEach(ipFail);
+    /** 學生自己填的名字：去掉控制字元與方向控制字元、壓縮空白，1～20 個字 */
+    const cleanName = (s) => {
+        // eslint-disable-next-line no-control-regex
+        const v = String(s ?? '').normalize('NFC').replace(/[\u0000-\u001f\u007f\u200b-\u200f\u202a-\u202e\u2066-\u2069\ufeff]/g, '').replace(/\s+/g, ' ').trim();
+        const n = [...v].length;
+        return n >= 1 && n <= 20 ? v : null;
+    };
 
     const requireTeacher = async (req, reply) => {
         const m = /^Bearer ([A-Za-z0-9_-]{20,100})$/.exec(req.headers.authorization || '');
@@ -173,12 +228,13 @@ export const buildApp = ({ db, config, jwks, now = () => Date.now(), https }) =>
     const activeMembers = (userId) => db.prepare(`SELECT m.*, c.name AS class_name FROM student_accounts m JOIN classes c ON c.id = m.class_id
         WHERE m.user_id = ? AND m.status = 'active' AND c.status = 'active' ORDER BY m.created_at, m.id`).all(userId);
     /**
-     * 能不能登入／繼續使用：帳號必須啟用；如果這個人有成員資格，至少要有一個仍然有效。
-     * （和 v6.2 相同：唯一的班級被老師停用 → 不能登入、已登入的立刻失效。沒有任何成員資格的人留給 P3 的「加入班級」）
+     * 能不能登入／繼續使用：帳號必須啟用；如果這個人在某些班是「有效或停用中」，其中至少要有一個仍然有效。
+     * （和 v6.2 相同：唯一的班級被老師停用 → 不能登入、已登入的立刻失效。
+     *  已經退出或被移出的班不算：沒有任何班級的人仍可登入，只能用邀請碼或綁定碼加入班級，看不到任何班級資料）
      */
     const canUse = (u) => {
         if (!u || u.status !== 'active') return false;
-        const r = db.prepare("SELECT COUNT(*) AS total, COALESCE(SUM(m.status = 'active' AND c.status = 'active'), 0) AS live FROM student_accounts m JOIN classes c ON c.id = m.class_id WHERE m.user_id = ?").get(u.id);
+        const r = db.prepare("SELECT COUNT(*) AS total, COALESCE(SUM(m.status = 'active' AND c.status = 'active'), 0) AS live FROM student_accounts m JOIN classes c ON c.id = m.class_id WHERE m.user_id = ? AND m.status IN ('active', 'disabled')").get(u.id);
         return r.total === 0 || r.live > 0;
     };
     const loadStudent = (req) => {
@@ -232,12 +288,8 @@ export const buildApp = ({ db, config, jwks, now = () => Date.now(), https }) =>
         if (ipFailures(ipKey) >= LIMITS.teacherIpFailLimit) return fail(reply, 429, 'rate_limited', '嘗試太多次，請稍後再試');
         const { credential, nonce } = req.body;
         let id;
-        try {
-            const opts = { clientId: config.clientId, nonce, now: now() };
-            try { id = await verifyGoogleIdToken(credential, { ...opts, jwks: await jwks() }); }
-            catch (e) { if (e instanceof IdTokenError && e.code === 'kid') id = await verifyGoogleIdToken(credential, { ...opts, jwks: await jwks(true) }); else throw e; }
-            if (id.iat < now() - LIMITS.idTokenMaxAgeS * 1000) throw new IdTokenError('iat', '登入憑證太舊，請重新登入');
-        } catch (e) {
+        try { id = await verifyIdToken(credential, nonce); }
+        catch (e) {
             ipFail(ipKey);
             audit(req, 'anonymous', null, 'teacher.session.fail', null, { code: e instanceof IdTokenError ? e.code : 'error' });
             return fail(reply, 401, 'invalid_token', '無法驗證 Google 登入，請重新登入');
@@ -247,26 +299,17 @@ export const buildApp = ({ db, config, jwks, now = () => Date.now(), https }) =>
             audit(req, 'anonymous', null, 'teacher.session.denied');
             return fail(reply, 403, 'not_allowed', '這個 Google 帳號沒有使用學生系統的權限，請聯絡管理者');
         }
-        // BUG-023 防重放：以「簽章涵蓋的內容」（header.payload）為鍵；簽章字串 base64 尾端的位元可以變化，不能當鍵
-        const tokenHash = sha256(credential.split('.').slice(0, 2).join('.'));
-        db.prepare('DELETE FROM used_id_tokens WHERE expires_at < ?').run(now());
-        try { db.prepare('INSERT INTO used_id_tokens (token_hash, expires_at) VALUES (?, ?)').run(tokenHash, id.exp + 120_000); }
-        catch { ipFail(ipKey); return fail(reply, 401, 'replayed', '這個登入憑證已經用過，請重新登入'); }
+        if (!consumeIdToken(credential, id)) { ipFail(ipKey); return fail(reply, 401, 'replayed', '這個登入憑證已經用過，請重新登入'); }
         const accountHash = sha256(`https://accounts.google.com|${id.sub}`);
         let t = db.prepare('SELECT * FROM teachers WHERE account_hash = ?').get(accountHash);
         if (!t) {
-            // v3：老師也是平台 user（同一個 Google 身分只會有一個 user；不依 Email 合併）
+            // v3：老師也是平台 user（同一個 Google 身分只會有一個 user；不依 Email 合併）。signup 記錄是名單內還是自助註冊
             t = { id: `t_${newToken().slice(0, 16)}`, status: 'active' };
-            const tt = now();
+            const tt = now(); const signup = onAllowlist(id) ? 'allowlist' : 'self';
             db.transaction(() => {
-                const ident = db.prepare("SELECT user_id FROM auth_identities WHERE provider = 'google' AND subject_hash = ?").get(accountHash);
-                const userId = ident?.user_id || `u_${newToken().slice(0, 20)}`;
-                if (!ident) {
-                    db.prepare("INSERT INTO users (id, status, created_at, updated_at) VALUES (?, 'active', ?, ?)").run(userId, tt, tt);
-                    db.prepare("INSERT INTO auth_identities (id, user_id, provider, subject_hash, created_at) VALUES (?, ?, 'google', ?, ?)").run(`ai_${newToken().slice(0, 20)}`, userId, accountHash, tt);
-                }
-                db.prepare('INSERT INTO teachers (id, account_hash, created_at, user_id) VALUES (?,?,?,?)').run(t.id, accountHash, tt, userId);
+                db.prepare('INSERT INTO teachers (id, account_hash, created_at, user_id, signup) VALUES (?,?,?,?,?)').run(t.id, accountHash, tt, userForIdentity(accountHash, tt), signup);
             }).immediate();
+            audit(req, 'teacher', t.id, 'teacher.signup', null, { signup });
         }
         if (t.status === 'suspended') {
             audit(req, 'teacher', t.id, 'teacher.session.suspended');
@@ -289,6 +332,7 @@ export const buildApp = ({ db, config, jwks, now = () => Date.now(), https }) =>
         let c = db.prepare('SELECT * FROM classes WHERE teacher_id = ? AND local_class_id = ?').get(req.teacherId, localClassId);
         if (!c) {
             if (db.prepare('SELECT COUNT(*) n FROM classes WHERE teacher_id = ?').get(req.teacherId).n >= LIMITS.classesPerTeacher) return fail(reply, 409, 'quota', `每位老師最多 ${LIMITS.classesPerTeacher} 個班級`);
+            if (db.prepare('SELECT COUNT(*) n FROM classes WHERE teacher_id = ? AND created_at > ?').get(req.teacherId, now() - DAY).n >= LIMITS.classesPerDay) return fail(reply, 429, 'rate_limited', `每位老師一天最多連結 ${LIMITS.classesPerDay} 個新班級，請明天再試`);
             c = { id: `c_${newToken().slice(0, 20)}` };
             db.prepare('INSERT INTO classes (id, teacher_id, local_class_id, name, created_at) VALUES (?,?,?,?,?)').run(c.id, req.teacherId, localClassId, name, now());
             audit(req, 'teacher', req.teacherId, 'class.link', c.id);
@@ -296,10 +340,13 @@ export const buildApp = ({ db, config, jwks, now = () => Date.now(), https }) =>
         return json(reply, 200, { classKey: c.id });
     });
 
-    const accountView = (a) => ({ accountId: a.id, localStudentId: a.local_student_id, username: a.username, status: a.status, mustChangePassword: !!a.must_change, helper: !!a.is_helper, lastLoginAt: a.last_login_at, createdAt: a.created_at });
+    // username 只在帳密是「本班發的」時才有（別班老師發的帳號名稱不給這一班的老師看）。
+    // signedInBefore：這組帳密有人登入過 → 老師不能重設，只能送「重設申請」給管理員（D3）
+    const accountView = (a) => ({ accountId: a.id, localStudentId: a.local_student_id, username: a.username ?? null, status: a.status, mustChangePassword: !!a.must_change, helper: !!a.is_helper,
+        lastLoginAt: a.last_login_at, createdAt: a.created_at, joinedVia: a.joined_via, signedInBefore: a.username ? !!a.first_login_at : null });
 
-    /** 班級成員＋（如果有）老師發的帳密的帳號名稱。移除／退出的成員不列出 */
-    const MEMBER_SELECT = `SELECT m.*, p.username, p.must_change, p.issued_by_class_id FROM student_accounts m LEFT JOIN password_credentials p ON p.user_id = m.user_id`;
+    /** 班級成員＋（如果有）本班發的帳密。移除／退出的成員不列出 */
+    const MEMBER_SELECT = `SELECT m.*, p.username, p.must_change, p.issued_by_class_id, p.first_login_at FROM student_accounts m LEFT JOIN password_credentials p ON p.user_id = m.user_id AND p.issued_by_class_id = m.class_id`;
     app.get('/api/teacher/classes/:classKey/accounts', { preHandler: requireTeacher, schema: { querystring: NO_QUERY } }, async (req, reply) => {
         const c = ownClass(req, reply); if (!c) return;
         const rows = db.prepare(`${MEMBER_SELECT} WHERE m.class_id = ? AND m.status IN ('active', 'disabled') ORDER BY m.created_at, p.username`).all(c.id);
@@ -353,14 +400,41 @@ export const buildApp = ({ db, config, jwks, now = () => Date.now(), https }) =>
     const NO_BODY = { type: 'object', additionalProperties: false, properties: {} };
     app.post('/api/teacher/classes/:classKey/accounts/:accountId/reset', { preHandler: requireTeacher, schema: { body: NO_BODY } }, async (req, reply) => {
         const a = teacherAccount(req, reply); if (!a) return;
-        // 只能重設「本班發的」帳密，而且這個人不能在別位老師的班上（否則等於可以登入看別班的資料）
+        // D3：老師只能「重發」本班發的、而且還沒有人用它登入過的帳密（例如帳號單弄丟了）。
+        // 學生登入過之後，密碼只有學生自己能改；忘記密碼要由老師送出重設申請、管理員核准。
+        // 也不能在別位老師的班上（否則等於可以登入看別班的資料）
         if (!a.username || a.issued_by_class_id !== a.class_id) return fail(reply, 403, 'not_issuer', '這個帳號不是本班發的，不能在這裡重設密碼');
         if (inOtherTeachersClass(a.user_id, req.teacherId)) return fail(reply, 403, 'other_teacher', '這位學生也在其他老師的班級，不能由老師重設密碼');
+        if (a.first_login_at) return fail(reply, 403, 'already_used', '學生已經登入過，老師不能重設密碼；請改用「送出重設申請」，由管理員核准');
         const initialPassword = generateInitialPassword();
-        db.prepare('UPDATE password_credentials SET password_hash = ?, must_change = 1, updated_at = ? WHERE user_id = ?').run(await hashPassword(initialPassword), now(), a.user_id);
+        // 條件式更新：檢查與寫入之間學生剛好第一次登入 → 不重設
+        const r = db.prepare('UPDATE password_credentials SET password_hash = ?, must_change = 1, updated_at = ? WHERE user_id = ? AND first_login_at IS NULL').run(await hashPassword(initialPassword), now(), a.user_id);
+        if (!r.changes) return fail(reply, 403, 'already_used', '學生已經登入過，老師不能重設密碼；請改用「送出重設申請」，由管理員核准');
         revokeAllOf('student', a.user_id); rlReset(`user:${a.username}`);
         audit(req, 'teacher', req.teacherId, 'account.reset', a.id);
         return json(reply, 200, { accountId: a.id, username: a.username, initialPassword });
+    });
+    // 忘記密碼（D3）：老師替本班學生向管理員送出申請；只記成員 id 和老師，不帶任何其他個資。同一位學生同時只有一筆待審
+    app.post('/api/teacher/classes/:classKey/accounts/:accountId/reset-request', { preHandler: requireTeacher, schema: { body: NO_BODY } }, async (req, reply) => {
+        const a = teacherAccount(req, reply); if (!a) return;
+        if (!db.prepare('SELECT 1 FROM password_credentials WHERE user_id = ?').get(a.user_id)) return fail(reply, 400, 'no_password', '這位學生沒有帳號密碼，不需要重設');
+        const prev = db.prepare("SELECT id FROM password_reset_requests WHERE member_id = ? AND status = 'pending'").get(a.id);
+        if (prev) return json(reply, 200, { requestId: prev.id, status: 'pending', replay: true });
+        const id = `rr_${newToken().slice(0, 20)}`;
+        try { db.prepare("INSERT INTO password_reset_requests (id, member_id, requested_by, status, created_at) VALUES (?, ?, ?, 'pending', ?)").run(id, a.id, req.teacherId, now()); }
+        catch { return json(reply, 200, { requestId: db.prepare("SELECT id FROM password_reset_requests WHERE member_id = ? AND status = 'pending'").get(a.id)?.id, status: 'pending', replay: true }); }
+        audit(req, 'teacher', req.teacherId, 'reset.request', a.id);
+        return json(reply, 200, { requestId: id, status: 'pending', replay: false });
+    });
+    // 移出本班：成員資格立即失效（下一個請求就 404），user、帳密和他在別班的資料都不受影響；之後可以重新邀請或綁定
+    app.post('/api/teacher/classes/:classKey/accounts/:accountId/remove', { preHandler: requireTeacher, schema: { body: NO_BODY } }, async (req, reply) => {
+        const a = teacherAccount(req, reply); if (!a) return;
+        db.transaction(() => {
+            db.prepare("UPDATE student_accounts SET status = 'removed', is_helper = 0, updated_at = ? WHERE id = ?").run(now(), a.id);
+            db.prepare("UPDATE password_reset_requests SET status = 'expired', decided_at = ? WHERE member_id = ? AND status = 'pending'").run(now(), a.id);
+        })();
+        audit(req, 'teacher', req.teacherId, 'account.remove', a.id);
+        return json(reply, 200, { accountId: a.id, status: 'removed' });
     });
     for (const [path, status] of [['disable', 'disabled'], ['enable', 'active']]) {
         app.post(`/api/teacher/classes/:classKey/accounts/:accountId/${path}`, { preHandler: requireTeacher, schema: { body: NO_BODY } }, async (req, reply) => {
@@ -383,6 +457,120 @@ export const buildApp = ({ db, config, jwks, now = () => Date.now(), https }) =>
         db.prepare('UPDATE student_accounts SET is_helper = ?, updated_at = ? WHERE id = ?').run(v, now(), a.id);
         audit(req, 'teacher', req.teacherId, v ? 'account.helper.on' : 'account.helper.off', a.id);
         return json(reply, 200, accountView({ ...a, is_helper: v }));
+    });
+
+    // ------------------------------------------------------------ P2：邀請、加入申請、個別綁定碼（T25、T26、T31）
+    const liveMember = (classId, userId) => db.prepare("SELECT * FROM student_accounts WHERE class_id = ? AND user_id = ? AND status IN ('active', 'disabled')").get(classId, userId);
+    const localBound = (classId, localStudentId) => db.prepare("SELECT 1 FROM student_accounts WHERE class_id = ? AND local_student_id = ? AND status IN ('active', 'disabled')").get(classId, localStudentId);
+    /**
+     * 把 user 綁成某班某位本機學生（要在交易內呼叫）。本機學生只能由老師決定（核准時選，或老師印給該生的綁定碼）。
+     * 以前退出或被移出這一班的人重新加入：沿用同一筆成員資料（UNIQUE(class_id, user_id)），重新選定本機學生、取消小老師。
+     */
+    const bindMember = (classId, userId, localStudentId, via) => {
+        if (db.prepare('SELECT status FROM users WHERE id = ?').get(userId)?.status !== 'active') return { code: 409, error: 'user_inactive', message: '這個學生帳號已停用' };
+        if (liveMember(classId, userId)) return { code: 409, error: 'already_member', message: '已經是這個班級的成員' };
+        if (localBound(classId, localStudentId)) return { code: 409, error: 'already_bound', message: '這位學生已經綁定其他帳號；要換帳號請先把舊的移出本班' };
+        if (db.prepare("SELECT COUNT(*) n FROM student_accounts WHERE class_id = ? AND status IN ('active', 'disabled')").get(classId).n >= LIMITS.accountsPerClass) return { code: 409, error: 'quota', message: `每個班級最多 ${LIMITS.accountsPerClass} 個學生帳號` };
+        const t = now();
+        const old = db.prepare('SELECT id FROM student_accounts WHERE class_id = ? AND user_id = ?').get(classId, userId);
+        if (old) {
+            db.prepare("UPDATE student_accounts SET status = 'active', local_student_id = ?, is_helper = 0, joined_via = ?, updated_at = ? WHERE id = ?").run(localStudentId, via, t, old.id);
+            return { memberId: old.id };
+        }
+        const memberId = `s_${newToken().slice(0, 20)}`;
+        db.prepare("INSERT INTO student_accounts (id, class_id, user_id, local_student_id, status, is_helper, joined_via, created_at, updated_at) VALUES (?,?,?,?,'active',0,?,?,?)").run(memberId, classId, userId, localStudentId, via, t, t);
+        return { memberId };
+    };
+    const inviteLive = (i, t = now()) => !i.revoked_at && i.expires_at > t && i.used_count < i.max_uses;
+    const inviteView = (i) => ({ id: i.id, createdAt: i.created_at, expiresAt: i.expires_at, maxUses: i.max_uses, usedCount: i.used_count, revoked: !!i.revoked_at, active: inviteLive(i) });
+    /** 申請保留期限（T33）：待審超過 30 天自動過期；處理完超過 30 天的申請清掉學生填的名字 */
+    const tidyJoinRequests = (classId) => {
+        const cut = now() - LIMITS.joinKeepDays * DAY;
+        db.prepare("UPDATE join_requests SET status = 'expired', decided_at = ?, display_name = '', seat_hint = NULL WHERE class_id = ? AND status = 'pending' AND created_at < ?").run(now(), classId, cut);
+        db.prepare("UPDATE join_requests SET display_name = '', seat_hint = NULL WHERE class_id = ? AND status <> 'pending' AND decided_at < ? AND display_name <> ''").run(classId, cut);
+    };
+
+    app.post('/api/teacher/classes/:classKey/invitations', {
+        preHandler: requireTeacher,
+        schema: { body: { type: 'object', additionalProperties: false, properties: { expiresInDays: { type: 'integer', minimum: 1, maximum: LIMITS.inviteMaxDays }, maxUses: { type: 'integer', minimum: 1, maximum: 200 } } } },
+    }, async (req, reply) => {
+        const c = ownClass(req, reply); if (!c) return;
+        const t = now();
+        const live = db.prepare('SELECT * FROM class_invitations WHERE class_id = ?').all(c.id).filter(i => inviteLive(i, t)).length;
+        if (live >= LIMITS.invitesPerClass) return fail(reply, 409, 'quota', `每個班級同時最多 ${LIMITS.invitesPerClass} 個有效的邀請碼，請先關閉舊的`);
+        const code = generateCode();
+        const inv = { id: `iv_${newToken().slice(0, 20)}`, created_at: t, expires_at: t + (req.body?.expiresInDays ?? LIMITS.inviteDefaultDays) * DAY, max_uses: req.body?.maxUses ?? LIMITS.inviteDefaultUses, used_count: 0, revoked_at: null };
+        db.prepare('INSERT INTO class_invitations (id, class_id, code_hash, created_at, expires_at, max_uses) VALUES (?,?,?,?,?,?)').run(inv.id, c.id, codeHash(normalizeCode(code)), inv.created_at, inv.expires_at, inv.max_uses);
+        audit(req, 'teacher', req.teacherId, 'invite.create', c.id, { id: inv.id });
+        return json(reply, 200, { ...inviteView(inv), code });                     // 代碼原文只在這裡出現一次
+    });
+    app.get('/api/teacher/classes/:classKey/invitations', { preHandler: requireTeacher, schema: { querystring: NO_QUERY } }, async (req, reply) => {
+        const c = ownClass(req, reply); if (!c) return;
+        const rows = db.prepare('SELECT * FROM class_invitations WHERE class_id = ? AND created_at > ? ORDER BY created_at DESC').all(c.id, now() - 60 * DAY);
+        return json(reply, 200, { invitations: rows.map(inviteView) });
+    });
+    app.post('/api/teacher/classes/:classKey/invitations/:invitationId/revoke', { preHandler: requireTeacher, schema: { body: NO_BODY } }, async (req, reply) => {
+        const c = ownClass(req, reply); if (!c) return;
+        const r = db.prepare('UPDATE class_invitations SET revoked_at = COALESCE(revoked_at, ?) WHERE id = ? AND class_id = ?').run(now(), req.params.invitationId, c.id);
+        if (!r.changes) return fail(reply, 404, 'not_found', '找不到這個邀請碼');
+        audit(req, 'teacher', req.teacherId, 'invite.revoke', c.id, { id: req.params.invitationId });
+        return json(reply, 200, inviteView(db.prepare('SELECT * FROM class_invitations WHERE id = ?').get(req.params.invitationId)));
+    });
+
+    // 加入申請：只有學生自己填的名字（不可信，只供參考）、座號提示與時間；沒有任何帳號或其他班級的資訊
+    app.get('/api/teacher/classes/:classKey/join-requests', { preHandler: requireTeacher, schema: { querystring: NO_QUERY } }, async (req, reply) => {
+        const c = ownClass(req, reply); if (!c) return;
+        tidyJoinRequests(c.id);
+        const rows = db.prepare("SELECT id, display_name, seat_hint, created_at FROM join_requests WHERE class_id = ? AND status = 'pending' ORDER BY created_at, id").all(c.id);
+        return json(reply, 200, { requests: rows.map(r => ({ id: r.id, displayName: r.display_name, seatHint: r.seat_hint, createdAt: r.created_at })) });
+    });
+    app.post('/api/teacher/classes/:classKey/join-requests/:requestId/approve', {
+        preHandler: requireTeacher,
+        schema: { body: { type: 'object', additionalProperties: false, required: ['localStudentId'], properties: { localStudentId: { type: 'string', minLength: 1, maxLength: 64 } } } },
+    }, async (req, reply) => {
+        const c = ownClass(req, reply); if (!c) return;
+        tidyJoinRequests(c.id);
+        // 同一個交易裡重新讀申請、檢查、建立成員資格：同時按兩次核准，或兩筆申請搶同一位學生，只有一個會成功
+        const out = db.transaction(() => {
+            const r = db.prepare('SELECT * FROM join_requests WHERE id = ? AND class_id = ?').get(req.params.requestId, c.id);
+            if (!r) return { code: 404, error: 'not_found', message: '找不到這筆申請' };
+            if (r.status !== 'pending') return { code: 409, error: 'not_pending', message: '這筆申請已經處理過了' };
+            const b = bindMember(c.id, r.user_id, req.body.localStudentId, 'invite');
+            if (!b.memberId) return b;
+            db.prepare("UPDATE join_requests SET status = 'approved', member_id = ?, decided_at = ? WHERE id = ?").run(b.memberId, now(), r.id);
+            return { code: 200, memberId: b.memberId };
+        }).immediate();
+        if (out.code !== 200) return fail(reply, out.code, out.error, out.message);
+        audit(req, 'teacher', req.teacherId, 'join.approve', out.memberId, { request: req.params.requestId });
+        const m = db.prepare(`${MEMBER_SELECT} WHERE m.id = ?`).get(out.memberId);
+        return json(reply, 200, accountView(m));
+    });
+    app.post('/api/teacher/classes/:classKey/join-requests/:requestId/reject', { preHandler: requireTeacher, schema: { body: NO_BODY } }, async (req, reply) => {
+        const c = ownClass(req, reply); if (!c) return;
+        const r = db.prepare("UPDATE join_requests SET status = 'rejected', decided_at = ? WHERE id = ? AND class_id = ? AND status = 'pending'").run(now(), req.params.requestId, c.id);
+        if (!r.changes) return fail(reply, 404, 'not_found', '找不到這筆待審的申請');
+        audit(req, 'teacher', req.teacherId, 'join.reject', c.id, { request: req.params.requestId });
+        return json(reply, 200, { ok: true });
+    });
+
+    // 個別綁定碼：老師替特定學生產生、印給他；一次性、30 天到期。同一位學生重新產生時，舊的未使用代碼自動作廢
+    app.post('/api/teacher/classes/:classKey/claim-codes', {
+        preHandler: requireTeacher,
+        schema: { body: { type: 'object', additionalProperties: false, required: ['students'], properties: { students: { type: 'array', minItems: 1, maxItems: 80, items: { type: 'object', additionalProperties: false, required: ['localStudentId'], properties: { localStudentId: { type: 'string', minLength: 1, maxLength: 64 } } } } } } },
+    }, async (req, reply) => {
+        const c = ownClass(req, reply); if (!c) return;
+        const codes = []; const existing = []; const t = now();
+        db.transaction(() => {
+            for (const localStudentId of new Set(req.body.students.map(s => s.localStudentId))) {
+                if (localBound(c.id, localStudentId)) { existing.push(localStudentId); continue; }
+                db.prepare('UPDATE claim_codes SET revoked_at = ? WHERE class_id = ? AND local_student_id = ? AND used_at IS NULL AND revoked_at IS NULL').run(t, c.id, localStudentId);
+                const code = generateCode(); const expiresAt = t + LIMITS.claimDays * DAY;
+                db.prepare('INSERT INTO claim_codes (id, class_id, local_student_id, code_hash, created_at, expires_at) VALUES (?,?,?,?,?,?)').run(`cc_${newToken().slice(0, 20)}`, c.id, localStudentId, codeHash(normalizeCode(code)), t, expiresAt);
+                codes.push({ localStudentId, code, expiresAt });
+            }
+        }).immediate();
+        audit(req, 'teacher', req.teacherId, 'claim.create', c.id, { count: codes.length });
+        return json(reply, 200, { codes, existing });
     });
 
     // 小老師登記收件匣：教師端依游標（seq）收取；回傳的學生 ID 都是教師端本機 ID
@@ -475,6 +663,7 @@ export const buildApp = ({ db, config, jwks, now = () => Date.now(), https }) =>
         revokeSession(req.cookies?.[COOKIE]);                                    // 防 session 固定：登入一定換新的
         const s = createSession('student', u.id, cred.must_change ? 'pwchange' : 'full');
         db.prepare("UPDATE student_accounts SET last_login_at = ? WHERE user_id = ? AND status = 'active'").run(now(), u.id);
+        db.prepare('UPDATE password_credentials SET first_login_at = ? WHERE user_id = ? AND first_login_at IS NULL').run(now(), u.id);   // D3：從此老師不能重設
         db.prepare('DELETE FROM sessions WHERE expires_at < ? OR revoked_at < ?').run(now(), now() - 86400_000);
         audit(req, 'student', u.id, 'student.login');
         setStudentCookie(reply, s.token);
@@ -516,6 +705,75 @@ export const buildApp = ({ db, config, jwks, now = () => Date.now(), https }) =>
         return json(reply, 200, { username: cred?.username ?? null, mustChangePassword: s.scope !== 'full', csrf: s.csrf,
             helper: ms.length === 1 && !!ms[0].is_helper, classes: ms.map(m => ({ id: m.id, className: m.class_name, helper: !!m.is_helper })) });
     });
+
+    // ------------------------------------------------------------ P2：學生用邀請碼申請加入、用綁定碼直接綁定、自己退出
+    const CODE_BODY = { code: { type: 'string', minLength: 1, maxLength: 32 } };
+    const badCode = (req, reply, userId, what) => {
+        codeFail(req, userId);
+        audit(req, 'student', userId, `${what}.fail`);
+        return fail(reply, 404, 'invalid_code', '這個代碼不能用：可能打錯、過期，或已經被老師關閉');
+    };
+    const rateLimitedCode = (reply) => { reply.header('Retry-After', String(LIMITS.ipWindowMs / 1000)); return fail(reply, 429, 'rate_limited', '輸入錯誤太多次，請過 15 分鐘再試'); };
+    /** 邀請碼只會產生「申請」：不給任何班級資料、名冊或成員資格；要等老師選定是哪一位學生才算加入（T25） */
+    app.post('/api/student/join', {
+        preHandler: studentGuard({ write: true }),
+        schema: { body: { type: 'object', additionalProperties: false, required: ['code', 'displayName'], properties: { ...CODE_BODY, displayName: { type: 'string', maxLength: 60 }, seatHint: { type: 'integer', minimum: 1, maximum: 99 } } } },
+    }, async (req, reply) => {
+        const u = req.student.user;
+        if (codeLimited(req, u.id)) return rateLimitedCode(reply);
+        const displayName = cleanName(req.body.displayName);
+        if (!displayName) return fail(reply, 400, 'bad_name', '請輸入你的名字（1～20 個字）');
+        const code = normalizeCode(req.body.code);
+        const inv = code && db.prepare(`SELECT i.*, c.name AS class_name FROM class_invitations i JOIN classes c ON c.id = i.class_id JOIN teachers t ON t.id = c.teacher_id
+            WHERE i.code_hash = ? AND c.status = 'active' AND t.status = 'active'`).get(codeHash(code));
+        if (!inv || !inviteLive(inv)) return badCode(req, reply, u.id, 'join');
+        const out = db.transaction(() => {
+            if (liveMember(inv.class_id, u.id)) return { code: 409, error: 'already_member', message: '你已經在這個班級了' };
+            if (db.prepare("SELECT 1 FROM join_requests WHERE class_id = ? AND user_id = ? AND status = 'pending'").get(inv.class_id, u.id)) return { code: 200, replay: true };
+            const fresh = db.prepare('SELECT * FROM class_invitations WHERE id = ?').get(inv.id);
+            if (!inviteLive(fresh)) return { code: 404, error: 'invalid_code', message: '這個代碼不能用：可能打錯、過期，或已經被老師關閉' };
+            if (db.prepare("SELECT COUNT(*) n FROM join_requests WHERE class_id = ? AND status = 'pending'").get(inv.class_id).n >= LIMITS.pendingPerClass) return { code: 409, error: 'too_many_requests', message: '這個班級待確認的申請太多了，請找老師' };
+            db.prepare("INSERT INTO join_requests (id, class_id, user_id, invitation_id, display_name, seat_hint, status, created_at) VALUES (?,?,?,?,?,?,'pending',?)")
+                .run(`jr_${newToken().slice(0, 20)}`, inv.class_id, u.id, inv.id, displayName, req.body.seatHint ?? null, now());
+            db.prepare('UPDATE class_invitations SET used_count = used_count + 1 WHERE id = ?').run(inv.id);
+            return { code: 200, replay: false };
+        }).immediate();
+        if (out.code !== 200) return fail(reply, out.code, out.error, out.message);
+        if (!out.replay) audit(req, 'student', u.id, 'join.request', inv.class_id);
+        return json(reply, 200, { status: 'pending', className: inv.class_name, message: '已送出，等老師確認' });
+    });
+    /** 個別綁定碼：老師印給某位學生的一次性代碼 → 直接成為那一班的那一位學生 */
+    app.post('/api/student/claim', {
+        preHandler: studentGuard({ write: true }),
+        schema: { body: { type: 'object', additionalProperties: false, required: ['code'], properties: CODE_BODY } },
+    }, async (req, reply) => {
+        const u = req.student.user;
+        if (codeLimited(req, u.id)) return rateLimitedCode(reply);
+        const code = normalizeCode(req.body.code);
+        const cc = code && db.prepare(`SELECT k.*, c.name AS class_name FROM claim_codes k JOIN classes c ON c.id = k.class_id JOIN teachers t ON t.id = c.teacher_id
+            WHERE k.code_hash = ? AND c.status = 'active' AND t.status = 'active'`).get(codeHash(code));
+        if (!cc || cc.used_at || cc.revoked_at || cc.expires_at <= now()) return badCode(req, reply, u.id, 'claim');
+        const out = db.transaction(() => {
+            const fresh = db.prepare('SELECT used_at, revoked_at FROM claim_codes WHERE id = ?').get(cc.id);
+            if (fresh.used_at || fresh.revoked_at) return { code: 404, error: 'invalid_code', message: '這個代碼不能用：可能打錯、過期，或已經被老師關閉' };
+            const b = bindMember(cc.class_id, u.id, cc.local_student_id, 'claim');
+            if (!b.memberId) return b;
+            db.prepare('UPDATE claim_codes SET used_at = ?, used_by_user_id = ? WHERE id = ?').run(now(), u.id, cc.id);
+            db.prepare("UPDATE join_requests SET status = 'cancelled', decided_at = ? WHERE class_id = ? AND user_id = ? AND status = 'pending'").run(now(), cc.class_id, u.id);
+            return { code: 200, memberId: b.memberId };
+        }).immediate();
+        if (out.code !== 200) return fail(reply, out.code, out.error, out.message);
+        audit(req, 'student', u.id, 'claim.use', out.memberId);
+        return json(reply, 200, { id: out.memberId, className: cc.class_name });
+    });
+    /** 自己退出某一班：立即失效；照顧紀錄留在那一班（老師端的統計不變） */
+    app.route({ method: 'POST', url: '/api/student/classes/:memberId/leave', preHandler: [studentGuard({ write: true }), withMember], schema: { params: MEMBER_PARAMS, body: NO_BODY },
+        handler: async (req, reply) => {
+            const a = req.student.account;
+            db.prepare("UPDATE student_accounts SET status = 'left', is_helper = 0, updated_at = ? WHERE id = ?").run(now(), a.id);
+            audit(req, 'student', req.student.user.id, 'member.leave', a.id);
+            return json(reply, 200, { ok: true });
+        } });
 
     const classInfo = (a) => db.prepare('SELECT name, published_at, projection_version FROM classes WHERE id = ?').get(a.class_id);
 
@@ -666,6 +924,119 @@ export const buildApp = ({ db, config, jwks, now = () => Date.now(), https }) =>
         if (!result.replay) audit(req, 'student', a.id, 'helper.register', a.class_id, { count: result.saved, state });   // a.id＝成員 id（每班不同）
         const view = helperView(a);
         return json(reply, 200, { saved: result.saved, replay: result.replay, states: view.states[assignmentId] || {} });
+    });
+
+    // ============================================================ 平台管理員（D3a、T34）
+    // 只有 platform_admins 裡的身分能用（本版只有一位 owner）。第一次：Google 帳號的 email 已驗證、在設定的管理員 email 裡，
+    // 而且還沒有任何 owner → 建立；之後只認身分雜湊，不再看 email。管理 API 只用 Bearer（不用 Cookie），工作階段 4 小時。
+    const adminEnabled = adminEmails.length > 0;
+    const requireAdmin = async (req, reply) => {
+        if (!adminEnabled) return fail(reply, 404, 'not_found', '找不到');
+        const m = /^Bearer ([A-Za-z0-9_-]{20,100})$/.exec(req.headers.authorization || '');
+        const s = m && liveSession(m[1], 'admin');
+        if (!s) return fail(reply, 401, 'unauthenticated', '請重新登入');
+        if (!db.prepare('SELECT 1 FROM platform_admins WHERE user_id = ?').get(s.subject_id)) { revokeSession(m[1]); return fail(reply, 403, 'not_admin', '沒有管理權限'); }
+        req.adminId = s.subject_id; req.adminToken = m[1];
+    };
+    app.post('/api/admin/session', {
+        schema: { body: { type: 'object', additionalProperties: false, required: ['credential', 'nonce'], properties: { credential: { type: 'string', maxLength: 4096 }, nonce: { type: 'string', minLength: 8, maxLength: 128 } } } },
+    }, async (req, reply) => {
+        if (!adminEnabled) return fail(reply, 404, 'not_found', '找不到');
+        const ipKey = `aip:${ipHash(req)}`;
+        if (ipFailures(ipKey) >= LIMITS.teacherIpFailLimit) return fail(reply, 429, 'rate_limited', '嘗試太多次，請稍後再試');
+        const { credential, nonce } = req.body;
+        let id;
+        try { id = await verifyIdToken(credential, nonce); }
+        catch (e) {
+            ipFail(ipKey);
+            audit(req, 'anonymous', null, 'admin.session.fail', null, { code: e instanceof IdTokenError ? e.code : 'error' });
+            return fail(reply, 401, 'invalid_token', '無法驗證 Google 登入，請重新登入');
+        }
+        if (!consumeIdToken(credential, id)) { ipFail(ipKey); return fail(reply, 401, 'replayed', '這個登入憑證已經用過，請重新登入'); }
+        const subjectHash = sha256(`https://accounts.google.com|${id.sub}`);
+        const userId = db.transaction(() => {
+            const ident = db.prepare("SELECT user_id FROM auth_identities WHERE provider = 'google' AND subject_hash = ?").get(subjectHash);
+            if (ident && db.prepare('SELECT 1 FROM platform_admins WHERE user_id = ?').get(ident.user_id)) return ident.user_id;
+            const bootstrap = id.emailVerified && adminEmails.includes(String(id.email || '').toLowerCase()) && !db.prepare("SELECT 1 FROM platform_admins WHERE role = 'owner'").get();
+            if (!bootstrap) return null;
+            const uid = userForIdentity(subjectHash, now());
+            db.prepare("INSERT INTO platform_admins (user_id, role, created_at) VALUES (?, 'owner', ?)").run(uid, now());
+            return uid;
+        }).immediate();
+        if (!userId) {
+            ipFail(ipKey);
+            audit(req, 'anonymous', null, 'admin.session.denied');
+            return fail(reply, 403, 'not_admin', '這個 Google 帳號沒有管理權限');
+        }
+        const s = createSession('admin', userId);
+        audit(req, 'admin', userId, 'admin.session');
+        return json(reply, 200, { token: s.token, expiresAt: s.expiresAt });
+    });
+    app.post('/api/admin/logout', { preHandler: requireAdmin, schema: { body: NO_BODY } }, async (req, reply) => { revokeSession(req.adminToken); return json(reply, 200, { ok: true }); });
+
+    /** 重設申請：管理員看得到班級名稱、帳號名稱、這個人在幾位老師的班上；看不到成績或其他資料 */
+    const resetView = (r) => {
+        const m = db.prepare('SELECT m.*, c.name AS class_name, c.teacher_id FROM student_accounts m JOIN classes c ON c.id = m.class_id WHERE m.id = ?').get(r.member_id);
+        const cred = m && db.prepare('SELECT username, issued_by_class_id FROM password_credentials WHERE user_id = ?').get(m.user_id);
+        const teachers = m ? db.prepare("SELECT COUNT(DISTINCT c.teacher_id) n FROM student_accounts x JOIN classes c ON c.id = x.class_id WHERE x.user_id = ? AND x.status IN ('active', 'disabled')").get(m.user_id).n : 0;
+        return { id: r.id, status: r.status, createdAt: r.created_at, decidedAt: r.decided_at, requestedBy: r.requested_by, className: m?.class_name ?? null, memberStatus: m?.status ?? null,
+            username: cred?.username ?? null, issuedByThisClass: !!cred && cred.issued_by_class_id === m?.class_id, teacherCount: teachers };
+    };
+    app.get('/api/admin/reset-requests', { preHandler: requireAdmin, schema: { querystring: NO_QUERY } }, async (req, reply) => {
+        db.prepare("UPDATE password_reset_requests SET status = 'expired', decided_at = ? WHERE status = 'pending' AND created_at < ?").run(now(), now() - LIMITS.resetRequestDays * DAY);
+        const pending = db.prepare("SELECT * FROM password_reset_requests WHERE status = 'pending' ORDER BY created_at").all();
+        const recent = db.prepare("SELECT * FROM password_reset_requests WHERE status <> 'pending' ORDER BY decided_at DESC LIMIT 50").all();
+        return json(reply, 200, { pending: pending.map(resetView), recent: recent.map(resetView) });
+    });
+    const ADMIN_ID_PARAMS = (name) => ({ type: 'object', additionalProperties: false, required: [name], properties: { [name]: { type: 'string', pattern: '^[A-Za-z0-9_-]{4,64}$' } } });
+    app.post('/api/admin/reset-requests/:requestId/approve', { preHandler: requireAdmin, schema: { params: ADMIN_ID_PARAMS('requestId'), body: NO_BODY } }, async (req, reply) => {
+        const initialPassword = generateInitialPassword(); const hash = await hashPassword(initialPassword);
+        const out = db.transaction(() => {
+            const r = db.prepare('SELECT * FROM password_reset_requests WHERE id = ?').get(req.params.requestId);
+            if (!r) return { code: 404, error: 'not_found', message: '找不到這筆申請' };
+            if (r.status !== 'pending') return { code: 409, error: 'not_pending', message: '這筆申請已經處理過了' };
+            const m = db.prepare("SELECT m.*, c.teacher_id FROM student_accounts m JOIN classes c ON c.id = m.class_id WHERE m.id = ? AND m.status IN ('active', 'disabled')").get(r.member_id);
+            // 送出申請之後學生被移出、或老師已不是這班的老師 → 申請作廢
+            if (!m || m.teacher_id !== r.requested_by) { db.prepare("UPDATE password_reset_requests SET status = 'expired', decided_at = ? WHERE id = ?").run(now(), r.id); return { code: 409, error: 'stale', message: '學生已不在這個班級，申請作廢' }; }
+            const cred = db.prepare('SELECT username FROM password_credentials WHERE user_id = ?').get(m.user_id);
+            if (!cred) return { code: 409, error: 'no_password', message: '這位學生沒有帳號密碼' };
+            db.prepare('UPDATE password_credentials SET password_hash = ?, must_change = 1, updated_at = ? WHERE user_id = ?').run(hash, now(), m.user_id);
+            db.prepare("UPDATE password_reset_requests SET status = 'approved', decided_at = ?, decided_by = ? WHERE id = ?").run(now(), req.adminId, r.id);
+            return { code: 200, userId: m.user_id, username: cred.username, memberId: m.id };
+        }).immediate();
+        if (out.code !== 200) return fail(reply, out.code, out.error, out.message);
+        revokeAllOf('student', out.userId); rlReset(`user:${out.username}`);
+        audit(req, 'admin', req.adminId, 'reset.approve', out.memberId, { request: req.params.requestId });
+        return json(reply, 200, { username: out.username, initialPassword });            // 只顯示這一次；學生登入後必須改密碼
+    });
+    app.post('/api/admin/reset-requests/:requestId/reject', { preHandler: requireAdmin, schema: { params: ADMIN_ID_PARAMS('requestId'), body: NO_BODY } }, async (req, reply) => {
+        const r = db.prepare("UPDATE password_reset_requests SET status = 'rejected', decided_at = ?, decided_by = ? WHERE id = ? AND status = 'pending'").run(now(), req.adminId, req.params.requestId);
+        if (!r.changes) return fail(reply, 404, 'not_found', '找不到這筆待審的申請');
+        audit(req, 'admin', req.adminId, 'reset.reject', null, { request: req.params.requestId });
+        return json(reply, 200, { ok: true });
+    });
+    /** 老師名單（不存 email，所以用老師 id、註冊方式和班級名稱辨識） */
+    app.get('/api/admin/teachers', { preHandler: requireAdmin, schema: { querystring: NO_QUERY } }, async (req, reply) => {
+        const rows = db.prepare('SELECT * FROM teachers ORDER BY created_at').all();
+        const classes = db.prepare('SELECT name, created_at FROM classes WHERE teacher_id = ? ORDER BY created_at');
+        return json(reply, 200, { teachers: rows.map(t => ({ id: t.id, status: t.status, signup: t.signup, createdAt: t.created_at, classes: classes.all(t.id).map(c => c.name) })) });
+    });
+    for (const [path, status] of [['suspend', 'suspended'], ['unsuspend', 'active']]) {
+        app.post(`/api/admin/teachers/:teacherId/${path}`, { preHandler: requireAdmin, schema: { params: ADMIN_ID_PARAMS('teacherId'), body: NO_BODY } }, async (req, reply) => {
+            const r = db.prepare('UPDATE teachers SET status = ? WHERE id = ?').run(status, req.params.teacherId);
+            if (!r.changes) return fail(reply, 404, 'not_found', '找不到這位老師');
+            if (status === 'suspended') revokeAllOf('teacher', req.params.teacherId);
+            audit(req, 'admin', req.adminId, `teacher.${path}`, req.params.teacherId);
+            return json(reply, 200, { id: req.params.teacherId, status });
+        });
+    }
+    app.get('/api/admin/audit', {
+        preHandler: requireAdmin,
+        schema: { querystring: { type: 'object', additionalProperties: false, properties: { before: { type: 'string', pattern: '^[0-9]{1,15}$' } } } },
+    }, async (req, reply) => {
+        const before = req.query.before ? Number(req.query.before) : Number.MAX_SAFE_INTEGER;
+        const rows = db.prepare('SELECT id, ts, actor_kind, actor_id, action, target, detail FROM audit_events WHERE id < ? ORDER BY id DESC LIMIT ?').all(before, LIMITS.auditPage);
+        return json(reply, 200, { events: rows.map(r => ({ id: r.id, ts: r.ts, actorKind: r.actor_kind, actorId: r.actor_id, action: r.action, target: r.target, detail: r.detail ? JSON.parse(r.detail) : null })) });
     });
 
     // ============================================================ 學生頁面（同源靜態檔，只開放白名單）

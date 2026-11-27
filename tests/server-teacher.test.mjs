@@ -157,12 +157,20 @@ test('BUG-022: only allow-listed, verified teacher emails get a session; quotas 
     assert.equal((await exchange(H, await H.idToken({ account: stranger }))).statusCode, 403);
     assert.equal((await exchange(H, await H.idToken({ mutate: p => ({ ...p, email_verified: false }) }))).statusCode, 403, 'unverified email');
     assert.equal(H.db.prepare('SELECT COUNT(*) n FROM teachers').get().n, 0, 'no teacher row created');
-    const token = await H.teacherSession();
+    let token = await H.teacherSession();
     const { classKey } = (await H.t(token, 'POST', '/api/teacher/classes', { localClassId: 'q1', name: 'q' })).json();
     const many = Array.from({ length: 80 }, (_, i) => ({ localStudentId: `s${i}` }));
     assert.equal((await H.t(token, 'POST', `/api/teacher/classes/${classKey}/accounts`, { students: many })).statusCode, 200);
     assert.equal((await H.t(token, 'POST', `/api/teacher/classes/${classKey}/accounts`, { students: [{ localStudentId: 'one-more' }] })).statusCode, 409);
-    for (let i = 2; i <= 30; i++) await H.t(token, 'POST', '/api/teacher/classes', { localClassId: `q${i}`, name: 'q' });
+    // 每天最多 10 個新班級（T29）；總數最多 30 個
+    for (let i = 2; i <= 10; i++) assert.equal((await H.t(token, 'POST', '/api/teacher/classes', { localClassId: `q${i}`, name: 'q' })).statusCode, 200);
+    assert.equal((await H.t(token, 'POST', '/api/teacher/classes', { localClassId: 'q11', name: 'q' })).statusCode, 429, '11th new class on the same day');
+    assert.equal((await H.t(token, 'POST', '/api/teacher/classes', { localClassId: 'q1', name: 'renamed' })).statusCode, 200, 'an existing class can still be re-linked');
+    for (let i = 11; i <= 30; i++) {
+        if (i % 10 === 1) { H.advance(86400_000 + 1); token = await H.teacherSession(); }
+        assert.equal((await H.t(token, 'POST', '/api/teacher/classes', { localClassId: `q${i}`, name: 'q' })).statusCode, 200);
+    }
+    H.advance(86400_000 + 1); token = await H.teacherSession();
     assert.equal((await H.t(token, 'POST', '/api/teacher/classes', { localClassId: 'q31', name: 'q' })).statusCode, 409);
 });
 
