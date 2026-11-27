@@ -193,7 +193,25 @@ Inaccurate documentation the review found (server-side nonce, "only once", 30/IP
   - c80ae99: test 43 (sync badge timed out after 15 s)
   - 9a8f042: tests 4 and 9 (`Target page, context or browser has been closed` while clicking a visible button; the WebKit process logged `WebLoaderStrategy::internallyFailedLoadTimerFired` just before test 4)
 - **NOT REPRODUCED**: Playwright WebKit on Windows passes all 45 tests, and the sync test passed 6 times in a row. Chrome and Firefox pass in CI.
-- **STATUS**: root cause unknown. The CI trace artifact could not be downloaded in this session (permission). The sync badge wait now prints its history on timeout. No test was disabled or loosened; WebKit stays **FAIL / not verified** until this is solved.
+- **Evidence (2026-11-27, CI runs 45940706019 and 45942204051, crash and close events printed to the job log)**:
+  - The "page closed" failures are **WebKit web-process crashes** (`PAGE CRASH`). Tests and the app did not close the pages, and sometimes WebKit logs `ERROR: WebKit encountered an internal error … WebLoaderStrategy.cpp(649)`.
+  - Run 45940706019 (before the change): 4 page crashes in the 45 tests, plus one page that stopped answering for over 20 s.
+  - Responsiveness diagnostic on Linux WebKit, same steps each time:
+    - Normal motion: about 13–21 frames per second. A page hang or crash happened in 3 of 12 measurements. The variants that switch off just the canvas, the scan sweep, the mascot or the blur behaved the same; sweep-off and blur-off each crashed once.
+    - Reduced motion: about 31–32 frames per second, with **0 crashes in 4 measurements**.
+  - Run 45942204051 (after the change):
+    - Normal suite: 45/45, 0 crashes. One internal WebKit error was logged without effect.
+    - Controlled experiment, full suite with reduced motion: 45/45, 0 crashes.
+- **Conclusion (moderate confidence)**:
+  - The crash is a WebKit (Linux, software rendering) bug; a page must never crash from CSS or canvas animation.
+  - Continuous rendering makes it more likely: the starfield canvas, the scan sweep, the floating mascot and CSS animations, all under `backdrop-filter`. No single element explains it. Windows WebKit never crashes.
+  - Not proven: one green run is too few, given earlier runs had 1 to 5 failures.
+- **Changes**:
+  - The starfield redraws at most 30 times a second, and not at all with reduced motion (before, it kept drawing on a hidden canvas).
+  - The sync test (test 43) had its own race: it trusted a stale 「已同步」 badge. It now waits for A's rename to reach the sheet (`e2e/sync.e2e.mjs`).
+  - Crash and close diagnostics are printed to the CI log, and the reduced-motion experiment and per-component measurements run in CI as evidence only.
+  - No timeout was lengthened, no retry was added, and no assertion or test was removed.
+- **STATUS**: CI green once (45942204051). Root cause: **partly confirmed** (WebKit renderer crash, linked to continuous animation); WebKit stability **NOT_VERIFIED** until it stays green over more runs.
 
 ## v6.2 test-writing mistakes caught by the suite (not product bugs)
 - Test helper's default new password contained the username → the server correctly refused it as weak.
