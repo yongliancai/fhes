@@ -58,6 +58,7 @@ Status words follow the Code Factory guide strictly: **PASS** = actually execute
 | 2026-11-25 | v6.2 | Firefox / WebKit / real Safari / real Google exchange / production VPS | — | NOT_VERIFIED / BLOCKED (see `docs/V62-TEST-REPORT.md`) |
 | 2026-11-25 | v6.2 deploy prep | `npm run verify`; `node --test e2e/student.e2e.mjs`; backup CLI smoke test | Windows 11 / Edge | PASS — 174/174 (encrypted backup/restore/retention, env example vs start-up checks, v6.1 import of a v6.2 backup), student E2E 4/4 (incl. rollback A); found BUG-026 |
 | 2026-11-26 | v6.2 小老師／4 個按鈕／逾期自動愛心 | `npm run verify` / `npm run test:e2e` | Windows 11 / Edge | PASS — 196/196, 45/45 (after fixing review findings BUG-027…030); Chrome/Firefox/WebKit not re-run |
+| 2026-11-27 | v6.2 多班級 P1（v3 schema、每班 API、CI 環境修正、BUG-031） | `npm run verify`; `npm run test:e2e` with E2E_BROWSER=chromium (Edge) / firefox / webkit | Windows 11 / Edge, Playwright Firefox 142, Playwright WebKit | PASS — 208/208; E2E Edge 45/45, Firefox 45/45, WebKit 45/45 (local). GitHub Actions (Linux Chrome/Firefox/WebKit): see the Draft PR for this branch — not counted as PASS until it is green there
 | CI | every push | GitHub Actions `Quality (no deployment)`: `verify` + `e2e` (ubuntu, Chrome) | ubuntu-latest, Node 22 | green for P2 (feff057), P3 (4b6bb42), P4 (853a880); later runs are listed in Draft PR #1 |
 
 ## Acceptance matrix
