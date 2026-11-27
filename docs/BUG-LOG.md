@@ -186,6 +186,15 @@ Inaccurate documentation the review found (server-side nonce, "only once", 30/IP
 - **WebKit**, `SameSite`: Playwright WebKit reports the stored cookie's `SameSite` as `None` even though the server sends `Strict` (seen on Windows). The test now checks the server's `Set-Cookie` header in every browser (`SameSite=Strict`, `HttpOnly`, `Secure`, `Path=/`, no `Domain`). It still checks the stored value in Edge, Chrome and Firefox.
 - **WebKit**, CSP: Playwright screenshots inject a `<style>`, and in WebKit the page's strict CSP blocks it and logs 「Refused to apply a stylesheet」 (confirmed with a probe page). That line is now ignored only while a screenshot is being taken, only in WebKit, and only for that exact text. Any other CSP violation still fails the test.
 
+## BUG-032 (OPEN, CI only) — Linux WebKit in GitHub Actions intermittently stalls in v6.1 browser tests
+- **DETECT**: `e2e-compat (webkit)` on every CI run so far, a different v6.1 test each time:
+  - c272b9a (v6.1): test 30
+  - 796b6fa: tests 4 and 10, plus the student tests (those were fixed in P1)
+  - c80ae99: test 43 (sync badge timed out after 15 s)
+  - 9a8f042: tests 4 and 9 (`Target page, context or browser has been closed` while clicking a visible button; the WebKit process logged `WebLoaderStrategy::internallyFailedLoadTimerFired` just before test 4)
+- **NOT REPRODUCED**: Playwright WebKit on Windows passes all 45 tests, and the sync test passed 6 times in a row. Chrome and Firefox pass in CI.
+- **STATUS**: root cause unknown. The CI trace artifact could not be downloaded in this session (permission). The sync badge wait now prints its history on timeout. No test was disabled or loosened; WebKit stays **FAIL / not verified** until this is solved.
+
 ## v6.2 test-writing mistakes caught by the suite (not product bugs)
 - Test helper's default new password contained the username → the server correctly refused it as weak.
 - Idempotency keys shorter than 8 characters in a test → the server correctly answered 400.
