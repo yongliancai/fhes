@@ -65,6 +65,14 @@ jobs:
           E2E_DIAG: '1'
           # 瀏覽器程序的 stderr（WebKit 頁面崩潰的原因）印到這個步驟的紀錄裡
           DEBUG: pw:browser
+      # BUG-032 診斷（只蒐集證據）：一般 vs 減少動態效果下，網頁回應時間與每秒畫面數。結果不影響上面 45 項 E2E 的判定。
+      - name: Responsiveness diagnostic (BUG-032, evidence only)
+        if: always()
+        continue-on-error: true
+        run: node e2e/diag-responsiveness.mjs
+        env:
+          E2E_BROWSER: ${{ matrix.browser }}
+          E2E_DIAG: '1'
       - uses: actions/upload-artifact@v4
         if: always()
         with:

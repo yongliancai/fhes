@@ -156,13 +156,15 @@ export const openApp = async (opts = {}) => {
         });
     }
     const page = await context.newPage();
+    let closingOnPurpose = false;
     if (DIAG) {
         diag(`--- context #${seq} opened (${ENGINE})`);
         page.on('framenavigated', f => { if (f === page.mainFrame()) diag(`#${seq} navigated ${f.url().replace(/^https?:\/\/[^/]+/, '')}`); });
         page.on('console', m => diag(`#${seq} console.${m.type()} ${JSON.stringify(m.text()).slice(0, 800)} loc=${JSON.stringify(m.location())}`));
         page.on('pageerror', e => diag(`#${seq} pageerror ${e.name}: ${e.message} stack=${JSON.stringify((e.stack || '').slice(0, 600))}`));
-        page.on('crash', () => diag(`#${seq} PAGE CRASH url=${page.url()}`));
-        page.on('close', () => diag(`#${seq} page closed`));
+        // BUG-032：崩潰與「不是測試自己關的」關閉，同時印到標準輸出（CI 的工作紀錄看得到，不必下載 artifact）
+        page.on('crash', () => { diag(`#${seq} PAGE CRASH url=${page.url()}`); console.log(`[diag ${ENGINE}] context #${seq} PAGE CRASH url=${page.url().replace(/^https?:\/\/[^/]+/, '')}`); });
+        page.on('close', () => { diag(`#${seq} page closed`); if (!closingOnPurpose) console.log(`[diag ${ENGINE}] context #${seq} PAGE CLOSED UNEXPECTEDLY url=${page.url().replace(/^https?:\/\/[^/]+/, '')}`); });
         page.on('requestfailed', r => diag(`#${seq} requestfailed ${r.method()} ${r.url().slice(0, 120)} ${r.failure()?.errorText}`));
     }
     const errors = [];
@@ -185,6 +187,7 @@ export const openApp = async (opts = {}) => {
         catch { throw new Error(`App did not start: ${errors.join(' | ') || 'no page error captured'}`); }
     } else await page.waitForSelector('#auth-gate', { timeout: 10000 });
     const close = async () => {
+        closingOnPurpose = true;
         if (DIAG) {
             diag(`#${seq} closing; collected errors=${JSON.stringify(errors)}`);
             await context.tracing.stop({ path: join(OUT, `trace-${ENGINE}-${seq}.zip`) }).catch(e => diag(`#${seq} trace stop failed: ${e.message}`));
