@@ -326,6 +326,10 @@ CREATE UNIQUE INDEX reset_pending ON password_reset_requests (member_id) WHERE s
 
 ## 7. API 變更
 
+**P1 實作時的調整（2026-11-27）**：學生端路徑改用 `/api/student/classes/{memberId}/…`，不用 classKey。memberId 是「我在這一班的代號」，也就是自己的成員 id。原因是學生端的回應一向不含 classKey，既有的安全測試也要求這一點。以下表格中學生端的 `:classKey` 都改成 `:memberId`。
+
+**P1 的分批**：v3 migration 只包含身分與成員資格。邀請、申請、綁定碼、管理員、重設申請等資料表放在 P2 的 v4 migration，這樣每個階段可以分開驗收。
+
 **原則**：
 
 - 存取哪一位學生、哪一個小組，一律由 Session 的 user 加上資料庫中的成員資格推出來。**body 和 query 永遠不接受 studentId、localStudentId、groupId 作為權限依據**。

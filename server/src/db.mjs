@@ -2,7 +2,7 @@
 // 不存：明文密碼、session id 原文、教師 email 或 Google sub 原文。
 import Database from 'better-sqlite3';
 
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 const MIGRATIONS = [
     // v1
@@ -121,16 +121,112 @@ const MIGRATIONS = [
     CREATE INDEX hwreg_class ON hw_registrations (class_id, seq);
     CREATE INDEX hwreg_helper_day ON hw_registrations (helper_account_id, local_date);
     `,
+    // v3（ADR-024 多班級）：登入身分（users／帳密／Google）與「班級成員」分開。
+    // student_accounts 就地重建成「某人在某班的成員資格」：表名與 id 保留，所以照顧紀錄（account_id）
+    // 與小老師登記（helper_account_id）的外鍵和既有資料完全不用動，而且本來就是每班各自計算。
+    // 帳密移到 password_credentials；舊帳號一人一個 user（u_s_ + 原 id 後段；老師是 u_t_），不依姓名／Email 合併任何帳號。
+    { fkOff: true, sql: `
+    CREATE TABLE users (
+        id TEXT PRIMARY KEY,
+        status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'disabled')),
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+    );
+    CREATE TABLE auth_identities (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES users(id),
+        provider TEXT NOT NULL CHECK (provider IN ('google')),
+        subject_hash TEXT NOT NULL,                     -- SHA-256(iss|sub)，不存 sub／email 原文
+        created_at INTEGER NOT NULL,
+        last_used_at INTEGER,
+        UNIQUE (provider, subject_hash)
+    );
+    CREATE INDEX identities_user ON auth_identities (user_id);
+    CREATE TABLE password_credentials (
+        user_id TEXT PRIMARY KEY REFERENCES users(id),
+        username TEXT NOT NULL UNIQUE,
+        password_hash TEXT NOT NULL,
+        must_change INTEGER NOT NULL DEFAULT 1 CHECK (must_change IN (0, 1)),
+        issued_by_class_id TEXT REFERENCES classes(id),  -- 哪一班的老師發的（重設權限判斷用）
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+    );
+    ALTER TABLE teachers ADD COLUMN user_id TEXT REFERENCES users(id);
+    ALTER TABLE teachers ADD COLUMN status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'suspended'));
+    ALTER TABLE classes ADD COLUMN status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'archived'));
+
+    CREATE TABLE student_accounts_v3 (
+        id TEXT PRIMARY KEY,                            -- 舊 s_xxx 原樣保留
+        class_id TEXT NOT NULL REFERENCES classes(id),
+        user_id TEXT NOT NULL REFERENCES users(id),
+        local_student_id TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'disabled', 'left', 'removed')),
+        is_helper INTEGER NOT NULL DEFAULT 0 CHECK (is_helper IN (0, 1)),
+        joined_via TEXT NOT NULL DEFAULT 'teacher' CHECK (joined_via IN ('teacher', 'claim', 'invite')),
+        last_login_at INTEGER,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        UNIQUE (class_id, user_id)
+    );
+    INSERT INTO users (id, status, created_at, updated_at)
+        SELECT 'u_s_' || substr(id, 3), 'active', created_at, updated_at FROM student_accounts;
+    INSERT INTO password_credentials (user_id, username, password_hash, must_change, issued_by_class_id, created_at, updated_at)
+        SELECT 'u_s_' || substr(id, 3), username, password_hash, must_change, class_id, created_at, updated_at FROM student_accounts;
+    INSERT INTO student_accounts_v3 (id, class_id, user_id, local_student_id, status, is_helper, joined_via, last_login_at, created_at, updated_at)
+        SELECT id, class_id, 'u_s_' || substr(id, 3), local_student_id, status, is_helper, 'teacher', last_login_at, created_at, updated_at FROM student_accounts;
+    INSERT INTO users (id, status, created_at, updated_at) SELECT 'u_t_' || substr(id, 3), 'active', created_at, created_at FROM teachers;
+    INSERT INTO auth_identities (id, user_id, provider, subject_hash, created_at)
+        SELECT 'ai_t_' || substr(id, 3), 'u_t_' || substr(id, 3), 'google', account_hash, created_at FROM teachers;
+    UPDATE teachers SET user_id = 'u_t_' || substr(id, 3);
+    DROP TABLE student_accounts;
+    ALTER TABLE student_accounts_v3 RENAME TO student_accounts;
+    -- 同一班同一位本機學生只能綁一個「有效或停用中」的成員；退出／移除後可由老師再綁
+    CREATE UNIQUE INDEX member_local ON student_accounts (class_id, local_student_id) WHERE status IN ('active', 'disabled');
+    CREATE INDEX member_user ON student_accounts (user_id);
+    -- 學生工作階段的主體從「帳號」改成 user：升級時全部登出（學生重新登入即可）
+    UPDATE sessions SET revoked_at = CAST(strftime('%s', 'now') AS INTEGER) * 1000 WHERE kind = 'student' AND revoked_at IS NULL;
+    `, check: (db) => {
+        const n = (q) => db.prepare(q).get().n;
+        const members = n('SELECT COUNT(*) n FROM student_accounts');
+        const creds = n('SELECT COUNT(*) n FROM password_credentials');
+        const studentUsers = n("SELECT COUNT(*) n FROM users WHERE substr(id, 1, 4) = 'u_s_'");
+        if (members !== creds || members !== studentUsers) throw new Error(`v3 對帳失敗：成員 ${members}、帳密 ${creds}、學生 user ${studentUsers}`);
+        if (n('SELECT COUNT(*) n FROM teachers WHERE user_id IS NULL')) throw new Error('v3 對帳失敗：有老師沒有對應的 user');
+    } },
 ];
 
-export const openDb = (file = ':memory:') => {
+export class SchemaTooNewError extends Error {}
+
+/**
+ * 依序執行尚未套用的 migration（每一步一個交易：失敗就整步回滾，資料庫維持原本的版本）。
+ * fkOff 的步驟（要重建被外鍵參照的資料表）：交易外關閉外鍵檢查，交易內做完後 foreign_key_check 必須沒有問題、
+ * 對帳（check）通過才 COMMIT；最後一定把外鍵檢查打開。
+ * 資料庫版本比程式新（例如升級後又換回舊版程式）：拒絕開啟，避免舊程式寫壞新格式的資料。
+ */
+export const migrate = (db, migrations = MIGRATIONS) => {
+    const v = db.pragma('user_version', { simple: true });
+    if (v > migrations.length) throw new SchemaTooNewError(`資料庫版本 ${v} 比程式支援的 ${migrations.length} 新：請使用較新的程式，或還原升級前的備份`);
+    for (let i = v; i < migrations.length; i++) {
+        const m = typeof migrations[i] === 'string' ? { sql: migrations[i] } : migrations[i];
+        if (m.fkOff) db.pragma('foreign_keys = OFF');
+        try {
+            db.transaction(() => {
+                db.exec(m.sql);
+                if (m.fkOff) { const bad = db.pragma('foreign_key_check'); if (bad.length) throw new Error(`migration v${i + 1} 外鍵檢查失敗：${JSON.stringify(bad.slice(0, 5))}`); }
+                m.check?.(db);
+                db.pragma(`user_version = ${i + 1}`);
+            })();
+        } finally { if (m.fkOff) db.pragma('foreign_keys = ON'); }
+    }
+};
+/** 測試用：只套用前 n 個 migration（建立舊版資料庫） */
+export const migrationsUpTo = (n) => MIGRATIONS.slice(0, n);
+
+export const openDb = (file = ':memory:', { upTo } = {}) => {
     const db = new Database(file);
     db.pragma('journal_mode = WAL');
     db.pragma('foreign_keys = ON');
     db.pragma('busy_timeout = 5000');
-    const v = db.pragma('user_version', { simple: true });
-    for (let i = v; i < MIGRATIONS.length; i++) {
-        db.transaction(() => { db.exec(MIGRATIONS[i]); db.pragma(`user_version = ${i + 1}`); })();
-    }
+    try { migrate(db, upTo ? migrationsUpTo(upTo) : MIGRATIONS); } catch (e) { db.close(); throw e; }
     return db;
 };

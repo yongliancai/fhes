@@ -187,9 +187,15 @@ test('defense in depth: a live session stops working as soon as the account is d
     const H = await makeHarness(); const A = await seedClass(H);
     const s = await H.activate(acc(A, 'cls-a-s5'));
     assert.equal((await H.s(s, 'GET', '/api/student/me')).statusCode, 200);
-    H.db.prepare("UPDATE student_accounts SET status = 'disabled' WHERE username = ?").run(s.username);   // 例如管理者直接在資料庫停用
+    const userId = H.db.prepare('SELECT user_id FROM password_credentials WHERE username = ?').get(s.username).user_id;
+    H.db.prepare("UPDATE student_accounts SET status = 'disabled' WHERE user_id = ?").run(userId);   // 例如管理者直接在資料庫停用（他唯一的班級）
     assert.equal((await H.s(s, 'GET', '/api/student/me')).statusCode, 401);
-    assert.ok(H.db.prepare("SELECT COUNT(*) n FROM sessions WHERE kind = 'student' AND revoked_at IS NULL AND subject_id = (SELECT id FROM student_accounts WHERE username = ?)").get(s.username).n === 0, 'and its sessions get revoked');
+    assert.ok(H.db.prepare("SELECT COUNT(*) n FROM sessions WHERE kind = 'student' AND revoked_at IS NULL AND subject_id = ?").get(userId).n === 0, 'and its sessions get revoked');
+    // 整個 user 被停用也一樣
+    const s2 = await H.activate(acc(A, 'cls-a-s6'));
+    const user2 = H.db.prepare('SELECT user_id FROM password_credentials WHERE username = ?').get(s2.username).user_id;
+    H.db.prepare("UPDATE users SET status = 'disabled' WHERE id = ?").run(user2);
+    assert.equal((await H.s(s2, 'GET', '/api/student/dashboard')).statusCode, 401);
 });
 
 test('BUG-021: a parallel burst cannot get past the account lockout (attempts are counted before the async hash check)', async () => {

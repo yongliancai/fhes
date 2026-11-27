@@ -13,7 +13,9 @@ const seedDb = (file) => {
     const db = openDb(file);
     db.prepare('INSERT INTO teachers (id, account_hash, created_at) VALUES (?,?,?)').run('t1', 'h1', 1);
     db.prepare('INSERT INTO classes (id, teacher_id, local_class_id, created_at) VALUES (?,?,?,?)').run('c1', 't1', 'cls', 1);
-    db.prepare("INSERT INTO student_accounts (id, class_id, local_student_id, username, password_hash, created_at, updated_at) VALUES ('s1','c1','x','abc3456','$argon2id$fake-hash',1,1)").run();
+    db.prepare("INSERT INTO users (id, created_at, updated_at) VALUES ('u1',1,1)").run();
+    db.prepare("INSERT INTO password_credentials (user_id, username, password_hash, issued_by_class_id, created_at, updated_at) VALUES ('u1','abc3456','$argon2id$fake-hash','c1',1,1)").run();
+    db.prepare("INSERT INTO student_accounts (id, class_id, user_id, local_student_id, created_at, updated_at) VALUES ('s1','c1','u1','x',1,1)").run();
     db.prepare("INSERT INTO student_projections (class_id, local_student_id, data, version) VALUES ('c1','x','{\"name\":\"測試合成學生\"}',1)").run();
     return db;
 };
@@ -35,7 +37,7 @@ test('backup is a consistent encrypted snapshot (no plaintext names or hashes); 
         const chk = restore({ file: r.file, target, key });
         assert.deepEqual([chk.ok, chk.version, chk.accounts], [true, SCHEMA_VERSION, 1]);
         const back = openDb(target);
-        assert.equal(back.prepare('SELECT username FROM student_accounts').get().username, 'abc3456');
+        assert.equal(back.prepare('SELECT username FROM password_credentials').get().username, 'abc3456');
         back.close();
         assert.throws(() => restore({ file: r.file, target, key }), /已存在/, 'refuses to overwrite without --force');
     } finally { try { rmSync(dir, { recursive: true, force: true }); } catch { /* Windows 檔案鎖：暫存資料夾留給系統清理 */ } }

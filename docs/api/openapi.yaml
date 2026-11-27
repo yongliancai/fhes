@@ -112,9 +112,9 @@ paths:
       requestBody: { required: true, content: { application/json: { schema: { type: object, additionalProperties: false, required: [students], properties: { students: { type: array, maxItems: 80, items: { type: object, additionalProperties: false, required: [localStudentId], properties: { localStudentId: { type: string } } } } } } } } }
       responses: { "200": { description: "{ created: [{accountId, localStudentId, username, initialPassword}], existing: [localStudentId] }" }, "404": { description: 不是你的班級 }, "409": { description: 超過每班 80 個帳號 } }
   /api/teacher/classes/{classKey}/accounts/{accountId}/reset:
-    post: { security: [{ teacherBearer: [] }], summary: 重設密碼（新初始密碼、須再改密碼、該生所有 Session 失效）, responses: { "200": { description: "{ accountId, username, initialPassword }" }, "404": { description: 不是你的班級或帳號 } } }
+    post: { security: [{ teacherBearer: [] }], summary: "重設密碼（新初始密碼、須再改密碼、該生所有 Session 失效）。v3：只能重設本班發的帳密，而且該生不能在別位老師的班上（D3）", responses: { "200": { description: "{ accountId, username, initialPassword }" }, "403": { description: "not_issuer（不是本班發的帳密）或 other_teacher（也在別位老師的班上）" }, "404": { description: 不是你的班級或帳號 } } }
   /api/teacher/classes/{classKey}/accounts/{accountId}/disable:
-    post: { security: [{ teacherBearer: [] }], summary: 停用（立即登出）, responses: { "200": { description: OK }, "404": { description: 不是你的班級或帳號 } } }
+    post: { security: [{ teacherBearer: [] }], summary: "停用本班的成員資格（只影響本班；如果這是他唯一有效的班級，已登入的裝置立即登出）", responses: { "200": { description: OK }, "404": { description: 不是你的班級或帳號 } } }
   /api/teacher/classes/{classKey}/accounts/{accountId}/enable:
     post: { security: [{ teacherBearer: [] }], summary: 重新啟用, responses: { "200": { description: OK }, "404": { description: 不是你的班級或帳號 } } }
   /api/teacher/classes/{classKey}/accounts/{accountId}/helper:
@@ -156,9 +156,11 @@ paths:
       requestBody: { required: true, content: { application/json: { schema: { type: object, additionalProperties: false, required: [currentPassword, newPassword], properties: { currentPassword: { type: string }, newPassword: { type: string } } } } } }
       responses: { "200": { description: "{ ok, csrf }" }, "400": { description: 目前密碼錯誤或新密碼太弱 } }
   /api/student/me:
-    get: { security: [{ studentCookie: [] }], summary: "目前登入狀態（含 CSRF token）", responses: { "200": { description: "{ username, mustChangePassword, csrf, helper }" }, "401": { description: 未登入或已失效 } } }
+    get: { security: [{ studentCookie: [] }], summary: "目前登入狀態（含 CSRF token）與自己有效的班級", description: "classes[].id 是「我在這一班的代號」（自己的成員 id），用在 /api/student/classes/{memberId}/…；學生端永遠不會收到教師端的 classKey。helper 只在只有一個班級時有意義（舊版學生頁）。", responses: { "200": { description: "{ username, mustChangePassword, csrf, helper, classes: [{ id, className, helper }] }" }, "401": { description: 未登入或已失效 } } }
+  /api/student/classes/{memberId}/dashboard:
+    get: { security: [{ studentCookie: [] }], summary: "多班級（v3）：與 /api/student/dashboard 相同，但指定班級", description: "memberId 必須是登入者自己、仍然有效的成員資格，否則一律 404（不透露是否存在）。同樣的 /classes/{memberId}/ 前綴也適用於 homework、zoo、care、helper、helper/register，內容與對應的舊路徑相同。", parameters: [{ name: memberId, in: path, required: true, schema: { type: string, pattern: "^s_[A-Za-z0-9_-]{8,64}$" } }], responses: { "200": { description: 同舊路徑 }, "404": { description: 不是你的班級 } } }
   /api/student/dashboard:
-    get: { security: [{ studentCookie: [] }], summary: 我的成長, responses: { "200": { description: "{ published, className, publishedAt, me: {name, seat, score}, group: {groupId, name, xp, animals}, homeworkSummary }" }, "403": { description: 需要先改密碼 } } }
+    get: { security: [{ studentCookie: [] }], summary: "我的成長（舊路徑：只有一個有效班級時可用）", responses: { "200": { description: "{ published, className, publishedAt, me: {name, seat, score}, group: {groupId, name, xp, animals}, homeworkSummary }" }, "403": { description: 需要先改密碼 }, "404": { description: "no_class：沒有任何有效班級" }, "409": { description: "choose_class：在好幾個班級，請改用 /api/student/classes/{memberId}/…（舊路徑 homework、zoo、care、helper 也一樣）" } } }
   /api/student/homework:
     get: { security: [{ studentCookie: [] }], summary: 我的作業（最近 60 天）, responses: { "200": { description: "{ published, publishedAt, homework: Homework[] }" } } }
   /api/student/zoo:
@@ -167,7 +169,7 @@ paths:
     post:
       security: [{ studentCookie: [], csrf: [] }]
       summary: 餵食或陪伴所屬小組的動物
-      description: "每生每日（Asia/Taipei）最多 3 次有效，跨小組合計；超過回 counted=false（只播動畫）。同一 idempotencyKey 只算一次。"
+      description: "每位學生在每個班級每日（Asia/Taipei）最多 3 次有效（同班跨小組合計；不同班級各自計算）；超過回 counted=false（只播動畫）。同一 idempotencyKey 只算一次。"
       requestBody: { required: true, content: { application/json: { schema: { type: object, additionalProperties: false, required: [itemId, action, idempotencyKey], properties: { itemId: { type: string }, action: { enum: [feed, pet] }, idempotencyKey: { type: string, pattern: "^[A-Za-z0-9_-]{8,64}$" } } } } } }
       responses:
         "200": { description: "{ counted, replay, myToday, animal, care }" }

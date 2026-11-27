@@ -2,7 +2,7 @@
 // 後端是真正的 server/src/app.mjs（記憶體資料庫），Google 公開金鑰換成本次測試的金鑰；全部合成資料。
 import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
-import { setup, teardown, openApp, createClass, shot, overflow, axe, OUT } from './helpers.mjs';
+import { setup, teardown, openApp, createClass, shot, overflow, axe, OUT, ENGINE, testTls } from './helpers.mjs';
 import { buildApp } from '../server/src/app.mjs';
 import { openDb } from '../server/src/db.mjs';
 import { GOOGLE_CLIENT_ID } from '../src/config.js';
@@ -12,6 +12,7 @@ import { buildFixture, classData } from '../tests/helpers/v62-fixture.mjs';
 import { ROOT } from './helpers.mjs';
 import { join } from 'node:path';
 import { webcrypto } from 'node:crypto';
+import { request as httpsRequest } from 'node:https';
 
 let api = null;
 const startApi = async (teacherOrigin) => {
@@ -19,9 +20,10 @@ const startApi = async (teacherOrigin) => {
     const { keys } = await setup();
     const config = { clientId: GOOGLE_CLIENT_ID, teacherOrigins: [teacherOrigin], teacherAllow: ['@example.test'], studentOrigins: [], ipSalt: 'e2e-salt-0123456789', cookieSecure: true, staticRoot: ROOT };
     const db = openDb(':memory:');
-    const app = buildApp({ db, config, jwks: async () => keys.jwks });
+    // HTTPS（自簽）：和正式環境一樣用 __Host- + Secure Cookie；WebKit 在 http 不保存 Secure Cookie
+    const app = buildApp({ db, config, jwks: async () => keys.jwks, https: testTls() });
     await app.listen({ host: '127.0.0.1', port: 0 });
-    const url = `http://127.0.0.1:${app.server.address().port}`;
+    const url = `https://127.0.0.1:${app.server.address().port}`;
     config.studentOrigins.push(url);
     api = { app, db, url, keys };
     return api;
@@ -33,10 +35,13 @@ const seedViaApi = async (A, mutate = (fx) => fx) => {
     const priv = await webcrypto.subtle.importKey('jwk', A.keys.goodPrivateJwk, { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' }, false, ['sign']);
     const nonce = `e2e-nonce-${Date.now()}`;
     const credential = await signJwt(priv, basePayload({ account: TEACHER_B, clientId: GOOGLE_CLIENT_ID, nonce }));
-    const call = async (method, path, body, token) => {
-        const r = await fetch(A.url + path, { method, headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}) }, body: body ? JSON.stringify(body) : undefined });
-        return { status: r.status, json: await r.json() };
-    };
+    // Node 端直接呼叫測試 API：只信任這次產生的自簽憑證（不關閉憑證檢查）
+    const call = (method, path, body, token) => new Promise((ok, bad) => {
+        const req = httpsRequest(A.url + path, { method, ca: testTls().cert, headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}) } }, (res) => {
+            let data = ''; res.setEncoding('utf8'); res.on('data', (c) => { data += c; }); res.on('end', () => ok({ status: res.statusCode, json: JSON.parse(data || '{}') }));
+        });
+        req.on('error', bad); if (body) req.write(JSON.stringify(body)); req.end();
+    });
     const { json: { token } } = await call('POST', '/api/teacher/session', { credential, nonce });
     const fx = mutate(buildFixture());
     const { json: { classKey } } = await call('POST', '/api/teacher/classes', { localClassId: `cls-a-${Date.now()}`, name: '合成甲班' }, token);
@@ -50,14 +55,24 @@ const seedViaApi = async (A, mutate = (fx) => fx) => {
 /** 學生端：獨立的瀏覽器 context（不同的人、不同的裝置） */
 const openStudent = async (A, { viewport = { width: 390, height: 844 }, bypassCSP = false } = {}) => {
     const { browser } = await setup();
-    const context = await browser.newContext({ viewport, locale: 'zh-TW', timezoneId: 'Asia/Taipei', bypassCSP, isMobile: viewport.width < 600, hasTouch: viewport.width < 600 });
+    // Firefox 沒有手機模擬（isMobile 會直接丟錯）：一樣用手機尺寸的視窗檢查版面，只是不開 isMobile
+    const mobile = viewport.width < 600;
+    const context = await browser.newContext({ ignoreHTTPSErrors: true, viewport, locale: 'zh-TW', timezoneId: 'Asia/Taipei', bypassCSP, hasTouch: mobile, ...(ENGINE === 'firefox' ? {} : { isMobile: mobile }) });
     await context.route(/^https?:\/\/(?!127\.0\.0\.1)/, r => r.abort());
     const page = await context.newPage();
     const errors = [];
+    // WebKit：Playwright 截圖時會注入一段 <style>，被頁面的嚴格 CSP 擋下並印出「Refused to apply a stylesheet」。
+    // 那不是 App 的行為：只在截圖進行中、只在 WebKit、只略過這一句；其他任何錯誤（包括截圖以外的 CSP 違規）照樣算失敗。
+    let shooting = false;
     page.on('pageerror', e => errors.push(`pageerror: ${e.message}`));
-    page.on('console', m => { if (m.type() === 'error') errors.push(`console: ${m.text()}`); });
+    page.on('console', m => {
+        if (m.type() !== 'error') return;
+        if (shooting && ENGINE === 'webkit' && /^Refused to apply a stylesheet/.test(m.text())) return;
+        errors.push(`console: ${m.text()}`);
+    });
+    const snap = async (name) => { shooting = true; try { await shot(page, name); await page.waitForTimeout(100); } finally { shooting = false; } };
     await page.goto(`${A.url}/student.html`);
-    return { page, context, errors };
+    return { page, context, errors, snap };
 };
 const studentLogin = async (page, username, password) => {
     await page.fill('#stu-user', username); await page.fill('#stu-pass', password);
@@ -97,7 +112,9 @@ test('teacher: connect, issue accounts (shown once), publish; student: first log
 
     const S = await openStudent(A);
     await studentLogin(S.page, username1, password1);
+    const pwResponse = S.page.waitForResponse(r => r.url().endsWith('/api/student/password'));
     await changePassword(S.page, password1, 'Moon-Garden-77');
+    const setCookie = (await (await pwResponse).allHeaders())['set-cookie'] || '';
     await S.page.waitForSelector('.stu-stats');
     assert.equal(await S.page.textContent('h2'), '1號，你好！');
     assert.deepEqual(await S.page.$$eval('.stu-stat-num', n => n.map(x => x.textContent)), ['0', '0']);
@@ -106,8 +123,13 @@ test('teacher: connect, issue accounts (shown once), publish; student: first log
     assert.deepEqual(storage, { ls: 0, ss: 0, ck: '', idb: 0 });
     const cookies = await S.context.cookies();
     assert.equal(cookies.length, 1); assert.equal(cookies[0].name, '__Host-fhes_sid');
-    assert.ok(cookies[0].httpOnly && cookies[0].secure && cookies[0].sameSite === 'Strict');
-    await shot(S.page, 'v62-student-growth-mobile');
+    assert.ok(cookies[0].httpOnly && cookies[0].secure, JSON.stringify({ ...cookies[0], value: '(hidden)' }));
+    // 伺服器送出的 Cookie 一定是 SameSite=Strict（三個瀏覽器都檢查回應標頭）
+    assert.match(setCookie, /^__Host-fhes_sid=[^;]+;.*SameSite=Strict/i, 'Set-Cookie has SameSite=Strict');
+    assert.match(setCookie, /HttpOnly/i); assert.match(setCookie, /Secure/i); assert.match(setCookie, /Path=\//i); assert.doesNotMatch(setCookie, /Domain=/i);
+    // Cookie 儲存區回報的 SameSite：Playwright WebKit（2026-11-27 在 Windows 確認）把收到的 Strict 回報成 "None"；上面已用回應標頭驗證，其他瀏覽器另外再查儲存區
+    if (ENGINE !== 'webkit') assert.equal(cookies[0].sameSite, 'Strict');
+    await S.snap('v62-student-growth-mobile');
     // 老師停用 → 學生下一次操作就回到登入畫面
     await page.click('#student-system-btn');
     const row = page.locator('.stu-table tbody tr').first();
@@ -132,8 +154,14 @@ test('student zoo: care is decided by the server (3 per day), names with HTML st
     await S.page.waitForSelector('.stu-stats');
     assert.equal(await S.page.textContent('h2'), `${evil}，你好！`, 'name rendered as text');
     assert.deepEqual(await S.page.$$eval('.stu-stat-num', n => n.map(x => x.textContent)), ['3', '5']);
+    // BUG-031：很長、沒有空白的姓名不能把手機頁面撐寬（CI 的 Linux 字型在 390px 就超出；這裡用 320px 在每個平台都抓得到）
+    assert.deepEqual(await overflow(S.page), [], 'growth page fits at 390px');
+    await S.page.setViewportSize({ width: 320, height: 700 });
+    assert.deepEqual(await overflow(S.page), [], 'growth page fits at 320px');
     await S.page.click('.stu-tab[data-tab="homework"]');
     await S.page.waitForSelector('.stu-hw');
+    assert.deepEqual(await overflow(S.page), [], 'homework page fits at 320px');
+    await S.page.setViewportSize({ width: 390, height: 844 });
     assert.ok(await S.page.isVisible('.stu-badge[data-state="submitted"]:text("繳交")'));
     assert.ok(await S.page.isVisible('.stu-badge[data-state="needs"]:text("未訂正")'), 'v6.2 four simple states');
     await S.page.click('.stu-chip:text("未訂正")');
@@ -155,7 +183,7 @@ test('student zoo: care is decided by the server (3 per day), names with HTML st
     assert.ok(await S.page.isVisible('text=小組累計照顧 3 次'));
     assert.equal(await S.page.evaluate(() => window.__pwned), undefined, 'no injected script ran');
     assert.deepEqual(await overflow(S.page), []);
-    await shot(S.page, 'v62-student-zoo-mobile');
+    await S.snap('v62-student-zoo-mobile');
     const cspViolations = S.errors.filter(e => /Content Security Policy|Refused to/.test(e));
     assert.deepEqual(cspViolations, [], 'the page works under the strict CSP');
     // 第一次開頁面時 /api/student/me 回 401（還沒登入）是預期的；瀏覽器會把它印成 console 錯誤。其他錯誤一律不允許。
@@ -205,7 +233,7 @@ test('小老師: teacher marks a helper, the helper registers a classmate on a p
     await S.page.locator('.stu-reg').nth(2).locator('button[data-state="needs"]').click();
     await S.page.waitForSelector('.stu-reg >> nth=2 >> .stu-badge:text("未訂正")');
     assert.deepEqual(await overflow(S.page), []);
-    await shot(S.page, 'v62-helper-register-mobile');
+    await S.snap('v62-helper-register-mobile');
     const text = await S.page.textContent('#stu-body');
     assert.ok(!/分數|愛心|XP/.test(text), 'the helper screen shows no scores or hearts');
     assert.equal(A.db.prepare('SELECT COUNT(*) n FROM hw_registrations').get().n, 2);
@@ -259,7 +287,7 @@ test('student page accessibility (axe) on desktop and login screen', async () =>
     await S.page.click('.stu-tab[data-tab="zoo"]');
     await S.page.waitForSelector('.stu-scene');
     assert.deepEqual(await axe(S.page), [], 'zoo');
-    await shot(S.page, 'v62-student-zoo-desktop');
+    await S.snap('v62-student-zoo-desktop');
     await S.context.close();
     assert.ok(OUT && join);
 });

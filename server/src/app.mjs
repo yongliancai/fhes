@@ -36,13 +36,19 @@ const CSP = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 's
 /** 沒有參數的 querystring：多帶任何欄位（例如 ?studentId=）都回 400 */
 const NO_QUERY = { type: 'object', additionalProperties: false, properties: {} };
 const KEY = { type: 'string', pattern: '^[A-Za-z0-9_-]{8,64}$' };
+/**
+ * 學生端路徑上的「我在這一班的代號」（v3 多班級）＝自己的成員 id。只是「選哪一班」，權限一律由後端核對這個成員屬於登入的人。
+ * 刻意不用教師端的 classKey：學生端的回應從來不含 classKey（縱深防禦，見 server-student 測試）。
+ */
+const MEMBER_PARAMS = { type: 'object', additionalProperties: false, required: ['memberId'], properties: { memberId: { type: 'string', pattern: '^s_[A-Za-z0-9_-]{8,64}$' } } };
 
 /**
  * @param {{ db, config: { clientId, teacherOrigins: string[], studentOrigins: string[], cookieSecure?: boolean, ipSalt: string, staticRoot?: string, logger?: boolean },
- *           jwks: () => Promise<{keys: object[]}>, now?: () => number }} opts
+ *           jwks: () => Promise<{keys: object[]}>, now?: () => number, https?: { key, cert } }} opts
  *   jwks：取得 Google 公開金鑰（正式環境＝Google 的 JWKS；測試＝測試金鑰）。驗證本身永遠執行。
+ *   https：選用。正式環境由反向代理處理 TLS（不用）；E2E 用自簽憑證，讓 Secure Cookie 在每個瀏覽器都有效。
  */
-export const buildApp = ({ db, config, jwks, now = () => Date.now() }) => {
+export const buildApp = ({ db, config, jwks, now = () => Date.now(), https }) => {
     if (!config?.clientId) throw new Error('缺少 Google OAuth Client ID');
     if (!config.ipSalt || config.ipSalt.length < 16) throw new Error('ipSalt 至少 16 個字元');
     const cookieSecure = config.cookieSecure !== false;
@@ -51,6 +57,7 @@ export const buildApp = ({ db, config, jwks, now = () => Date.now() }) => {
         logger: config.logger ?? false, bodyLimit: LIMITS.defaultBody, trustProxy: config.trustProxy ?? false,
         ajv: { customOptions: { removeAdditional: false, coerceTypes: false, useDefaults: false } },
         genReqId: () => randomUUID(),
+        ...(https ? { https } : {}),
     });
     app.register(cookie);
 
@@ -149,6 +156,8 @@ export const buildApp = ({ db, config, jwks, now = () => Date.now() }) => {
         const m = /^Bearer ([A-Za-z0-9_-]{20,100})$/.exec(req.headers.authorization || '');
         const s = m && liveSession(m[1], 'teacher');
         if (!s) return fail(reply, 401, 'unauthenticated', '請重新登入');
+        // 停權立即生效（不必等工作階段過期）
+        if (db.prepare('SELECT status FROM teachers WHERE id = ?').get(s.subject_id)?.status !== 'active') { revokeSession(m[1]); return fail(reply, 401, 'unauthenticated', '請重新登入'); }
         req.teacherId = s.subject_id; req.teacherToken = m[1];
     };
     /** 班級必須屬於這位教師；否則一律 404（不透露是否存在） */
@@ -160,12 +169,25 @@ export const buildApp = ({ db, config, jwks, now = () => Date.now() }) => {
 
     // ------------------------------------------------------------ 學生：同源 Cookie + CSRF + Origin
     const studentOriginOk = (o) => (config.studentOrigins || []).includes(o);
+    /** v3：一個 user 可以是多個班級的成員；這裡只列「有效」的成員資格（班級也要是有效的） */
+    const activeMembers = (userId) => db.prepare(`SELECT m.*, c.name AS class_name FROM student_accounts m JOIN classes c ON c.id = m.class_id
+        WHERE m.user_id = ? AND m.status = 'active' AND c.status = 'active' ORDER BY m.created_at, m.id`).all(userId);
+    /**
+     * 能不能登入／繼續使用：帳號必須啟用；如果這個人有成員資格，至少要有一個仍然有效。
+     * （和 v6.2 相同：唯一的班級被老師停用 → 不能登入、已登入的立刻失效。沒有任何成員資格的人留給 P3 的「加入班級」）
+     */
+    const canUse = (u) => {
+        if (!u || u.status !== 'active') return false;
+        const r = db.prepare("SELECT COUNT(*) AS total, COALESCE(SUM(m.status = 'active' AND c.status = 'active'), 0) AS live FROM student_accounts m JOIN classes c ON c.id = m.class_id WHERE m.user_id = ?").get(u.id);
+        return r.total === 0 || r.live > 0;
+    };
     const loadStudent = (req) => {
         const s = liveSession(req.cookies?.[COOKIE], 'student');
         if (!s) return null;
-        const a = db.prepare('SELECT * FROM student_accounts WHERE id = ?').get(s.subject_id);
-        if (!a || a.status !== 'active') { revokeAllOf('student', s.subject_id); return null; }
-        return { session: s, account: a };
+        const u = db.prepare('SELECT * FROM users WHERE id = ?').get(s.subject_id);
+        if (!canUse(u)) { revokeAllOf('student', s.subject_id); return null; }
+        const cred = db.prepare('SELECT * FROM password_credentials WHERE user_id = ?').get(u.id) || null;
+        return { session: s, user: u, cred };
     };
     const studentGuard = ({ write = false, allowPwChange = false } = {}) => async (req, reply) => {
         if (write && !studentOriginOk(req.headers.origin)) return fail(reply, 403, 'origin', '不允許的來源');
@@ -174,6 +196,31 @@ export const buildApp = ({ db, config, jwks, now = () => Date.now() }) => {
         if (write && !safeEq(req.headers['x-fhes-csrf'], ctx.session.csrf)) return fail(reply, 403, 'csrf', '請重新整理頁面後再試');
         if (ctx.session.scope !== 'full' && !allowPwChange) return fail(reply, 403, 'password_change_required', '請先設定新密碼');
         req.student = ctx;
+    };
+    /**
+     * 決定這個請求是「哪一班的哪一位學生」（ADR-027）：
+     * - 路徑有 :memberId → 必須是這個 user 自己、而且仍然有效的成員資格；否則一律 404（不透露是否存在）。
+     * - 舊路徑（沒有 classKey）→ 只有一個有效班級時照舊；多個班級要求先選班（409），不會默默用第一班。
+     * 學生端永遠不接受前端送來的 studentId／localStudentId／groupId。
+     */
+    const withMember = async (req, reply) => {
+        const userId = req.student.user.id;
+        if (req.params?.memberId !== undefined) {
+            const m = db.prepare(`SELECT m.* FROM student_accounts m JOIN classes c ON c.id = m.class_id
+                WHERE m.id = ? AND m.user_id = ? AND m.status = 'active' AND c.status = 'active'`).get(req.params.memberId, userId);
+            if (!m) return fail(reply, 404, 'not_found', '找不到這個班級');
+            req.student.account = m; return;
+        }
+        const list = activeMembers(userId);
+        if (list.length === 1) { req.student.account = list[0]; return; }
+        if (!list.length) return fail(reply, 404, 'no_class', '你還沒有加入任何班級');
+        return fail(reply, 409, 'choose_class', '你在好幾個班級，請先選擇班級');
+    };
+    /** 同一個處理函式同時掛在舊路徑與 /api/student/classes/:memberId/… */
+    const studentRoute = (method, sub, { write = false, schema = {} }, handler) => {
+        const guard = studentGuard({ write });
+        app.route({ method, url: `/api/student/${sub}`, preHandler: [guard, withMember], schema, handler });
+        app.route({ method, url: `/api/student/classes/:memberId/${sub}`, preHandler: [guard, withMember], schema: { ...schema, params: MEMBER_PARAMS }, handler });
     };
     const myProjection = (a) => db.prepare('SELECT * FROM student_projections WHERE class_id = ? AND local_student_id = ?').get(a.class_id, a.local_student_id);
 
@@ -207,7 +254,24 @@ export const buildApp = ({ db, config, jwks, now = () => Date.now() }) => {
         catch { ipFail(ipKey); return fail(reply, 401, 'replayed', '這個登入憑證已經用過，請重新登入'); }
         const accountHash = sha256(`https://accounts.google.com|${id.sub}`);
         let t = db.prepare('SELECT * FROM teachers WHERE account_hash = ?').get(accountHash);
-        if (!t) { t = { id: `t_${newToken().slice(0, 16)}` }; db.prepare('INSERT INTO teachers (id, account_hash, created_at) VALUES (?,?,?)').run(t.id, accountHash, now()); }
+        if (!t) {
+            // v3：老師也是平台 user（同一個 Google 身分只會有一個 user；不依 Email 合併）
+            t = { id: `t_${newToken().slice(0, 16)}`, status: 'active' };
+            const tt = now();
+            db.transaction(() => {
+                const ident = db.prepare("SELECT user_id FROM auth_identities WHERE provider = 'google' AND subject_hash = ?").get(accountHash);
+                const userId = ident?.user_id || `u_${newToken().slice(0, 20)}`;
+                if (!ident) {
+                    db.prepare("INSERT INTO users (id, status, created_at, updated_at) VALUES (?, 'active', ?, ?)").run(userId, tt, tt);
+                    db.prepare("INSERT INTO auth_identities (id, user_id, provider, subject_hash, created_at) VALUES (?, ?, 'google', ?, ?)").run(`ai_${newToken().slice(0, 20)}`, userId, accountHash, tt);
+                }
+                db.prepare('INSERT INTO teachers (id, account_hash, created_at, user_id) VALUES (?,?,?,?)').run(t.id, accountHash, tt, userId);
+            }).immediate();
+        }
+        if (t.status === 'suspended') {
+            audit(req, 'teacher', t.id, 'teacher.session.suspended');
+            return fail(reply, 403, 'suspended', '這個老師帳號已被停用，請聯絡管理者');
+        }
         const s = createSession('teacher', t.id);
         audit(req, 'teacher', t.id, 'teacher.session');
         return json(reply, 200, { token: s.token, expiresAt: s.expiresAt });
@@ -234,9 +298,11 @@ export const buildApp = ({ db, config, jwks, now = () => Date.now() }) => {
 
     const accountView = (a) => ({ accountId: a.id, localStudentId: a.local_student_id, username: a.username, status: a.status, mustChangePassword: !!a.must_change, helper: !!a.is_helper, lastLoginAt: a.last_login_at, createdAt: a.created_at });
 
+    /** 班級成員＋（如果有）老師發的帳密的帳號名稱。移除／退出的成員不列出 */
+    const MEMBER_SELECT = `SELECT m.*, p.username, p.must_change, p.issued_by_class_id FROM student_accounts m LEFT JOIN password_credentials p ON p.user_id = m.user_id`;
     app.get('/api/teacher/classes/:classKey/accounts', { preHandler: requireTeacher, schema: { querystring: NO_QUERY } }, async (req, reply) => {
         const c = ownClass(req, reply); if (!c) return;
-        const rows = db.prepare('SELECT * FROM student_accounts WHERE class_id = ? ORDER BY created_at, username').all(c.id);
+        const rows = db.prepare(`${MEMBER_SELECT} WHERE m.class_id = ? AND m.status IN ('active', 'disabled') ORDER BY m.created_at, p.username`).all(c.id);
         return json(reply, 200, { accounts: rows.map(accountView), publishedAt: c.published_at, version: c.projection_version });
     });
 
@@ -246,19 +312,26 @@ export const buildApp = ({ db, config, jwks, now = () => Date.now() }) => {
     }, async (req, reply) => {
         const c = ownClass(req, reply); if (!c) return;
         const created = []; const existing = [];
-        const have = db.prepare('SELECT COUNT(*) n FROM student_accounts WHERE class_id = ?').get(c.id).n;
-        const fresh = new Set(req.body.students.map(x => x.localStudentId).filter(id => !db.prepare('SELECT 1 FROM student_accounts WHERE class_id = ? AND local_student_id = ?').get(c.id, id)));
+        const bound = (id) => db.prepare("SELECT 1 FROM student_accounts WHERE class_id = ? AND local_student_id = ? AND status IN ('active', 'disabled')").get(c.id, id);
+        const have = db.prepare("SELECT COUNT(*) n FROM student_accounts WHERE class_id = ? AND status IN ('active', 'disabled')").get(c.id).n;
+        const fresh = new Set(req.body.students.map(x => x.localStudentId).filter(id => !bound(id)));
         if (have + fresh.size > LIMITS.accountsPerClass) return fail(reply, 409, 'quota', `每個班級最多 ${LIMITS.accountsPerClass} 個學生帳號`);
         for (const { localStudentId } of req.body.students) {
-            if (db.prepare('SELECT 1 FROM student_accounts WHERE class_id = ? AND local_student_id = ?').get(c.id, localStudentId)) { existing.push(localStudentId); continue; }
+            if (bound(localStudentId)) { existing.push(localStudentId); continue; }
             const initialPassword = generateInitialPassword();
             const hash = await hashPassword(initialPassword);
             let username;
-            for (let i = 0; i < 20; i++) { const u = generateUsername(); if (!db.prepare('SELECT 1 FROM student_accounts WHERE username = ?').get(u)) { username = u; break; } }
+            for (let i = 0; i < 20; i++) { const u = generateUsername(); if (!db.prepare('SELECT 1 FROM password_credentials WHERE username = ?').get(u)) { username = u; break; } }
             if (!username) return fail(reply, 503, 'busy', '無法產生帳號，請再試一次');
-            const id = `s_${newToken().slice(0, 20)}`; const t = now();
-            try { db.prepare('INSERT INTO student_accounts (id, class_id, local_student_id, username, password_hash, must_change, status, created_at, updated_at) VALUES (?,?,?,?,?,1,\'active\',?,?)').run(id, c.id, localStudentId, username, hash, t, t); }
-            catch { existing.push(localStudentId); continue; }                     // 同時建立：唯一鍵擋下第二筆
+            const id = `s_${newToken().slice(0, 20)}`; const userId = `u_${newToken().slice(0, 20)}`; const t = now();
+            // 老師發的帳號＝新的平台 user＋本班發的帳密＋本班成員資格（同一個交易）
+            try {
+                db.transaction(() => {
+                    db.prepare("INSERT INTO users (id, status, created_at, updated_at) VALUES (?, 'active', ?, ?)").run(userId, t, t);
+                    db.prepare('INSERT INTO password_credentials (user_id, username, password_hash, must_change, issued_by_class_id, created_at, updated_at) VALUES (?,?,?,1,?,?,?)').run(userId, username, hash, c.id, t, t);
+                    db.prepare("INSERT INTO student_accounts (id, class_id, user_id, local_student_id, status, is_helper, joined_via, created_at, updated_at) VALUES (?,?,?,?,'active',0,'teacher',?,?)").run(id, c.id, userId, localStudentId, t, t);
+                }).immediate();
+            } catch { existing.push(localStudentId); continue; }                     // 同時建立：唯一鍵擋下第二筆
             created.push({ accountId: id, localStudentId, username, initialPassword });
         }
         audit(req, 'teacher', req.teacherId, 'account.create', c.id, { count: created.length });
@@ -267,16 +340,25 @@ export const buildApp = ({ db, config, jwks, now = () => Date.now() }) => {
 
     const teacherAccount = (req, reply) => {
         const c = ownClass(req, reply); if (!c) return null;
-        const a = db.prepare('SELECT * FROM student_accounts WHERE id = ? AND class_id = ?').get(req.params.accountId, c.id);
+        const a = db.prepare(`${MEMBER_SELECT} WHERE m.id = ? AND m.class_id = ? AND m.status IN ('active', 'disabled')`).get(req.params.accountId, c.id);
         if (!a) { fail(reply, 404, 'not_found', '找不到這個帳號'); return null; }
         return a;
     };
+    /** 這個 user 是否也在「別位老師」的班上（有效或停用中）：是的話，本班老師不能重設他的密碼（D3，避免接管別班） */
+    const inOtherTeachersClass = (userId, teacherId) => db.prepare(`SELECT COUNT(*) AS n FROM student_accounts m JOIN classes c ON c.id = m.class_id
+        WHERE m.user_id = ? AND c.teacher_id <> ? AND m.status IN ('active', 'disabled')`).get(userId, teacherId).n > 0;
+    /** 除了這一班，這個 user 還有沒有其他有效的成員資格 */
+    const otherLiveMemberships = (userId, memberId) => db.prepare(`SELECT COUNT(*) AS n FROM student_accounts m JOIN classes c ON c.id = m.class_id
+        WHERE m.user_id = ? AND m.id <> ? AND m.status = 'active' AND c.status = 'active'`).get(userId, memberId).n;
     const NO_BODY = { type: 'object', additionalProperties: false, properties: {} };
     app.post('/api/teacher/classes/:classKey/accounts/:accountId/reset', { preHandler: requireTeacher, schema: { body: NO_BODY } }, async (req, reply) => {
         const a = teacherAccount(req, reply); if (!a) return;
+        // 只能重設「本班發的」帳密，而且這個人不能在別位老師的班上（否則等於可以登入看別班的資料）
+        if (!a.username || a.issued_by_class_id !== a.class_id) return fail(reply, 403, 'not_issuer', '這個帳號不是本班發的，不能在這裡重設密碼');
+        if (inOtherTeachersClass(a.user_id, req.teacherId)) return fail(reply, 403, 'other_teacher', '這位學生也在其他老師的班級，不能由老師重設密碼');
         const initialPassword = generateInitialPassword();
-        db.prepare('UPDATE student_accounts SET password_hash = ?, must_change = 1, updated_at = ? WHERE id = ?').run(await hashPassword(initialPassword), now(), a.id);
-        revokeAllOf('student', a.id); rlReset(`user:${a.username}`);
+        db.prepare('UPDATE password_credentials SET password_hash = ?, must_change = 1, updated_at = ? WHERE user_id = ?').run(await hashPassword(initialPassword), now(), a.user_id);
+        revokeAllOf('student', a.user_id); rlReset(`user:${a.username}`);
         audit(req, 'teacher', req.teacherId, 'account.reset', a.id);
         return json(reply, 200, { accountId: a.id, username: a.username, initialPassword });
     });
@@ -284,7 +366,8 @@ export const buildApp = ({ db, config, jwks, now = () => Date.now() }) => {
         app.post(`/api/teacher/classes/:classKey/accounts/:accountId/${path}`, { preHandler: requireTeacher, schema: { body: NO_BODY } }, async (req, reply) => {
             const a = teacherAccount(req, reply); if (!a) return;
             db.prepare('UPDATE student_accounts SET status = ?, updated_at = ? WHERE id = ?').run(status, now(), a.id);
-            if (status === 'disabled') revokeAllOf('student', a.id);
+            // 停用只影響本班；如果這是他唯一有效的班級，已登入的裝置立刻登出（和 v6.2 相同）
+            if (status === 'disabled' && !otherLiveMemberships(a.user_id, a.id)) revokeAllOf('student', a.user_id);
             audit(req, 'teacher', req.teacherId, `account.${path}`, a.id);
             return json(reply, 200, accountView({ ...a, status }));
         });
@@ -379,22 +462,23 @@ export const buildApp = ({ db, config, jwks, now = () => Date.now() }) => {
         const userKey = `user:${username}`;
         const locked = userLockedFor(userKey);
         if (locked > 0) { reply.header('Retry-After', String(Math.ceil(locked / 1000))); return fail(reply, 429, 'rate_limited', '嘗試太多次，請過幾分鐘再試'); }
-        const a = db.prepare('SELECT * FROM student_accounts WHERE username = ?').get(username);
+        const cred = db.prepare('SELECT * FROM password_credentials WHERE username = ?').get(username);
         // BUG-021：先記一次「嘗試」再做非同步的 Argon2 驗證；否則同時送出的大量請求都會在計數增加前通過檢查
         ipFail(ipKey); userFail(userKey);
-        const ok = a ? await verifyPassword(a.password_hash, req.body.password) : await dummyVerify(req.body.password);
-        if (!ok || a.status !== 'active') {
+        const ok = cred ? await verifyPassword(cred.password_hash, req.body.password) : await dummyVerify(req.body.password);
+        const u = cred ? db.prepare('SELECT * FROM users WHERE id = ?').get(cred.user_id) : null;
+        if (!ok || !canUse(u)) {
             audit(req, 'anonymous', null, 'student.login.fail');
             return fail(reply, 401, 'invalid_credentials', '帳號或密碼錯誤');
         }
         rlReset(userKey); ipUndo(ipKey);
         revokeSession(req.cookies?.[COOKIE]);                                    // 防 session 固定：登入一定換新的
-        const s = createSession('student', a.id, a.must_change ? 'pwchange' : 'full');
-        db.prepare('UPDATE student_accounts SET last_login_at = ? WHERE id = ?').run(now(), a.id);
+        const s = createSession('student', u.id, cred.must_change ? 'pwchange' : 'full');
+        db.prepare("UPDATE student_accounts SET last_login_at = ? WHERE user_id = ? AND status = 'active'").run(now(), u.id);
         db.prepare('DELETE FROM sessions WHERE expires_at < ? OR revoked_at < ?').run(now(), now() - 86400_000);
-        audit(req, 'student', a.id, 'student.login');
+        audit(req, 'student', u.id, 'student.login');
         setStudentCookie(reply, s.token);
-        return json(reply, 200, { mustChangePassword: !!a.must_change, csrf: s.csrf });
+        return json(reply, 200, { mustChangePassword: !!cred.must_change, csrf: s.csrf });
     });
 
     app.post('/api/student/logout', { preHandler: studentGuard({ write: true, allowPwChange: true }), schema: { body: NO_BODY } }, async (req, reply) => {
@@ -406,31 +490,36 @@ export const buildApp = ({ db, config, jwks, now = () => Date.now() }) => {
         preHandler: studentGuard({ write: true, allowPwChange: true }),
         schema: { body: { type: 'object', additionalProperties: false, required: ['currentPassword', 'newPassword'], properties: { currentPassword: { type: 'string', maxLength: 128 }, newPassword: { type: 'string', maxLength: 128 } } } },
     }, async (req, reply) => {
-        const { account: a } = req.student;
-        const userKey = `user:${a.username}`;
+        const { cred, user: u } = req.student;
+        if (!cred) return fail(reply, 400, 'no_password', '這個帳號沒有設定密碼');
+        const userKey = `user:${cred.username}`;
         if (userLockedFor(userKey) > 0) return fail(reply, 429, 'rate_limited', '嘗試太多次，請過幾分鐘再試');
         userFail(userKey);                                                       // 同上：先記再驗證
-        if (!await verifyPassword(a.password_hash, req.body.currentPassword)) return fail(reply, 400, 'wrong_password', '目前的密碼不正確');
+        if (!await verifyPassword(cred.password_hash, req.body.currentPassword)) return fail(reply, 400, 'wrong_password', '目前的密碼不正確');
         rlReset(userKey);
-        const problem = passwordProblem(req.body.newPassword, { username: a.username });
+        const problem = passwordProblem(req.body.newPassword, { username: cred.username });
         if (problem) return fail(reply, 400, 'weak_password', problem);
-        if (await verifyPassword(a.password_hash, req.body.newPassword)) return fail(reply, 400, 'weak_password', '新密碼不能和目前的一樣');
-        db.prepare('UPDATE student_accounts SET password_hash = ?, must_change = 0, updated_at = ? WHERE id = ?').run(await hashPassword(req.body.newPassword), now(), a.id);
-        revokeAllOf('student', a.id);                                           // 其他裝置上的舊 Session 全部失效
-        const s = createSession('student', a.id, 'full');
-        audit(req, 'student', a.id, 'student.password');
+        if (await verifyPassword(cred.password_hash, req.body.newPassword)) return fail(reply, 400, 'weak_password', '新密碼不能和目前的一樣');
+        db.prepare('UPDATE password_credentials SET password_hash = ?, must_change = 0, updated_at = ? WHERE user_id = ?').run(await hashPassword(req.body.newPassword), now(), u.id);
+        revokeAllOf('student', u.id);                                           // 其他裝置上的舊 Session 全部失效
+        const s = createSession('student', u.id, 'full');
+        audit(req, 'student', u.id, 'student.password');
         setStudentCookie(reply, s.token);
         return json(reply, 200, { ok: true, csrf: s.csrf });
     });
 
     app.get('/api/student/me', { preHandler: studentGuard({ allowPwChange: true }), schema: { querystring: NO_QUERY } }, async (req, reply) => {
-        const { account: a, session: s } = req.student;
-        return json(reply, 200, { username: a.username, mustChangePassword: s.scope !== 'full', csrf: s.csrf, helper: !!a.is_helper });
+        const { user: u, cred, session: s } = req.student;
+        const ms = s.scope === 'full' ? activeMembers(u.id) : [];
+        // classes：只有自己有效的班級（自己在該班的代號、班級名稱、是不是小老師）；沒有 classKey、名冊或其他成員的資料
+        // helper：舊版學生頁用（只有一個班級時才有意義）
+        return json(reply, 200, { username: cred?.username ?? null, mustChangePassword: s.scope !== 'full', csrf: s.csrf,
+            helper: ms.length === 1 && !!ms[0].is_helper, classes: ms.map(m => ({ id: m.id, className: m.class_name, helper: !!m.is_helper })) });
     });
 
     const classInfo = (a) => db.prepare('SELECT name, published_at, projection_version FROM classes WHERE id = ?').get(a.class_id);
 
-    app.get('/api/student/dashboard', { preHandler: studentGuard(), schema: { querystring: NO_QUERY } }, async (req, reply) => {
+    studentRoute('GET', 'dashboard', { schema: { querystring: NO_QUERY } }, async (req, reply) => {
         const { account: a } = req.student;
         const p = myProjection(a); const c = classInfo(a);
         if (!p) return json(reply, 200, { published: false, className: c.name });
@@ -449,7 +538,7 @@ export const buildApp = ({ db, config, jwks, now = () => Date.now() }) => {
         });
     });
 
-    app.get('/api/student/homework', { preHandler: studentGuard(), schema: { querystring: NO_QUERY } }, async (req, reply) => {
+    studentRoute('GET', 'homework', { schema: { querystring: NO_QUERY } }, async (req, reply) => {
         const { account: a } = req.student;
         const p = myProjection(a); const c = classInfo(a);
         if (!p) return json(reply, 200, { published: false, homework: [] });
@@ -472,10 +561,10 @@ export const buildApp = ({ db, config, jwks, now = () => Date.now() }) => {
             myToday: { used, limit: DAILY_CARE_LIMIT },
         };
     };
-    app.get('/api/student/zoo', { preHandler: studentGuard(), schema: { querystring: NO_QUERY } }, async (req, reply) => json(reply, 200, zooView(req.student.account)));
+    studentRoute('GET', 'zoo', { schema: { querystring: NO_QUERY } }, async (req, reply) => json(reply, 200, zooView(req.student.account)));
 
-    app.post('/api/student/care', {
-        preHandler: studentGuard({ write: true }),
+    studentRoute('POST', 'care', {
+        write: true,
         schema: { body: { type: 'object', additionalProperties: false, required: ['itemId', 'action', 'idempotencyKey'], properties: { itemId: { type: 'string', minLength: 1, maxLength: 64 }, action: { type: 'string', maxLength: 8 }, idempotencyKey: KEY } } },
     }, async (req, reply) => {
         const { account: a } = req.student;
@@ -538,12 +627,12 @@ export const buildApp = ({ db, config, jwks, now = () => Date.now() }) => {
             states,
         };
     };
-    app.get('/api/student/helper', { preHandler: studentGuard(), schema: { querystring: NO_QUERY } }, async (req, reply) => {
+    studentRoute('GET', 'helper', { schema: { querystring: NO_QUERY } }, async (req, reply) => {
         if (!helperGuard(req, reply)) return;
         return json(reply, 200, helperView(req.student.account));
     });
-    app.post('/api/student/helper/register', {
-        preHandler: studentGuard({ write: true }),
+    studentRoute('POST', 'helper/register', {
+        write: true,
         schema: { body: { type: 'object', additionalProperties: false, required: ['assignmentId', 'studentIds', 'state', 'idempotencyKey'], properties: {
             assignmentId: { type: 'string', minLength: 1, maxLength: 64 },
             studentIds: { type: 'array', minItems: 1, maxItems: 80, uniqueItems: true, items: { type: 'string', minLength: 1, maxLength: 64 } },
@@ -574,7 +663,7 @@ export const buildApp = ({ db, config, jwks, now = () => Date.now() }) => {
             return { code: 200, saved: studentIds.length, replay: false };
         }).immediate();
         if (result.code !== 200) return fail(reply, result.code, result.error, result.message);
-        if (!result.replay) audit(req, 'student', a.id, 'helper.register', a.class_id, { count: result.saved, state });
+        if (!result.replay) audit(req, 'student', a.id, 'helper.register', a.class_id, { count: result.saved, state });   // a.id＝成員 id（每班不同）
         const view = helperView(a);
         return json(reply, 200, { saved: result.saved, replay: result.replay, states: view.states[assignmentId] || {} });
     });

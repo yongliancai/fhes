@@ -174,6 +174,18 @@ Inaccurate documentation the review found (server-side nonce, "only once", 30/IP
 - Converting a large pull recomputed the whole class for every registration. Now only the affected cell is recomputed; 3000 registrations take well under 3 s in the test.
 - **PROVE**: `tests/server-helper.test.mjs` (`review fixes …`) and `tests/hw-rules.test.mjs` (`BUG-030 …`, `large pulls stay fast`).
 
+## BUG-031 (v6.2 student page) — long names without spaces made the phone page wider than the screen
+- **DETECT**: GitHub Actions, Chrome job, test 39: clicking the 「作業」 tab hit a card instead (`.stu-card … intercepts pointer events`). It did not happen on Windows.
+- **ROOT CAUSE**: nothing let a long run of letters with no spaces break onto the next line. The test student's name contains `onerror="window.__pwned=1">`. With the wider Linux fonts on the CI runner that line is wider than a 390px phone, so the page scrolled sideways and the fixed tab bar moved away from where the click landed. On Windows it reproduces at 320px (page 362px wide).
+- **FIX**: `.stu-app { overflow-wrap: anywhere; }`. Long names, homework titles and class names now wrap.
+- **PROVE**: the student zoo E2E test now also checks that the growth and homework pages fit at 390px and 320px. Without the fix it fails with 「document 362>320」; with the fix it passes.
+
+## CI test-environment fixes (not product bugs, 2026-11-27)
+- **Firefox** (3 failures): the test passed `isMobile`, which Firefox does not support (`options.isMobile is not supported in Firefox`). Firefox now runs with the same phone-sized window but without `isMobile`. No assertion was removed.
+- **WebKit**, student login: WebKit does not keep `Secure` cookies on `http://127.0.0.1`; Edge and Firefox do (confirmed with a small probe). The student session cookie is `__Host-…; Secure`, so on WebKit every student was logged out right after logging in. The E2E student API now runs over **HTTPS with a self-signed certificate generated for each run**, the same conditions as production. The Secure and `__Host-` checks are unchanged, and Node's own test calls trust only that certificate.
+- **WebKit**, `SameSite`: Playwright WebKit reports the stored cookie's `SameSite` as `None` even though the server sends `Strict` (seen on Windows). The test now checks the server's `Set-Cookie` header in every browser (`SameSite=Strict`, `HttpOnly`, `Secure`, `Path=/`, no `Domain`). It still checks the stored value in Edge, Chrome and Firefox.
+- **WebKit**, CSP: Playwright screenshots inject a `<style>`, and in WebKit the page's strict CSP blocks it and logs 「Refused to apply a stylesheet」 (confirmed with a probe page). That line is now ignored only while a screenshot is being taken, only in WebKit, and only for that exact text. Any other CSP violation still fails the test.
+
 ## v6.2 test-writing mistakes caught by the suite (not product bugs)
 - Test helper's default new password contained the username → the server correctly refused it as weak.
 - Idempotency keys shorter than 8 characters in a test → the server correctly answered 400.

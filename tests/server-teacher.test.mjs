@@ -94,9 +94,11 @@ test('accounts: random usernames, initial password shown once, never stored in p
     assert.deepEqual([again.created.length, again.existing], [0, ['cls-a-s1']]);
     const view = (await H.t(A.token, 'GET', `/api/teacher/classes/${A.classKey}/accounts`)).json();
     assert.ok(!JSON.stringify(view).includes('password'), 'list never contains passwords or hashes');
-    const dump = JSON.stringify(H.db.prepare('SELECT * FROM student_accounts').all());
+    const dump = JSON.stringify([H.db.prepare('SELECT * FROM student_accounts').all(), H.db.prepare('SELECT * FROM password_credentials').all(), H.db.prepare('SELECT * FROM users').all()]);
     for (const a of list) assert.ok(!dump.includes(a.initialPassword));
-    assert.ok(H.db.prepare('SELECT password_hash FROM student_accounts').all().every(r => r.password_hash.startsWith('$argon2id$')));
+    assert.ok(H.db.prepare('SELECT password_hash FROM password_credentials').all().every(r => r.password_hash.startsWith('$argon2id$')));
+    // 一個帳號＝一個 user＋本班發的帳密＋本班成員資格
+    assert.equal(H.db.prepare('SELECT COUNT(*) n FROM password_credentials WHERE issued_by_class_id = ?').get(A.classKey).n, 7);
 });
 
 test('projection: stale version 409, same version same content idempotent, same version different content 409, bad hash 400', async () => {

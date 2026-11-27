@@ -1,8 +1,10 @@
 // E2E 共用：啟動靜態伺服器 + 系統瀏覽器（playwright-core，不下載瀏覽器）
 // 本機 Windows 預設 Edge；CI（ubuntu）預設 Chrome。可用 E2E_CHANNEL 覆寫（chrome / msedge / chromium）。
 import { chromium, firefox, webkit } from 'playwright-core';
-import { mkdirSync, readFileSync, appendFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, appendFileSync, existsSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { resolve, dirname, join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 import { startServer } from '../scripts/serve.mjs';
@@ -31,6 +33,30 @@ const DIAG_LOG = join(OUT, `diag-${ENGINE}.log`);
 const diag = (line) => { if (DIAG) appendFileSync(DIAG_LOG, `${new Date().toISOString()} ${line}
 `); };
 let diagSeq = 0;
+
+/**
+ * 學生系統 API 的測試用 TLS 憑證（自簽、只給 127.0.0.1、執行時才產生、不進版控）。
+ * 為什麼要 HTTPS：WebKit 在 http://127.0.0.1 不保存 Secure Cookie（Edge／Firefox 會），
+ * 學生 Session 是 `__Host-` + Secure，用 http 測試時 WebKit 一登入就沒有工作階段（CI 失敗的原因）。
+ * 改用 HTTPS 讓三個瀏覽器都在和正式環境相同的條件下測試，不放寬任何 Cookie 設定。
+ */
+let tls = null;
+const findOpenssl = () => {
+    if (process.env.OPENSSL) return process.env.OPENSSL;
+    if (process.platform !== 'win32') return 'openssl';
+    for (const p of ['C:\\Program Files\\Git\\usr\\bin\\openssl.exe', 'C:\\Program Files\\Git\\mingw64\\bin\\openssl.exe']) if (existsSync(p)) return p;
+    return 'openssl';
+};
+export const testTls = () => {
+    if (tls) return tls;
+    const dir = mkdtempSync(join(tmpdir(), 'fhes-e2e-tls-'));
+    const cnf = join(dir, 'req.cnf'); const key = join(dir, 'key.pem'); const cert = join(dir, 'cert.pem');
+    writeFileSync(cnf, '[req]\nprompt = no\ndistinguished_name = dn\nx509_extensions = ext\n[dn]\nCN = 127.0.0.1\n[ext]\nsubjectAltName = IP:127.0.0.1\n');
+    execFileSync(findOpenssl(), ['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', '2', '-keyout', key, '-out', cert, '-config', cnf], { stdio: 'pipe', env: { ...process.env, MSYS_NO_PATHCONV: '1' } });
+    tls = { key: readFileSync(key), cert: readFileSync(cert) };
+    rmSync(dir, { recursive: true, force: true });
+    return tls;
+};
 
 let shared = null;
 /** 一個測試檔共用一個瀏覽器與伺服器；每個測試用全新 context（全新 IndexedDB） */
@@ -101,7 +127,8 @@ export const reloadAndSignIn = async (page, account = TEACHER_A) => {
  */
 export const openApp = async (opts = {}) => {
     const { url, browser } = await setup();
-    const context = await browser.newContext({ acceptDownloads: true, viewport: opts.viewport || { width: 1280, height: 800 },
+    // ignoreHTTPSErrors：只為了接受測試用學生系統 API 的自簽憑證（testTls）；教師頁本身仍是 http://127.0.0.1
+    const context = await browser.newContext({ acceptDownloads: true, ignoreHTTPSErrors: true, viewport: opts.viewport || { width: 1280, height: 800 },
         reducedMotion: opts.reducedMotion || 'no-preference', locale: 'zh-TW', timezoneId: 'Asia/Taipei', ...(opts.context || {}) });
     // 外部網路一律擋掉（字型等）；Google 相關端點由假 Google／模擬器回應
     await context.route(/^https?:\/\/(?!127\.0\.0\.1)/, r => r.abort());

@@ -85,7 +85,7 @@ curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:8790/student.html   # 
 |---|---|---|
 | A. 學生系統有問題，先關掉 | 教師端：`src/config.js` 的 `STUDENT_API_BASE` 改回 `''`，發布 GitHub Pages（需批准） | 「學生系統」按鈕消失，教師端回到 v6.1 行為；學生頁面仍在但老師無法發布 |
 | B. 停止學生系統 | `sudo -u fhes pm2 stop fhes-student` | 學生無法登入；資料保留 |
-| C. 程式版本回退 | `cd /srv/fhes-student/app && sudo -u fhes git checkout <上一個版本標籤> && sudo -u fhes npm ci --omit=dev && sudo -u fhes pm2 restart fhes-student` | 資料庫 schema 只會往前升級；回退到更舊的程式前，先確認它支援目前的 `user_version`（v6.2 小老師版 = 2；升級時自動新增欄位與資料表，不動既有資料） |
+| C. 程式版本回退 | `cd /srv/fhes-student/app && sudo -u fhes git checkout <上一個版本標籤> && sudo -u fhes npm ci --omit=dev && sudo -u fhes pm2 restart fhes-student` | 資料庫 schema 只會往前升級。v6.2 多班級版 = 3：升級時把帳號拆成「登入身分」與「班級成員」，不動照顧紀錄、登記與投影，所有學生會被登出一次。**升級前一定先做加密備份**。舊版程式遇到較新的資料庫會拒絕啟動，所以回退程式時要同時還原升級前的備份 |
 | D. 資料庫損壞或誤操作 | `pm2 stop` → 把現有資料庫改名保留 → `node --env-file=… server/backup.mjs restore <最近的備份> $FHES_DB_PATH` → `pm2 start` | 回到備份時間點；之後老師重新按「發布」即可補上最新分數與作業。照顧紀錄與改過的密碼會回到備份時間點 |
 | E. 完全移除 | `pm2 delete fhes-student && pm2 save`；移除 nginx 子網域設定（還原備份的設定檔）並 reload；依學校規定保留或刪除 `/srv/fhes-student` | 學生系統消失；教師端先做 A |
 

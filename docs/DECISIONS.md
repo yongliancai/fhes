@@ -126,6 +126,29 @@ The app requests only `https://www.googleapis.com/auth/drive.file` (files the ap
 - The teacher can choose to publish seat numbers instead of names.
 - The student page shows the publish time and warns when it is older than 3 days.
 
+## ADR-024 — Platform users are separate from class memberships (2026-11-27, P1)
+- **Context**: v6.2 had one student account per class. The multi-class plan (`docs/V62-MULTICLASS-DESIGN.md`) lets one person belong to several teachers' classes.
+- **Decision**:
+  - New tables `users`, `password_credentials` and `auth_identities` (Google; only `SHA-256(iss|sub)` is stored).
+  - `student_accounts` is rebuilt in place as the **class membership** table. The table name and ids stay the same, so care events (`account_id`) and helper registrations (`helper_account_id`) keep their foreign keys and data untouched, and the daily care limit and helper rights are per class without any change.
+  - Old accounts become one user each, so nothing is merged by name or email.
+  - Teachers get a user and a Google identity from their existing `account_hash`.
+  - Student sessions now point to the user; all student sessions are logged out once at the upgrade.
+- **Migration safety**:
+  - Steps that rebuild a referenced table turn foreign keys off outside the transaction and require an empty `foreign_key_check` plus a count reconciliation before COMMIT.
+  - Any failure rolls back the whole step.
+  - A database newer than the program is refused (`SchemaTooNewError`), so going back to old code cannot corrupt a new file.
+- **Consequences**: teachers' publishing and the projection format are unchanged.
+
+## ADR-027 — Per-class student API; the server decides who and which class (2026-11-27, P1)
+- **Decision**:
+  - Student routes also exist as `/api/student/classes/{memberId}/…`. `memberId` is the student's **own** membership id ("my code in this class"). The server accepts it only if it belongs to the signed-in user and is active; otherwise 404.
+  - The design proposed the teacher-side `classKey` here instead. It was changed because student responses have never contained a classKey, and the existing security test enforces that.
+  - The old single-class paths keep working when the user has exactly one active class. With several classes they return 409 `choose_class`; they never silently pick the first one.
+  - Disabling a membership affects only that class. The student is logged out only if it was their last active class.
+  - Teachers can reset only passwords that their class issued, and only if the student is not in another teacher's class (D3; the full admin-reset flow comes in P2).
+  - A suspended teacher (`teachers.status`) is refused at sign-in and on every request.
+
 ## ADR-021 — 小老師 (student helpers) register homework through the student system (2026-11-26)
 - Decided by the user (multiple-choice discussion): helpers use the student system, may register **all** homework of their class, and the teacher app receives registrations **automatically** (every 5 minutes, before each publish, or on demand).
 - The teacher marks helpers per account (`student_accounts.is_helper`, schema v2). Permission is checked on every request from the session; removing the flag takes effect on the next request.
