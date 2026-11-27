@@ -17,7 +17,24 @@ const openSync = async (page) => {
 };
 const closeSync = (page) => page.click('#sync-modal .modal-actions:last-child .btn');
 const badge = (page) => page.textContent('#db-status-text');
-const waitBadge = (page, re, timeout = 15000) => page.waitForFunction((src) => new RegExp(src).test(document.getElementById('db-status-text')?.textContent || ''), re.source, { timeout });
+/**
+ * 等狀態徽章出現指定文字。逾時的話，錯誤訊息附上等待期間徽章的每一次變化、目前的 title、navigator.onLine，
+ * 讓 CI（只看得到文字紀錄）也能判斷卡在哪裡；不改變等待的條件或時間。
+ */
+const waitBadge = async (page, re, timeout = 15000) => {
+    await page.evaluate(() => {
+        const el = document.getElementById('db-status-text'); const t0 = performance.now();
+        window.__badgeLog = [`${0}ms ${el?.textContent} | ${document.getElementById('db-status-badge')?.title || ''}`];
+        window.__badgeObs?.disconnect();
+        window.__badgeObs = new MutationObserver(() => window.__badgeLog.push(`${Math.round(performance.now() - t0)}ms ${el?.textContent} | online=${navigator.onLine}`));
+        if (el) window.__badgeObs.observe(el, { childList: true, characterData: true, subtree: true });
+    });
+    try { await page.waitForFunction((src) => new RegExp(src).test(document.getElementById('db-status-text')?.textContent || ''), re.source, { timeout }); }
+    catch (e) {
+        const info = await page.evaluate(() => ({ now: document.getElementById('db-status-text')?.textContent, title: document.getElementById('db-status-badge')?.title, online: navigator.onLine, log: window.__badgeLog })).catch(() => ({}));
+        throw new Error(`badge never matched ${re}: ${JSON.stringify(info)}`, { cause: e });
+    }
+};
 
 test('two devices sync through Google Sheets: setup, join, offline queue, token expiry, conflict resolution', async () => {
     const emu = newEmu();
